@@ -216,3 +216,11 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Local app data
+backend/data/*.db
+backend/data/*.sqlite
+backend/data/*.sqlite3
+
+# IDE project files
+.idea/
