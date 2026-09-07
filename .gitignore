@@ -221,6 +221,13 @@ __marimo__/
 backend/data/*.db
 backend/data/*.sqlite
 backend/data/*.sqlite3
+notes/source-probe-raw/
 
 # IDE project files
 .idea/
+
+# Local planning drafts
+/实施计划-v0.1.md
+/实施计划-v0.2.md
+/实施计划-v0.3.md
+/项目可行性分析与大致计划.md
