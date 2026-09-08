@@ -6,6 +6,7 @@ from app.services.zhihu_client import (
     ZhihuClient,
     ZhihuClientConfig,
     normalize_hot_list_items,
+    normalize_search_items,
 )
 
 
@@ -79,3 +80,57 @@ def test_fetch_hot_list_raises_auth_error_for_api_code() -> None:
 
     with pytest.raises(ZhihuAuthError, match="authorization failed"):
         client.fetch_hot_list(limit=1)
+
+
+def test_search_maps_engagement_fields() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.params["Query"] == "事件 A"
+        assert request.url.params["Count"] == "3"
+        return httpx.Response(
+            200,
+            json={
+                "Code": 0,
+                "Data": {
+                    "HasMore": False,
+                    "SearchHashId": "hash-1",
+                    "Items": [
+                        {
+                            "Title": "事件 A 最新进展",
+                            "ContentType": "answer",
+                            "ContentID": "100",
+                            "ContentText": "事件 A 的讨论内容",
+                            "Url": "https://www.zhihu.com/question/1/answer/100",
+                            "CommentCount": 12,
+                            "VoteUpCount": 34,
+                            "AuthorName": "作者",
+                            "EditTime": "2026-09-08 10:00:00",
+                            "AuthorityLevel": 1,
+                            "RankingScore": 0.98,
+                        }
+                    ],
+                },
+            },
+        )
+
+    client = ZhihuClient(
+        config=ZhihuClientConfig(access_secret="test-secret"),
+        http_client=httpx.Client(
+            base_url="https://developer.zhihu.com",
+            transport=httpx.MockTransport(handler),
+        ),
+    )
+
+    result = client.search(query="事件 A", count=3)
+    normalized = normalize_search_items(
+        result,
+        candidate_title="事件 A",
+        candidate_url="https://www.zhihu.com/question/1",
+        candidate_rank=1,
+        relation={"is_highly_related": True, "reasons": ["same_question_id"]},
+    )
+
+    assert len(result.items) == 1
+    assert result.items[0].comment_count == 12
+    assert result.items[0].vote_up_count == 34
+    assert normalized[0]["raw_metrics"]["ranking_score"] == 0.98
+    assert normalized[0]["normalized"]["candidate_rank"] == 1

@@ -5,15 +5,13 @@ from __future__ import annotations
 import hashlib
 import time
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 import httpx
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.core.config import settings
-
-UTC = timezone.utc
 
 
 class ZhihuAPIError(RuntimeError):
@@ -40,8 +38,26 @@ class ZhihuHotListResult(BaseModel):
     raw_payload: dict[str, Any]
 
 
+class ZhihuSearchItem(BaseModel):
+    model_config = ConfigDict(populate_by_name=True, extra="allow")
+
+    title: str | None = Field(default=None, alias="Title")
+    content_type: str | None = Field(default=None, alias="ContentType")
+    content_id: str | int | None = Field(default=None, alias="ContentID")
+    content_text: str | None = Field(default=None, alias="ContentText")
+    url: str | None = Field(default=None, alias="Url")
+    comment_count: int | None = Field(default=None, alias="CommentCount")
+    vote_up_count: int | None = Field(default=None, alias="VoteUpCount")
+    author_name: str | None = Field(default=None, alias="AuthorName")
+    edit_time: str | int | None = Field(default=None, alias="EditTime")
+    authority_level: str | int | None = Field(default=None, alias="AuthorityLevel")
+    ranking_score: float | int | None = Field(default=None, alias="RankingScore")
+
+
 class ZhihuSearchResult(BaseModel):
+    query: str
     fetched_at: datetime
+    items: list[ZhihuSearchItem]
     raw_payload: dict[str, Any]
 
 
@@ -94,7 +110,16 @@ class ZhihuClient:
             self.config.search_path,
             params={"Query": query, "Count": safe_count},
         )
-        return ZhihuSearchResult(fetched_at=datetime.now(UTC), raw_payload=payload)
+        items = [
+            ZhihuSearchItem.model_validate(item)
+            for item in _extract_items(_unwrap_payload(payload))
+        ]
+        return ZhihuSearchResult(
+            query=query,
+            fetched_at=datetime.now(UTC),
+            items=items,
+            raw_payload=payload,
+        )
 
     def fetch_quota(self, api_ids: list[str] | None = None) -> ZhihuQuotaResult:
         ids = api_ids or ["hot_list", "zhihu_search"]
@@ -149,7 +174,9 @@ def normalize_hot_list_items(result: ZhihuHotListResult) -> list[dict[str, Any]]
         if not item.summary:
             quality_flags.append("missing_summary")
 
-        identity = item.url or item.title or f"zhihu-hotlist-{result.fetched_at.isoformat()}-{index}"
+        identity = (
+            item.url or item.title or f"zhihu-hotlist-{result.fetched_at.isoformat()}-{index}"
+        )
         content_hash = hashlib.sha256(identity.encode("utf-8")).hexdigest()
         normalized.append(
             {
@@ -194,6 +221,88 @@ def normalize_hot_list_items(result: ZhihuHotListResult) -> list[dict[str, Any]]
     return normalized
 
 
+def normalize_search_items(
+    result: ZhihuSearchResult,
+    *,
+    candidate_title: str,
+    candidate_url: str | None,
+    candidate_rank: int,
+    relation: dict[str, Any] | None = None,
+    relations_by_identity: dict[str, dict[str, Any]] | None = None,
+) -> list[dict[str, Any]]:
+    normalized: list[dict[str, Any]] = []
+    for index, item in enumerate(result.items, start=1):
+        quality_flags = []
+        if not item.title:
+            quality_flags.append("missing_title")
+        if not item.url:
+            quality_flags.append("missing_url")
+        if item.comment_count is None:
+            quality_flags.append("missing_comment_count")
+        if item.vote_up_count is None:
+            quality_flags.append("missing_vote_up_count")
+        if item.edit_time is None:
+            quality_flags.append("missing_edit_time")
+        if item.ranking_score is None:
+            quality_flags.append("missing_ranking_score")
+
+        identity = _search_item_identity(item) or result.query
+        item_relation = relation
+        if relations_by_identity is not None:
+            item_relation = relations_by_identity.get(_search_item_identity(item), relation)
+        content_hash = hashlib.sha256(identity.encode("utf-8")).hexdigest()
+        normalized.append(
+            {
+                "source_id": "zhihu_search",
+                "source_name": "知乎搜索",
+                "source_type": "community_search",
+                "source_origin": "official_api",
+                "source_status": "use",
+                "platform": "zhihu",
+                "signal_role": "discussion_focus_signal",
+                "score_contribution_role": ["discussion", "community_heat"],
+                "external_id": str(item.content_id)
+                if item.content_id is not None
+                else content_hash[:24],
+                "title": item.title,
+                "url": item.url,
+                "author": item.author_name,
+                "summary": item.content_text,
+                "content": item.content_text,
+                "content_hash": content_hash,
+                "language": "zh-CN",
+                "published_at": None,
+                "fetched_at": result.fetched_at.isoformat(),
+                "raw_metrics": {
+                    "comment_count": item.comment_count,
+                    "vote_count": item.vote_up_count,
+                    "ranking_score": item.ranking_score,
+                    "edit_time": item.edit_time,
+                    "authority_level": item.authority_level,
+                },
+                "normalized": {
+                    "search_rank": index,
+                    "query": result.query,
+                    "content_type": item.content_type,
+                    "candidate_title": candidate_title,
+                    "candidate_url": candidate_url,
+                    "candidate_rank": candidate_rank,
+                    "relation": item_relation or {},
+                },
+                "source_citation": {
+                    "platform": "zhihu",
+                    "source_name": "知乎搜索",
+                    "url": item.url,
+                    "source_status": "use",
+                    "quality_flags": quality_flags,
+                },
+                "quality_flags": quality_flags,
+                "raw_payload": item.model_dump(by_alias=True),
+            }
+        )
+    return normalized
+
+
 def _unwrap_payload(payload: dict[str, Any]) -> Any:
     for key in ("Data", "data"):
         if key in payload:
@@ -217,6 +326,14 @@ def _extract_total(data: Any) -> int | None:
         return None
     value = data.get("Total", data.get("total"))
     return value if isinstance(value, int) else None
+
+
+def _search_item_identity(item: ZhihuSearchItem) -> str | None:
+    if item.url:
+        return item.url
+    if item.content_id is not None:
+        return str(item.content_id)
+    return item.title
 
 
 def _raise_for_api_error(payload: dict[str, Any]) -> None:
