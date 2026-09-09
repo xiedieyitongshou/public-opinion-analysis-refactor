@@ -1,12 +1,12 @@
-﻿# Source Access Stability v0.1
+# 数据源访问稳定性 v0.1
 
-Generated at: 2026-09-06
+生成日期：2026-09-06
 
-Last rechecked: 2026-09-06 16:46 Asia/Shanghai
+最后复查：2026-09-06 16:46 Asia/Shanghai
 
-## Scope
+## 范围
 
-Day 15 engineering feasibility check for selected sources:
+Day 15 针对已选数据源的工程可行性检查：
 
 - 人民网
 - 中国新闻网
@@ -14,48 +14,48 @@ Day 15 engineering feasibility check for selected sources:
 - 微博热搜
 - 知乎热榜
 
-This check separates two questions:
+本次检查拆成两个问题：
 
-- Can the source provide structured data?
-- Can the project obtain that data through a stable, low-risk, no-login path?
+- 该来源能否提供结构化数据？
+- 项目能否通过稳定、低风险、免登录的路径获取这些数据？
 
-## Current Result
+## 当前结果
 
-| Source | Structured data observed | Stable no-login path | Engineering status | Notes |
+| 来源 | 是否观察到结构化数据 | 稳定免登录路径 | 工程状态 | 备注 |
 |---|---|---|---|---|
-| 人民网 | Yes | Yes | `use` | RSS returns parseable items with title, URL, published time, summary, author. |
-| 中国新闻网 | Yes | Yes | `use` | RSS returns parseable items; collector should tolerate malformed XML such as bare ampersands. |
-| 新华网 | Yes | Partial | `fallback` | RSS returns title, URL, summary, author; current endpoint lacks published time. |
-| 微博热搜 | No | No | `postpone` | Public web/API probes redirect to visitor/login or return forbidden. Stable access likely requires official API or authorized account flow. |
-| 知乎热榜 | No | No | `postpone` | Public page/API probes return 403/401. Stable access should use official data platform if available and approved. |
+| 人民网 | Yes | Yes | `use` | RSS 返回可解析条目，包含 title、URL、published time、summary、author。 |
+| 中国新闻网 | Yes | Yes | `use` | RSS 返回可解析条目；Collector 应容忍裸露 & 等不规范 XML。 |
+| 新华网 | Yes | Partial | `fallback` | RSS 返回 title、URL、summary、author；当前 endpoint 缺少 published time。 |
+| 微博热搜 | No | No | `postpone` | 公开网页探测会跳转到访客 / 登录流程，或返回 forbidden；后续改用 RSSHub 话题种子 + 微博 CLI 补强。 |
+| 知乎热榜 | No | No | `postpone` | 公开页面 / API 探测返回 403/401。若可用且获准，稳定访问应使用官方数据平台。 |
 
-## Engineering Decision
+## 工程决策
 
-- Day 15 can confirm the three official/news sources as usable structured sources, with Xinhua kept as fallback until a better endpoint or time parsing path is found.
-- Day 15 cannot confirm Weibo and Zhihu as stable no-login structured sources.
-- Weibo/Zhihu should not enter Week 4 real collector development unless an official, authorized, rate-limited API path is confirmed.
-- Do not mark the full five-source set as stable just to satisfy the product goal. The current stable real-source set is two `use` official sources plus one `fallback` official source.
-- Do not use personal account cookies, automated login, proxy pools, or anti-bot bypass for the public repo implementation.
-- If Weibo/Zhihu remain `postpone`, use mock community source or find a lower-risk text hotlist substitute for Week 4.
+- Day 15 可以确认三个官媒 / 新闻源是可用的结构化来源；新华网暂时保留为 `fallback`，直到找到更好的 endpoint 或发布时间解析路径。
+- Day 15 不能确认微博和知乎是稳定的免登录结构化来源。
+- 微博只有 RSSHub 话题种子和微博 CLI 补强通过 smoke test 后，才作为 fallback 链路进入 Collector。知乎使用已验证的数据平台路径。
+- 不要为了满足“五源”产品目标而把完整五源集合标记为稳定。当前稳定真实来源集合是两个 `use` 官媒源加一个 `fallback` 官媒源。
+- 公开仓库实现中不要使用个人账号 Cookie、自动登录、代理池或反爬绕过。
+- 如果微博 / 知乎继续保持 `postpone`，第 4 周应使用 mock community source，或寻找低风险的文本热榜替代源。
 
-## Risk Notes
+## 风险说明
 
-- Login-cookie crawling makes the project depend on account state and platform anti-abuse controls.
-- Account-based automated collection can trigger verification, temporary restriction, or account suspension depending on platform rules, endpoint sensitivity, traffic pattern, and whether the access method violates terms.
-- Even low-frequency collection is not automatically safe if it violates platform terms or uses non-public endpoints.
-- The stable path for community sources should be official API, authorized data platform, or a clearly public low-frequency endpoint.
+- 登录 Cookie 抓取会让项目依赖账号状态和平台反滥用控制。
+- 基于账号的自动化采集可能触发验证、临时限制或账号封禁，具体取决于平台规则、接口敏感度、流量模式以及访问方式是否违反条款。
+- 即使是低频采集，只要违反平台条款或使用非公开接口，也不能自动视为安全。
+- 社区来源的稳定路径应优先选择成本可控、低频、可关闭的公开或授权工具链；微博侧当前限定为 RSSHub + CLI。
 
-## Day 15 Gate Result
+## Day 15 闸门结果
 
-Proceed to Week 4 real collector development with:
+可以进入第 4 周真实 Collector 开发的来源：
 
 - 人民网: `use`
 - 中国新闻网: `use`
 - 新华网: `fallback`
 
-Do not proceed to Week 4 real collector development with:
+不要进入第 4 周真实 Collector 开发的来源：
 
 - 微博热搜: `postpone`
 - 知乎热榜: `postpone`
 
-Day 16 should either validate an official authorized API/data-platform path for Weibo/Zhihu or choose a lower-risk text hotlist substitute. If neither is available, implement `mock community source` for the community-signal branch while keeping the real collector limited to the official/news sources.
+Day 16 需要验证知乎数据平台路径，并把微博方向改为 RSSHub 热搜种子 + 微博 CLI 补强。如果微博链路不可用，则社区信号分支仍可使用知乎或 mock community source。

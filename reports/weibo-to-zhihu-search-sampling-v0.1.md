@@ -109,7 +109,7 @@ Day 18 组合路径测试：先用 RSSHub `/weibo/search/hot` 获取微博热榜
 - 字段不足：RSSHub `/weibo/search/hot` 本次只稳定提供 `title`、`url`、`description` 和 `guid`；其中 `description` 通常等于 `title`，缺少真正的话题背景。
 - 热度指标缺失：本次没有观察到微博侧阅读量、发帖数、讨论量、点赞、评论、转发或稳定 `hot_value`。
 - 时间字段缺失：本次没有观察到 item 级 `pubDate`，只能用采集时刻 `fetched_at` 记录快照时间。
-- rank 不是官方字段：报告中的 `rank` 由 RSS item 顺序派生，不是微博官方 API 返回的结构化排名字段。
+- rank 不是官方字段：报告中的 `rank` 由 RSS item 顺序派生，不是微博结构化排名字段。
 - 稳定性不足：RSSHub 是第三方转换层，公共实例不可作为生产依赖；自建实例也依赖 RSSHub 路由实现和微博上游页面 / 接口稳定性。
 - 语义不足：微博热榜 title 多数是短话题词，不是完整事件描述，直接进入事件抽取会增加歧义、误合并和误评分风险。
 - 跨平台补充效果有限：本次微博 rank 2-11 调用知乎搜索，只有 `4/10` 个话题命中高相关知乎讨论，高相关保留结果为 `7/30`，低相关拒绝结果为 `23/30`。
@@ -131,7 +131,7 @@ weibo_rsshub_hot_search.score_contribution = weak_attention_only
 保留理由：
 
 - 它可以低成本发现微博正在出现的话题，尤其是官媒和知乎未必及时覆盖的话题。
-- 它可以作为官方 / 授权微博 API 不可用时的弱兜底输入。
+- 它可以作为低成本微博话题种子输入，供后续微博 CLI 搜索补强。
 - 它适合做采样、演示、debug 和跨源候选生成实验。
 
 限制条件：
@@ -146,53 +146,46 @@ weibo_rsshub_hot_search.score_contribution = weak_attention_only
 - 多轮采样后 RSSHub 成功率持续低。
 - 微博话题到知乎 / 新闻源补证据的命中率持续低。
 - RSSHub 维护成本高于它提供的话题发现价值。
-- 已验证官方或授权微博 API 能稳定提供更完整字段。
+- 已验证 RSSHub 维护成本高于它提供的话题发现价值，且 CLI 或其它候选生成器已能替代它。
 
-## 转向微博官方 / 授权 API 的评估
+## 转向微博 CLI 补强
 
-如果目标是计算微博侧真实热度，应优先评估微博官方开放平台、微博商业 API 或明确授权的第三方数据服务。
+微博侧统一收敛为低成本组合链路：
+
+```text
+RSSHub 热搜话题种子
+-> 微博 CLI search/statuses/limited 搜索相关微博
+-> 可选 CLI 评论 / 转发补强代表性微博
+```
 
 目标字段：
 
 ```text
-hotword / topic
-rank
-hot_value / trend_score
-mention_count / post_count
-read_count
-comment_count
-repost_count
-like_count
-first_seen_at / listed_at
-updated_at
+topic
+list_position
+status_id / mid
+status_text
+created_at
+comments_count
+reposts_count
+attitudes_count
+total_number proxy
+matched_status_count
 ```
 
-已知可评估方向：
+工程判断：
 
-- `2/trends/hourly`：更接近微博趋势 / 热门话题入口，但需要 OAuth `access_token`，还需要确认权限、字段、额度和可用性。
-- `search/hotword/mention_count`：更适合对已知热词计算提及量，可以补充 attention / velocity，但它本身不是全局热榜发现源。
-- `search/statuses/limited`：适合对已有关键词抓取相关微博证据，并可能利用微博正文互动指标做补充，但它不是热榜 API。
-- 微博关键词舆情监控 / 商业数据服务：可能更适合获取热词趋势、话题量和舆情指标，但需要确认费用、授权范围和试用额度。
-
-优势：
-
-- 更可能拿到微博侧真实可量化指标，而不是只拿到热搜词。
-- 可以减少“微博话题到知乎搜索”的跨平台偏差。
-- 更适合作为 `attention_score`、`velocity_score` 和微博侧 `platform_score` 的正式输入。
-
-风险：
-
-- 需要注册应用、OAuth 授权、权限申请和可能的商务开通。
-- 成本和额度不确定，可能不适合 MVP 免费长期运行。
-- 部分接口可能只支持关键词监控或授权用户相关数据，不一定提供全局热榜。
-- 即使是官方 API，也需要做字段 smoke test 和 rate limit 测试后才能进入 collector。
+- RSSHub 负责发现微博热搜话题，但只输出弱 `topic_present` / `list_position` 信号。
+- 微博 CLI 负责对已知 topic 做搜索补强，获取代表性微博的正文、发布时间和转评赞字段。
+- CLI 搜索仍是 query-driven，不代表热搜话题下全量微博，也不代表真实全站热度。
+- 搜索结果必须经过相关性过滤，低相关微博只进入审计日志。
+- CLI 未登录、额度不足或命令不可用时，微博链路降级为 RSSHub-only 或跳过，不阻塞知乎和官媒链路。
 
 建议：
 
-- 不要直接删除 RSSHub fallback；先把它从“微博热度来源”降级为“实验性话题发现兜底”。
-- 同时新增微博官方 / 授权 API 调研任务，目标是验证能否拿到 `mention_count`、`hot_value` 或话题互动指标。
-- 如果官方 / 授权 API smoke test 成功，再把正式微博源状态调整为 `use_pending_credentials` 或 `use`。
-- 如果官方 / 授权 API 暂时不可用，MVP 继续以知乎 `hot_list` + `zhihu_search` 作为社区热度主输入，RSSHub 只做弱候选补充。
+- 保留 RSSHub fallback，但只作为实验性话题发现种子。
+- 新增或继续维护微博 CLI smoke test，重点验证 `search/statuses/limited`、评论和转发补强字段。
+- MVP 中微博侧输出必须标记为样本估计和低置信补强，不能表述为微博真实热度。
 
 ## 与官媒 RSS 对比
 
@@ -204,14 +197,14 @@ updated_at
 
 组合路径少了或更弱：
 
-- 微博侧仍没有阅读量、发帖数、点赞、评论、转发和稳定 `hot_value`。
+- 仅 RSSHub 路径仍没有阅读量、发帖数、点赞、评论、转发和稳定 `hot_value`；需要微博 CLI 补充代表性微博的转评赞样本。
 - 知乎搜索命中的是跨平台相关讨论，不等于微博话题本身的热度。
 - 微博短标题可能导致知乎搜索噪音，必须依赖相关性过滤。
 - 官媒 RSS 更适合事实确认、发布时间、事件时间线和权威引用；组合路径不能替代事实来源。
 
 ## Schema 影响
 
-- 微博 RSSHub 条目映射为 `attention_signal`，保留 `weibo_rank`、`topic_present`、`fetched_at`。
+- 微博 RSSHub 条目映射为 `attention_signal`，保留 `list_position`、`topic_present`、`fetched_at`。
 - 知乎搜索结果作为微博话题候选下的 `discussion_signal` / enrichment signal。
 - 事件评分中可使用知乎 `comment_count`、`vote_up_count`、`ranking_score` 和 `edit_time`，但必须标明来源是知乎讨论补充。
 - 未命中知乎讨论时，不补造讨论热度；只保留微博弱话题发现信号并降低置信度。
@@ -224,4 +217,4 @@ updated_at
 - 默认跳过微博热榜 rank 1。
 - 默认配置建议：微博 rank 2-11、每个微博话题 `zhihu_search` 返回 3 条。
 - 是否继续使用该组合路径，应根据多轮采样后的知乎命中率、相关性拒绝率、RSSHub 成功率和额度消耗决定。
-- 微博侧正式信息源应优先转向官方开放平台、商业 API 或明确授权的数据服务，并以字段 smoke test 结果决定 `source_status`。
+- 微博侧正式实现优先维护 RSSHub 话题种子 + 微博 CLI 搜索 / 评论 / 转发补强链路，并以 CLI smoke test 结果决定 `source_status`。

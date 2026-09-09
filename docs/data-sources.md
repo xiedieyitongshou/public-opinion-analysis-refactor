@@ -42,7 +42,7 @@ source_status = postpone # 未确认稳定公开入口，不进入正式 collect
 
 第 4 周只实现 `use` 或经过明确降级设计的 `fallback` 来源。`postpone` 来源可以保留在产品设计和 mock 链路中，但不能作为第一阶段真实采集的硬依赖。
 
-对于微博和知乎，第一阶段不采用个人账号 cookie、自动登录、代理池或绕过风控方式作为稳定数据路径。只有在确认官方授权 API、明确调用配额和合规边界后，才可以把它们从 `postpone` 调整为 `use` 或 `fallback`。
+对于微博和知乎，第一阶段不采用个人账号 cookie、自动登录、代理池或绕过风控方式作为稳定数据路径。微博侧收敛为 RSSHub 热搜话题种子 + 微博 CLI 低频搜索补强；知乎侧使用已验证的数据平台接口。
 
 当前 Day 15 初步探测状态：
 
@@ -51,7 +51,7 @@ source_status = postpone # 未确认稳定公开入口，不进入正式 collect
 | 人民网 | `use` | 可进入第 4 周 collector | RSS 可访问，标题、链接、发布时间、摘要等字段较完整 |
 | 中国新闻网 | `use` | 可进入第 4 周 collector | RSS 可访问，字段较完整；需要 XML 容错解析 |
 | 新华网 | `fallback` | 可做降级 collector 或继续寻找更好入口 | RSS 可访问，标题和链接稳定；当前入口发布时间缺失 |
-| 微博热搜 | `postpone` | 不进入真实 collector，除非确认官方授权 API 或稳定公开入口 | 直连公开页触发访客 / 登录校验，接口返回 forbidden；账号 / cookie 爬取存在稳定性和账号风险 |
+| 微博热搜 | `fallback_candidate` | RSSHub 提供实验性话题种子，微博 CLI 对已知话题做搜索 / 互动补强 | 直连公开页触发访客 / 登录校验；不使用账号 cookie 或反爬绕过 |
 | 知乎热榜 | `use` | 可进入第 4 周 collector | 知乎数据开放平台 `hot_list` Access Secret smoke test 已通过；直连公开页仍不使用 |
 
 ## 数据源分层
@@ -320,7 +320,7 @@ raw_payload optional
 知乎热榜
 ```
 
-这组来源都以文字标题、话题或问题为主要输入，分别覆盖即时热点和问题讨论。它们具备较高产品价值，但只有在确认官方授权 API、明确调用配额和合规边界，或确认稳定公开低频入口后，才进入真实 collector。未通过 Day 15/16 闸门时，只保留为 mock 或后续候选。第一阶段先不接入视频社区源，避免在 MVP 阶段引入视频标题语义偏差、播放指标归一化和多媒体内容解析成本。
+这组来源都以文字标题、话题或问题为主要输入，分别覆盖即时热点和问题讨论。微博侧采用 RSSHub 话题种子 + CLI 搜索补强，知乎侧采用已验证的数据平台接口。未通过 smoke test 的路径只保留为 mock 或后续候选。第一阶段先不接入视频社区源，避免在 MVP 阶段引入视频标题语义偏差、播放指标归一化和多媒体内容解析成本。
 
 ### 社区源评估表
 
@@ -338,19 +338,19 @@ raw_payload optional
 
 微博热搜是第一阶段最有价值的社区热点发现候选源，但当前不等于已具备稳定真实采集路径。
 
-官方授权路径判断：
+项目路径判断：
 
-- 微博开放平台和微博 API 文档可访问。
-- `2/trends/hourly`、`2/search/topics`、`2/search/statuses` 等相关接口方向存在，但需要 OAuth `access_token`，并受接口权限和频次限制约束。
-- `2/trends/hourly` 更接近趋势信号；`2/search/topics` 和 `2/search/statuses` 更适合按关键词或话题定向搜索，不等同于直接获取热搜榜。
-- 在完成应用注册、权限申请、额度确认、费用确认和授权 smoke test 前，微博热搜仍保持 `postpone`。
-- 不使用个人账号 cookie、浏览器自动登录、代理池或私有接口作为稳定采集路径。
+- RSSHub `/weibo/search/hot` 可作为实验性热搜话题种子入口，但列表顺序只能派生 `list_position`，不能解释为官方 rank 或真实热度值。
+- 微博 CLI `search/statuses/limited` 可对已有话题做低频搜索补强，获取代表性微博正文、发布时间、微博 ID 和转评赞字段。
+- 可选使用微博 CLI 评论 / 转发命令补充代表性微博样本，但不做大规模评论或传播链采集。
+- CLI 搜索结果必须经过相关性过滤，低相关微博只进入审计日志。
+- CLI 未登录、额度不足或命令不可用时，微博链路降级为 RSSHub-only 或跳过，不阻塞知乎和官媒链路。
 
 优势：
 
 - 热搜榜天然就是即时公共关注信号。
 - 字段结构相对明确。
-- 排名、话题名、热度值、标签等字段适合热度评分。
+- 话题名、列表位置、搜索结果规模代理和代表性微博转评赞样本适合提供弱关注信号。
 - 对社会、文娱、公共事件传播非常敏感。
 
 风险：
@@ -363,12 +363,16 @@ raw_payload optional
 第一阶段建议字段：
 
 ```text
-rank
+list_position
 title
 url
-hot_value
-label
 fetched_at
+status_id optional
+created_at optional
+comments_count optional
+reposts_count optional
+attitudes_count optional
+total_number_proxy optional
 ```
 
 系统角色：
@@ -377,6 +381,8 @@ fetched_at
 source_type = community_hotlist
 signal_role = attention_signal
 score_contribution_role = attention / velocity
+source_origin = rsshub / weibo_cli
+source_status = experimental_fallback / fallback_candidate
 ```
 
 处理规则：
@@ -545,7 +551,7 @@ score_contribution_role = attention / velocity
 
 ```text
 Day 15：对 3 个官媒源和 2 个文字社区源做获取路径 smoke test
-Day 16：知乎官方 API 授权 smoke test 已通过；微博仍需 RSSHub 或其他稳定授权路径
+Day 16：知乎官方 API 授权 smoke test 已通过；微博收敛为 RSSHub 话题种子 + CLI 搜索补强
 Day 17：基于 use / fallback 源修正 NormalizedItem 和 EventSignal
 Day 18-20：基于真实字段修正 guardrails、scoring 和基础 API
 Day 21：确认第 4 周正式 collector 清单
@@ -592,7 +598,7 @@ postpone：不进入第 4 周正式 collector，只保留 mock 或候选说明
 - 事件合并质量。
 - 新闻报道链路与社区话题焦点的交叉验证。
 
-如果微博或知乎在 Day 15-16 后仍为 `postpone`，第 4 周不应强行实现真实 collector。此时应保留 mock community source 验证事件池、评分和 guardrails，并继续寻找稳定文字型社区替代源。
+如果微博 RSSHub / CLI 或知乎数据平台在 Day 15-16 后仍不可用，第 4 周不应强行实现对应真实 collector。此时应保留 mock community source 验证事件池、评分和 guardrails。
 
 后续候选：
 
@@ -616,8 +622,8 @@ B站和央视网都包含视频内容。央视网可作为官媒浅接入候选�
 示例：
 
 ```text
-微博 hot_value
-知乎 heat_value
+微博 CLI 代表性微博互动样本
+知乎搜索互动样本
 新闻源报道数量
 ```
 

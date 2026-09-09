@@ -16,6 +16,8 @@ Day 17 针对知乎官方 `hot_list` 与低频 `zhihu_search` 增强做 smoke te
 - 搜索 query 策略：移除通用提问表述和标点，并截取较短的核心短语。
 - 相关性过滤：保留 question id 匹配、标题 / query 强包含或关键词重合度较高的结果。
 - 原始本地样本：`D:\desktop\public-opinion-analysis-refactor\notes\source-probe-raw\zhihu-hotlist-search-sampling.json`
+- 补充采样：`2026-09-09T12:02:28.958441+00:00` 对最新 `hot_list` top `5` 条目分别调用 `zhihu_search Count=5` 和 `Count=10`，用于验证搜索结果是否随机、`Count=10` 是否包含 `Count=5`。
+- 补充采样原始本地样本：`D:\desktop\public-opinion-analysis-refactor\notes\source-probe-raw\zhihu-hotlist-search-count5-count10-sampling.json`
 
 ## 结果汇总
 
@@ -67,6 +69,43 @@ Day 17 针对知乎官方 `hot_list` 与低频 `zhihu_search` 增强做 smoke te
 | 3 | `国产偶像剧都喜欢把男女主的工作背景设定在广告新闻公关等传` | 3 | 0 | none |
 | 4 | `美网女单第四轮郑钦文20斯瓦泰克挺进8强本场比赛` | 3 | 0 | none |
 | 5 | `毛阿敏要在镜头面前把许晴逼到崩溃` | 3 | 0 | none |
+
+## search count 5 / 10 重叠验证
+
+补充采样对最新知乎热榜 top `5` 条目分别调用 `zhihu_search Count=5` 和 `Count=10`。本轮调用消耗 `hot_list` quota `1` 次、`zhihu_search` quota `10` 次。
+
+本轮 `Count=10` 对 5 个 query 均实际返回 `10` 条；`Count=5` 的全部返回结果都被 `Count=10` 包含，且完全等于 `Count=10` 的前 5 条。因此可以验证：在本轮样本中，`hot10` 能包住 `hot5`。
+
+| Rank | Query | Returned 5 | Returned 10 | Count5 in Count10 | Count5 is Count10 prefix | Retained 5 | Retained 10 | Min comments | Max comments | Min votes | Max votes | Count10 relatedness reasons |
+|---:|---|---:|---:|---:|---|---:|---:|---:|---:|---:|---:|---|
+| 1 | `高考数学132分的学生在西电数学开学考只考12分33分竟` | `5` | `10` | `5/5` | `true` | `3` | `3` | `0` | `131` | `0` | `850` | `same_question_id=3, candidate_title_contained=3, query_contained=3, keyword_overlap_high=3` |
+| 2 | `8月新能源车零售1005万辆同比下降101燃油车零售54` | `5` | `10` | `5/5` | `true` | `4` | `5` | `0` | `1` | `0` | `9` | `same_question_id=3, candidate_title_contained=4, query_contained=4, keyword_overlap_high=5` |
+| 3 | `网友称欧洲西瓜硬到要用锯子切为啥西瓜看起来这么硬跟我们种` | `5` | `10` | `5/5` | `true` | `3` | `3` | `0` | `582` | `0` | `2848` | `same_question_id=3, candidate_title_contained=3, query_contained=3, keyword_overlap_high=3` |
+| 4 | `星宇股份已获港股上市备案却三周仍无聆讯日程受此次裁员风波` | `5` | `10` | `5/5` | `true` | `3` | `3` | `0` | `77` | `0` | `922` | `same_question_id=3, candidate_title_contained=3, query_contained=3, keyword_overlap_high=3` |
+| 5 | `南阳老头乐被禁止上路怎样看待这一规定该如何平衡老年人出行` | `5` | `10` | `5/5` | `true` | `3` | `3` | `0` | `335` | `0` | `778` | `same_question_id=3, candidate_title_contained=3, query_contained=3, keyword_overlap_high=3` |
+
+指标对比：
+
+| Rank | Query mode | Returned | Min comments | Max comments | Sum comments | Min votes | Max votes | Sum votes | Min ranking_score | Max ranking_score |
+|---:|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| 1 | count 5 | `5` | `0` | `131` | `203` | `0` | `850` | `1106` | `1.90920` | `2.36938` |
+| 1 | count 10 | `10` | `0` | `131` | `217` | `0` | `850` | `1125` | `0.615267` | `2.36938` |
+| 2 | count 5 | `5` | `0` | `1` | `1` | `0` | `7` | `11` | `1.27368` | `1.73731` |
+| 2 | count 10 | `10` | `0` | `1` | `2` | `0` | `9` | `20` | `1.07341` | `1.73731` |
+| 3 | count 5 | `5` | `0` | `92` | `93` | `0` | `290` | `297` | `0.634424` | `1.96556` |
+| 3 | count 10 | `10` | `0` | `582` | `682` | `0` | `2848` | `3186` | `0.407109` | `1.96556` |
+| 4 | count 5 | `5` | `8` | `69` | `114` | `41` | `578` | `900` | `1.57790` | `2.33976` |
+| 4 | count 10 | `10` | `0` | `77` | `198` | `0` | `922` | `1859` | `1.47153` | `2.33976` |
+| 5 | count 5 | `5` | `0` | `6` | `6` | `0` | `3` | `9` | `1.29267` | `1.84759` |
+| 5 | count 10 | `10` | `0` | `335` | `348` | `0` | `778` | `795` | `1.06834` | `1.84759` |
+
+观察：
+
+- 本轮 `Count=5` 的 `5/5` 条均被 `Count=10` 包含，且完全等于 `Count=10` 的前 5 条；因此 `zhihu_search` 结果不像随机抽样，更像按知乎搜索排序稳定返回。
+- 本轮 `Count=10` 均能返回额外第 6-10 条，但新增结果主要增加召回宽度，不等同于稳定增加高相关互动信号；5 个 query 中只有 Rank 2 的保留结果从 `4` 增至 `5`。
+- `ranking_score` 与返回顺序高度一致，本轮每个 query 的 `Count=10` 返回结果中 `ranking_score` 基本随 `search_rank` 递减；它更像知乎搜索排序分，而不是热榜问题本身的热度值。
+- `comment_count` 和 `vote_up_count` 与搜索排序相关但不是严格排序依据。Rank 3 和 Rank 5 的 `Count=10` 后半段出现高互动历史 / 低相关内容，不能直接参与该热榜问题评分。
+- 工程上可以把 `Count=5` 作为更保守的低频增强默认值；当需要更宽召回时再使用 `Count=10`，但必须继续执行相关性过滤。
 
 ## 相关性过滤说明
 

@@ -1,10 +1,10 @@
-# Source Probe v0.1
+# 数据源探测 v0.1
 
-Generated at: `2026-09-06T08:49:38.757236+00:00`
+生成时间：`2026-09-06T08:49:38.757236+00:00`
 
-## Scope
+## 范围
 
-Day 15 smoke test for selected official/news and text BBS/community sources:
+Day 15 对已选官媒 / 新闻源和文本 BBS / 社区源做 smoke test：
 
 - 人民网
 - 中国新闻网
@@ -12,21 +12,19 @@ Day 15 smoke test for selected official/news and text BBS/community sources:
 - 微博热搜
 - 知乎热榜
 
-This run uses public RSS endpoints and public web pages only. It does not use
-accounts, cookies, tokens, private APIs, proxy configuration, or anti-bot bypass
-techniques.
+本次运行只使用公开 RSS endpoint 和公开网页。不使用账号、Cookie、Token、私有 API、代理配置或反爬绕过技术。
 
-## Method
+## 方法
 
-- Fetch limit per source: `10`
-- Link stability checks per source: `5`
-- Required first-stage fields checked: `title`, `url`, `fetched_at`
-- Optional but valuable fields checked: `published_at`, `summary`, `author`, `raw_metrics`
-- Raw samples are written to `notes/source-probe-raw/` and must remain local-only.
+- 每个来源抓取上限：`10`
+- 每个来源链接稳定性检查数量：`5`
+- 第一阶段必需字段检查：`title`、`url`、`fetched_at`
+- 可选但有价值字段检查：`published_at`、`summary`、`author`、`raw_metrics`
+- 原始样本写入 `notes/source-probe-raw/`，必须仅本地保留。
 
-## Result Summary
+## 结果汇总
 
-| Source | Suggested status | Items | Title | URL | Published time | Summary | Links OK | Time quality | Heat metrics |
+| 来源 | 建议状态 | 条目数 | Title | URL | 发布时间 | 摘要 | 链接可访问 | 时间质量 | 热度指标 |
 |---|---|---:|---:|---:|---:|---:|---:|---|---|
 | 人民网 | use | 10 | 100% | 100% | 100% | 100% | 100% | high | no |
 | 中国新闻网 | use | 10 | 100% | 100% | 100% | 100% | 100% | high | no |
@@ -34,15 +32,15 @@ techniques.
 | 微博热搜 | postpone | 0 | 0% | 0% | 0% | 0% | 0% | missing | no |
 | 知乎热榜 | postpone | 0 | 0% | 0% | 0% | 0% | 0% | missing | no |
 
-## Source Notes
+## 来源说明
 
 ### 人民网
 
 - Endpoint: `http://www.people.com.cn/rss/politics.xml`
 - HTTP: `200` / `text/xml` / `382202` bytes
 - Parse: `ok`
-- Suggested status: `use`
-- Notes:
+- 建议状态：`use`
+- 说明：
 - RSS 未提供热度指标，官媒报道强度应由报道数量、来源权重和时效性计算。
 
 ### 中国新闻网
@@ -50,8 +48,8 @@ techniques.
 - Endpoint: `https://www.chinanews.com.cn/rss/scroll-news.xml`
 - HTTP: `200` / `text/xml` / `18021` bytes
 - Parse: `ok`
-- Suggested status: `use`
-- Notes:
+- 建议状态：`use`
+- 说明：
 - RSS 未提供热度指标，官媒报道强度应由报道数量、来源权重和时效性计算。
 
 ### 新华网
@@ -59,8 +57,8 @@ techniques.
 - Endpoint: `http://www.xinhuanet.com/politics/news_politics.xml`
 - HTTP: `200` / `text/xml; charset=utf-8` / `174092` bytes
 - Parse: `ok`
-- Suggested status: `fallback`
-- Notes:
+- 建议状态：`fallback`
+- 说明：
 - RSS 未提供热度指标，官媒报道强度应由报道数量、来源权重和时效性计算。
 
 ### 微博热搜
@@ -68,8 +66,8 @@ techniques.
 - Endpoint: `https://passport.weibo.com/visitor/visitor?entry=miniblog&a=enter&url=https%3A%2F%2Fs.weibo.com%2Ftop%2Fsummary%3Fcate%3Drealtimehot&domain=.weibo.com&sudaref=&ua=php-sso_sdk_client-0.6.29&_rand=1788684577.8349`
 - HTTP: `200` / `text/html` / `9666` bytes
 - Parse: `failed`
-- Suggested status: `postpone`
-- Notes:
+- 建议状态：`postpone`
+- 说明：
 - 公开页面直连触发登录、访客或风控校验，未采集样本。
 - 第一阶段仍选择该文字型社区源，但正式接入前需要找到稳定公开入口。
 
@@ -78,34 +76,23 @@ techniques.
 - Endpoint: `https://www.zhihu.com/hot`
 - HTTP: `403` / `text/html` / `650` bytes
 - Parse: `failed`
-- Suggested status: `postpone`
-- Notes:
+- 建议状态：`postpone`
+- 说明：
 - 公开页面直连触发登录、访客或风控校验，未采集样本。
 - 第一阶段仍选择该文字型社区源，但正式接入前需要找到稳定公开入口。
 
-## Decision
+## 决策
 
-- `中国新闻网`: keep as first collector candidate because RSS gives current multi-domain
-  news with stable title, URL, and publication time fields.
-- `人民网`: keep as priority official source. RSS is accessible and field quality is
-  sufficient for a first-stage `NormalizedItem`; use official-score logic rather than
-  raw heat metrics.
-- `新华网`: keep as priority official source. RSS is accessible and suitable for
-  authoritative event confirmation, but later collector work should expect channel-level
-  structure differences.
-- `微博热搜`: keep as selected text community source, but current direct public page
-  access requires follow-up validation before production collection.
-- `知乎热榜`: keep as selected text community source, but current direct public page
-  access requires follow-up validation before production collection.
+- `中国新闻网`：保留为首批 Collector 候选，因为 RSS 能提供当前、多领域的新闻，并具备稳定的标题、URL 和发布时间字段。
+- `人民网`：保留为优先官媒来源。RSS 可访问，字段质量足以支撑第一阶段 `NormalizedItem`；评分时应使用官媒权重逻辑，而不是 raw heat metrics。
+- `新华网`：保留为优先官媒来源。RSS 可访问，适合做权威事件确认，但后续 Collector 应预期不同频道的结构差异。
+- `微博热搜`：保留为已选文本社区来源，但当前公开页面直连访问需要后续验证，暂不进入生产采集。
+- `知乎热榜`：保留为已选文本社区来源，但当前公开页面直连访问需要后续验证，暂不进入生产采集。
 
-## Schema Impact
+## Schema 影响
 
-- `raw_metrics` must remain optional for official/news sources.
-- `published_at` is available in this RSS-based probe, but schema should still allow
-  missing values because non-RSS list pages may vary by channel.
-- `summary` availability differs by source and should not block normalization.
-- Official/news source heat should be derived from source coverage, source weight,
-  recency, and repeated reporting rather than platform-provided hot values.
-- Text community sources should use `rank`, `title`, `url`, and optional
-  platform-provided heat values; they must remain heat/discussion signals rather than
-  standalone fact sources.
+- 对官媒 / 新闻源，`raw_metrics` 必须保持可选。
+- 本次 RSS 探测中 `published_at` 可用，但 schema 仍应允许缺失，因为非 RSS 列表页可能因频道不同而变化。
+- 不同来源的 `summary` 可用性不同，不能让摘要缺失阻断标准化。
+- 官媒 / 新闻源的热度应由来源覆盖、来源权重、时效性和重复报道推导，而不是依赖平台提供的 hot value。
+- 文本社区来源应使用 `rank`、`title`、`url` 和可选的平台热度值；它们应作为热度 / 讨论信号，而不是独立事实来源。
