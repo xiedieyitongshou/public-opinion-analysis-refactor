@@ -102,7 +102,7 @@ Day 18 组合路径测试：先用 RSSHub `/weibo/search/hot` 获取微博热榜
 
 ## 为什么不采用 RSSHub 作为正式微博热度源
 
-本次实验说明，RSSHub 微博热搜更适合做低成本话题发现，不适合作为正式微博热度数据源。
+本次实验说明，RSSHub 微博热搜适合作为当前微博热点获取链路的话题种子；它不适合单独作为微博真实热度数据源。
 
 主要原因：
 
@@ -114,16 +114,16 @@ Day 18 组合路径测试：先用 RSSHub `/weibo/search/hot` 获取微博热榜
 - 语义不足：微博热榜 title 多数是短话题词，不是完整事件描述，直接进入事件抽取会增加歧义、误合并和误评分风险。
 - 跨平台补充效果有限：本次微博 rank 2-11 调用知乎搜索，只有 `4/10` 个话题命中高相关知乎讨论，高相关保留结果为 `7/30`，低相关拒绝结果为 `23/30`。
 
-因此，RSSHub 不应进入 `source_status = use`，也不应承担微博侧热度主评分。
+因此，RSSHub + CLI 组合可进入 `source_status = use`，但不承担微博真实全量热度主评分。
 
-## 是否删除 RSSHub fallback
+## 是否保留 RSSHub
 
-不建议立即删除，但建议降级并收窄用途。
+保留。RSSHub 是当前微博热点获取链路的话题种子来源，CLI 是同一链路下的内容和互动补强来源。
 
 推荐状态：
 
 ```text
-weibo_rsshub_hot_search.source_status = experimental_fallback
+weibo_rsshub_hot_search.source_status = use
 weibo_rsshub_hot_search.signal_role = topic_discovery_signal
 weibo_rsshub_hot_search.score_contribution = weak_attention_only
 ```
@@ -132,7 +132,7 @@ weibo_rsshub_hot_search.score_contribution = weak_attention_only
 
 - 它可以低成本发现微博正在出现的话题，尤其是官媒和知乎未必及时覆盖的话题。
 - 它可以作为低成本微博话题种子输入，供后续微博 CLI 搜索补强。
-- 它适合做采样、演示、debug 和跨源候选生成实验。
+- 它适合做微博热点话题发现、采样、debug 和跨源候选生成。
 
 限制条件：
 
@@ -141,12 +141,12 @@ weibo_rsshub_hot_search.score_contribution = weak_attention_only
 - 在日报输出中只能描述为“微博热榜出现相关话题”，不能描述为“微博高热度”或“全网热议”。
 - 如果连续多轮 RSSHub 失败，直接跳过微博 RSSHub，不阻塞知乎和官媒链路。
 
-删除条件：
+重新评估条件：
 
 - 多轮采样后 RSSHub 成功率持续低。
-- 微博话题到知乎 / 新闻源补证据的命中率持续低。
+- CLI 补强长期不可用或相关性保留率持续过低。
 - RSSHub 维护成本高于它提供的话题发现价值。
-- 已验证 RSSHub 维护成本高于它提供的话题发现价值，且 CLI 或其它候选生成器已能替代它。
+- 已验证有更稳定、低风险且字段更完整的微博热点获取方式。
 
 ## 转向微博 CLI 补强
 
@@ -183,9 +183,9 @@ matched_status_count
 
 建议：
 
-- 保留 RSSHub fallback，但只作为实验性话题发现种子。
+- 保留 RSSHub 作为当前微博热点话题种子。
 - 新增或继续维护微博 CLI smoke test，重点验证 `search/statuses/limited`、评论和转发补强字段。
-- MVP 中微博侧输出必须标记为样本估计和低置信补强，不能表述为微博真实热度。
+- MVP 中微博侧输出必须标记为 RSSHub + CLI 样本信号，不能表述为微博真实全量热度。
 
 ## 与官媒 RSS 对比
 
@@ -212,9 +212,24 @@ matched_status_count
 
 ## 决策建议
 
-- 本组合路径可以保留为 Day 19/20 的实验样本，但不建议作为正式微博热度方案进入核心评分。
-- Day 33 不建议把微博 RSSHub 实现为正式热度 collector；如保留实现，应命名为 experimental fallback topic collector。
+- 本组合路径可作为当前微博热点获取方式进入平台内 TopN 和分类证据链，但不能作为微博真实全量热度进入核心评分。
+- Day 33 实现微博 RSSHub + CLI collector；RSSHub 负责话题种子，CLI 负责搜索和互动补强。
 - 默认跳过微博热榜 rank 1。
 - 默认配置建议：微博 rank 2-11、每个微博话题 `zhihu_search` 返回 3 条。
-- 是否继续使用该组合路径，应根据多轮采样后的知乎命中率、相关性拒绝率、RSSHub 成功率和额度消耗决定。
-- 微博侧正式实现优先维护 RSSHub 话题种子 + 微博 CLI 搜索 / 评论 / 转发补强链路，并以 CLI smoke test 结果决定 `source_status`。
+- 多轮采样后的 RSSHub 成功率、CLI 相关性拒绝率和额度消耗用于调整调用预算、置信度和降级策略，不再决定是否作为当前微博获取方式接入。
+- 微博侧正式实现维护 RSSHub 话题种子 + 微博 CLI 搜索补强链路；评论 / 转发补强作为后续可选扩展。
+
+## 后续匹配设计补充
+
+本报告中的相关性过滤是规则型基线，主要依赖标题 / query 强包含和 2-6 gram 关键词重合，未使用 embedding。
+
+后续正式事件匹配采用 `docs/event-matching.md` 中的混合链路：
+
+```text
+规则强匹配
+-> BM25 / n-gram 可解释召回
+-> embedding 语义召回或 rerank
+-> Guardrails 判断自动合并、人工复核或拒绝
+```
+
+微博短话题容易语义漂移，embedding 高相似不能单独证明同一事件；必须结合实体、动作、对象、时间窗口或来源证据。中置信度结果进入人工复核，低相关搜索结果继续只写审计日志。

@@ -82,6 +82,10 @@ blocks_auto_analysis = true
 | 采集数据 | `fetch_source_items` | `FetchSourceItemsInput` | `FetchSourceItemsOutput` | 是 | 是 |
 | 标准化内容 | `normalize_raw_items` | `NormalizeRawItemsInput` | `NormalizeRawItemsOutput` | 是 | 是 |
 | 事件信号抽取 | `extract_event_signals` | `ExtractEventSignalsInput` | `ExtractEventSignalsOutput` | 是 | 是 |
+| 事件候选召回 | `bm25_ngram_retrieve_candidates` | `EventMatchRetrievalInput` | `EventMatchRetrievalOutput` | 是 | 是 |
+| 语义向量生成 | `embed_event_text` | `EmbedEventTextInput` | `EmbedEventTextOutput` | 否 | 是 |
+| 语义候选召回 | `semantic_retrieve_candidates` | `EventMatchRetrievalInput` | `EventMatchRetrievalOutput` | 否 | 是 |
+| 事件候选重排 | `rerank_event_matches` | `RerankEventMatchesInput` | `RerankEventMatchesOutput` | 是 | 是 |
 | 事件合并 | `match_and_resolve_events` | `MatchAndResolveEventsInput` | `MatchAndResolveEventsOutput` | 是 | 是 |
 | 热度评分 | `calculate_event_scores` | `CalculateEventScoresInput` | `CalculateEventScoresOutput` | 是 | 是 |
 | 简报生成 | `generate_daily_briefing` | `GenerateDailyBriefingInput` | `GenerateDailyBriefingOutput` | 是 | 否 |
@@ -196,6 +200,7 @@ Schema：
 
 - 将 `EventSignal` 匹配到已有 `Event`，或创建新事件。
 - 输出 `EventResolution`。
+- 编排硬匹配、BM25 / n-gram 召回、embedding 语义召回、候选重排和事件合并 Guardrails。
 - 中低置信度结果写入异步复核队列，不阻断自动链路。
 
 对应阶段：
@@ -212,6 +217,7 @@ Schema：
 - 可创建或更新 `events`。
 - 可创建候选合并关系。
 - 可写入异步复核队列。
+- 必须保存 `match_features_json`，记录 `keyword_overlap`、`ngram_overlap`、`bm25_score`、`embedding_similarity`、`entity_overlap`、`time_distance` 和命中规则。
 
 重试策略：
 
@@ -222,8 +228,76 @@ Schema：
 
 - 核心实体冲突时禁止自动合并。
 - 时间窗口冲突时禁止自动合并。
+- embedding 服务不可用时降级为规则 + BM25 / n-gram。
+- embedding 高相似但缺少实体、动作、对象或时间支撑时，最多进入中置信度复核。
+- BM25 / n-gram 与 embedding 结论冲突时，保留候选关系和特征，不自动合并。
 - 中置信度不自动合并，自动链路继续。
 - 事件写入完全失败时，设置 `blocks_auto_analysis = true`。
+
+### bm25_ngram_retrieve_candidates
+
+作用：
+
+- 使用 `event_text_for_match` 在已有事件和当轮候选中召回可能匹配项。
+- 返回 BM25 分、n-gram overlap、关键词 overlap 和命中片段。
+- 提供可解释召回结果，作为 embedding rerank 的候选池之一。
+
+对应阶段：
+
+- 阶段 6：事件合并。
+
+失败降级：
+
+- 无召回结果时返回空候选，不阻断后续 embedding 召回。
+
+### embed_event_text
+
+作用：
+
+- 对 `event_text_for_embedding` 生成语义向量。
+- 写入 `embedding_model`、`embedding_vector_id`、`embedding_created_at` 和 `embedding_quality_flags`。
+
+对应阶段：
+
+- 阶段 6：事件合并。
+
+失败降级：
+
+- embedding 服务不可用时返回 `success=false`、`retryable=true/false` 和降级原因。
+- 自动链路继续使用规则 + BM25 / n-gram。
+
+### semantic_retrieve_candidates
+
+作用：
+
+- 使用 embedding cosine similarity 召回语义相近事件。
+- 解决跨平台改写、长短标题不一致和同义表达问题。
+
+对应阶段：
+
+- 阶段 6：事件合并。
+
+失败降级：
+
+- 只返回候选，不直接写库合并。
+- 泛词或短话题命中必须加 `semantic_false_positive_risk`。
+
+### rerank_event_matches
+
+作用：
+
+- 综合 ID / URL、标题包含、BM25 / n-gram、embedding、实体、动作、对象、时间窗口和来源证据进行候选重排。
+- 输出 `match_confidence`、`matched_by` 和推荐动作。
+
+对应阶段：
+
+- 阶段 6：事件合并。
+
+失败降级：
+
+- 高置信才允许后续自动合并。
+- 中置信进入人工复核。
+- 低置信或冲突候选写入审计日志。
 
 ### calculate_event_scores
 

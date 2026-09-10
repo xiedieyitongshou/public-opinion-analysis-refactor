@@ -156,3 +156,20 @@ Day 17 针对知乎官方 `hot_list` 与低频 `zhihu_search` 增强做 smoke te
 - 保持 `hot_list` 为 `source_status = use`，用于模式 A 的知乎热点发现。
 - 保持 `zhihu_search` 为 Top K `hot_list` 候选的低频增强工具，并作为未来模式 B 的证据工具。
 - 不要把 `zhihu_search` 指标直接转换为独立的最终知乎热度分；应保留为 raw engagement features，供后续归一化使用。
+
+## 后续匹配设计补充
+
+本报告中的 `zhihu_search` 相关性过滤是规则型基线，主要依赖 question id、标题 / query 强包含和 2-6 gram 关键词重合，未使用 embedding。
+
+后续正式事件匹配采用 `docs/event-matching.md` 中的混合链路：
+
+```text
+ID / URL / question_id 硬匹配
+-> BM25 / n-gram 可解释召回
+-> embedding 语义召回或 rerank
+-> Guardrails 判断自动合并、人工复核或拒绝
+```
+
+知乎问题标题通常比微博话题更完整，但仍可能存在历史内容污染、同名不同事件和泛词误命中。embedding 只能作为二阶段召回或重排信号，不能绕过实体、动作、对象和时间窗口约束。
+
+

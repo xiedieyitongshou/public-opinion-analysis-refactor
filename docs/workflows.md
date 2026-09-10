@@ -88,6 +88,9 @@ LLM 不负责：
 -> Collector Agent 采集新闻源和社区源
 -> Normalizer Agent 标准化内容
 -> Event Resolver Agent 抽取事件信号并合并事件
+   -> 规则 / BM25 / n-gram 召回
+   -> embedding 语义召回或 rerank
+   -> Guardrails 决定自动合并、复核或拒绝
 -> Scoring Agent 计算平台热度、综合热度和走势状态
 -> 保存 event_snapshots
 -> Briefing Agent 生成结构化草稿快照
@@ -362,12 +365,36 @@ running -> succeeded / failed
 
 合并依据：
 
+- 平台 ID、URL、知乎 question id、微博 mid 等硬匹配。
 - 标题相似度。
 - 关键词重合度。
+- BM25 / n-gram 召回分。
+- embedding cosine similarity。
 - 核心实体重合度。
+- 动作和事件对象重合度。
 - 时间窗口。
 - 来源类型。
 - 平台覆盖。
+
+事件合并采用混合匹配链路，具体设计见 `docs/event-matching.md`：
+
+```text
+hard_match_by_id_url
+-> bm25_ngram_retrieve_candidates
+-> embed_event_text
+-> semantic_retrieve_candidates
+-> rerank_event_matches
+-> match_event
+-> apply_merge_guardrails
+-> auto_merge / candidate_review / reject
+```
+
+执行边界：
+
+- 规则强匹配和 ID / URL 命中优先于 embedding。
+- BM25 / n-gram 用于可解释召回，embedding 用于同义改写和跨平台表达差异的二阶段召回或重排。
+- embedding 高相似不能单独触发自动合并，必须同时满足实体、动作、对象或时间窗口中的硬约束。
+- Agent 负责编排工具和解释结果，不直接凭语言判断写库合并。
 
 状态：
 
@@ -381,6 +408,8 @@ running -> succeeded / failed
 - 中置信度匹配不自动合并，记录候选关系并进入异步复核队列。
 - 核心实体冲突时禁止自动合并，记录原因，不阻断整条自动链路。
 - 时间窗口冲突时禁止自动合并，记录原因，不阻断整条自动链路。
+- embedding 服务不可用时降级为规则 + BM25 / n-gram。
+- BM25 / n-gram 无召回时允许尝试 embedding 召回，但命中结果最多进入中置信复核，除非其它硬约束也成立。
 - B站弱匹配默认不自动合并，只作为候选传播信号。
 
 ### 阶段 7：热度评分与走势判断

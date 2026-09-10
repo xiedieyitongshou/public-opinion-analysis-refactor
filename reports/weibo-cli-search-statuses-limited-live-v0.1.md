@@ -193,7 +193,7 @@ RSSHub 少了：
 
 ## Schema 影响
 
-- CLI 搜索结果应映射为 `source_origin = weibo_cli`，`source_status = fallback_pending_credentials` 或验证后 `fallback`。
+- CLI 搜索结果应映射为 `source_origin = weibo_cli`，当前 `source_status = use`。
 - `total_number` 写入 `raw_metrics.weibo_search_total_number_proxy`，并加 `search_result_total_proxy` 语义标记。
 - `comments_count`、`reposts_count`、`attitudes_count` 写入代表性微博样本指标，不直接等同于话题总互动。
 - `created_at` 可用于 `latest_status_created_at` 和 freshness proxy。
@@ -201,6 +201,6 @@ RSSHub 少了：
 
 ## 决策
 
-- `weibo_cli_search_statuses_limited` 可从 `fallback_pending_credentials` 升级为 `fallback_candidate`，因为登录、认证、服务和字段 smoke test 已通过。
-- 暂不升级为正式 `use`，因为还没有多轮稳定性、额度消耗和相关性保留率验证。
+- `weibo_cli_search_statuses_limited` 当前标记为 `use`，因为登录、认证、服务和字段 smoke test 已通过，且它是当前微博热点获取链路的补强入口。
+- 继续保留额度消耗、相关性保留率和当轮可用性监控；这些影响置信度和降级，不再影响是否作为当前微博获取方式接入。
 - v0.3 最小链路继续保持：RSSHub 做话题种子，微博 CLI 做小样本搜索补强。

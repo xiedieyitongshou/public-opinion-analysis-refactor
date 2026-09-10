@@ -28,8 +28,8 @@ Day 18 针对 RSSHub 微博热搜路径做 smoke test 和字段结构审计。
 
 | API / Route | Suggested status | Items | Title | URL | Description | pubDate | guid | hot_value |
 |---|---|---:|---:|---:|---:|---:|---:|---:|
-| 基础热搜列表 `/weibo/search/hot` | fallback | 20 | 100% | 100% | 100% | 0% | 100% | 0% |
-| fulltext 摘要增强 `/weibo/search/hot/fulltext` | fallback | 20 | 100% | 100% | 0% | 0% | 100% | 0% |
+| 基础热搜列表 `/weibo/search/hot` | use | 20 | 100% | 100% | 100% | 0% | 100% | 0% |
+| fulltext 摘要增强 `/weibo/search/hot/fulltext` | use | 20 | 100% | 100% | 0% | 0% | 100% | 0% |
 
 ## 两个 API 分别获得了什么数据
 
@@ -38,7 +38,7 @@ Day 18 针对 RSSHub 微博热搜路径做 smoke test 和字段结构审计。
 - Endpoint: `http://localhost:1200/weibo/search/hot`
 - HTTP: `200` / `application/xml; charset=utf-8` / `24494` bytes
 - Parse: `ok`
-- Suggested status: `fallback`
+- Suggested status: `use`
 - Observed items: `20`
 - Notes:
 - 不使用 WEIBO_COOKIES、微博账号 cookie、代理池或反爬绕过逻辑。
@@ -63,7 +63,7 @@ Day 18 针对 RSSHub 微博热搜路径做 smoke test 和字段结构审计。
 - Endpoint: `http://localhost:1200/weibo/search/hot/fulltext`
 - HTTP: `200` / `application/xml; charset=utf-8` / `22474` bytes
 - Parse: `ok`
-- Suggested status: `fallback`
+- Suggested status: `use`
 - Observed items: `20`
 - Notes:
 - 不使用 WEIBO_COOKIES、微博账号 cookie、代理池或反爬绕过逻辑。
@@ -98,7 +98,7 @@ Day 18 针对 RSSHub 微博热搜路径做 smoke test 和字段结构审计。
 - 没有稳定观察到 item 级 `pubDate`，不能直接提供事件发生时间或发布时间。
 - 没有稳定观察到 `hot_value`，第一阶段不能把微博热度值作为必需评分输入。
 - `description` 在基础路径中通常等于标题；fulltext 路径虽然可能增强摘要，但稳定性和成本更差。
-- RSSHub 属第三方转换层，`source_status` 应保持 `fallback`，
+- RSSHub 属第三方转换层，但当前微博热点获取方式采用 RSSHub + CLI，`source_status` 记为 `use`，
   不能像人民网 / 中国新闻网 RSS 那样作为强依赖。
 - 微博热搜本身不是事实来源，只能作为关注信号；事实确认仍需官媒、新闻源或其它可引用证据补强。
 
@@ -118,7 +118,7 @@ Day 18 针对 RSSHub 微博热搜路径做 smoke test 和字段结构审计。
 ## Schema 影响
 
 - 微博 RSSHub 应映射为 `source_origin = rsshub`、
-  `source_status = fallback`、`signal_role = attention_signal`。
+  `source_status = use`、`signal_role = attention_signal`。
 - `rank` 从 item 顺序生成，写入 `raw_metrics.rank`。
 - `hot_value` 和 `published_at` 必须允许为空；缺失时分别写入
   `missing_hot_value`、`missing_pub_date`。
@@ -130,7 +130,7 @@ Day 18 针对 RSSHub 微博热搜路径做 smoke test 和字段结构审计。
 ## 决策
 
 - `weibo_direct_hot_search = postpone`
-- `weibo_rsshub_hot_search = fallback`
-- Day 33 可实现微博 RSSHub fallback collector，但默认只使用 `/weibo/search/hot`。
+- `weibo_rsshub_hot_search = use`
+- Day 33 可实现微博 RSSHub collector，但默认只使用 `/weibo/search/hot`。
 - RSSHub 请求失败、403、503 或结构异常时跳过微博源，不阻塞新闻源和知乎源。
 - RSSHub endpoint 保持环境变量化，允许本地、自建服务器或公共实例切换；公共实例不可作为生产强依赖。

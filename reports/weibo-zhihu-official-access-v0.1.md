@@ -14,7 +14,7 @@
 
 | Source | Public no-login hotlist path | Project path | Suggested status | Decision |
 |---|---|---|---|---|
-| Weibo hot search / trends | No | RSSHub topic seed + Weibo CLI search enrichment | `fallback_candidate` | 用 RSSHub 获取热搜话题种子，CLI 对已知话题补充微博正文、时间和转评赞样本。 |
+| Weibo hot search / trends | No | RSSHub topic seed + Weibo CLI search enrichment | `use` | 用 RSSHub 获取热搜话题种子，CLI 对已知话题补充微博正文、时间和转评赞样本。 |
 | Zhihu hotlist | No | Zhihu Data Open Platform `hot_list` API / MCP | `use` | Access Secret smoke test 已通过。`hot_list` 可作为模式 A 的知乎采集来源；`zhihu_search` 保留为模式 B 的证据 / 搜索工具。 |
 
 ## 微博
@@ -52,8 +52,8 @@ search/statuses/limited
 当前状态：
 
 ```text
-weibo_rsshub_hot_search.source_status = experimental_fallback
-weibo_cli_search_statuses_limited.source_status = fallback_candidate
+weibo_rsshub_hot_search.source_status = use
+weibo_cli_search_statuses_limited.source_status = use
 reason = use low-cost CLI enrichment for known topics.
 ```
 
@@ -187,13 +187,13 @@ respect daily quota.
 
 产品设计中可以继续保留微博和知乎作为代表性 BBS / 社区来源。真实 Collector 只实现已经通过 smoke test 且成本可控的路径：
 
-- 微博：RSSHub 作为实验性话题种子，微博 CLI 作为低频搜索 / 互动补强。
+- 微博：RSSHub 作为当前热搜话题种子，微博 CLI 作为低频搜索 / 互动补强。
 - 知乎：使用已验证的第一方数据平台接口。
 
 当前闸门结果：
 
 ```text
-weibo_rsshub_hot_search.source_status = experimental_fallback
-weibo_cli_search_statuses_limited.source_status = fallback_candidate
+weibo_rsshub_hot_search.source_status = use
+weibo_cli_search_statuses_limited.source_status = use
 zhihu_hotlist.source_status = use
 ```

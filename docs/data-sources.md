@@ -51,7 +51,7 @@ source_status = postpone # 未确认稳定公开入口，不进入正式 collect
 | 人民网 | `use` | 可进入第 4 周 collector | RSS 可访问，标题、链接、发布时间、摘要等字段较完整 |
 | 中国新闻网 | `use` | 可进入第 4 周 collector | RSS 可访问，字段较完整；需要 XML 容错解析 |
 | 新华网 | `fallback` | 可做降级 collector 或继续寻找更好入口 | RSS 可访问，标题和链接稳定；当前入口发布时间缺失 |
-| 微博热搜 | `fallback_candidate` | RSSHub 提供实验性话题种子，微博 CLI 对已知话题做搜索 / 互动补强 | 直连公开页触发访客 / 登录校验；不使用账号 cookie 或反爬绕过 |
+| 微博热搜 | `use` | RSSHub 提供话题种子，微博 CLI 对已知话题做搜索 / 互动补强，已能支撑第一阶段所需微博侧信号 | 直连公开页触发访客 / 登录校验；不使用账号 cookie 或反爬绕过 |
 | 知乎热榜 | `use` | 可进入第 4 周 collector | 知乎数据开放平台 `hot_list` Access Secret smoke test 已通过；直连公开页仍不使用 |
 
 ## 数据源分层
@@ -67,7 +67,7 @@ source_status = postpone # 未确认稳定公开入口，不进入正式 collect
 所有 NormalizedItem
 -> 统一提取 EventSignal
 -> 进入同一个 EventCandidate 池
--> 按实体、时间、语义和来源证据进行事件合并
+-> 按 ID / URL、标题、BM25 / n-gram、embedding、实体、时间和来源证据进行事件合并
 ```
 
 来源类型的差异主要体现在热度计算、证据置信度和输出措辞，而不是体现在“能不能生成事件候选”。
@@ -76,12 +76,14 @@ source_status = postpone # 未确认稳定公开入口，不进入正式 collect
 
 ```text
 事件提取：官媒和 BBS 都可以触发 EventCandidate
-事件合并：不按来源类型优先，按标题、实体、时间窗口和语义相似度判断
+事件合并：不按来源类型优先，按标题、BM25 / n-gram、embedding、实体、时间窗口和来源证据判断
 热度计算：官媒和 BBS 的贡献项不同，权重不同
 事实表达：按来源可信度、证据数量和 guardrails 决定措辞强弱
 ```
 
 系统不应把单一社区来源写成确定事实，也不应把官媒报道简单等同于事件全貌。社区先出现的话题可以进入事件池，但在缺少足够证据时只能表达为“社区关注/讨论正在升温”；官媒报道可以提升证据强度和权威报道强度，但不能直接推出“公众高度关注”。
+
+事件匹配采用混合方案，详细设计见 `docs/event-matching.md`。当前采样脚本的基线是标题 / query 强包含和 2-6 gram 关键词重合；后续实现中，BM25 / n-gram 负责可解释召回，embedding 负责语义召回或 rerank。embedding 不能单独决定自动合并，短话题、泛词话题和历史内容污染必须通过实体、动作、对象或时间窗口约束。
 
 ## 标准化目标字段
 
@@ -326,7 +328,7 @@ raw_payload optional
 
 | 来源 | 获取难易度 | 标准化难度 | 事件发现价值 | 热度贡献重点 | 稳定/合规风险 | 第一阶段决策 |
 |---|---|---|---|---|---|---|
-| 微博热搜 | 中 | 低 | 很高 | attention / velocity | 中高 | 优先验证 |
+| 微博热搜 | 中 | 低 | 很高 | attention / velocity | 中高 | 当前接入 |
 | 知乎热榜 | 中高 | 中 | 中高 | discussion / attention | 中高 | 优先验证 |
 | B站热门 / 排行榜 | 中 | 中 | 高 | attention / velocity | 中 | 后续候选，第一阶段暂不接入 |
 | 小红书 | 高 | 高 | 高 | attention / community | 高 | 暂不接入 |
@@ -336,11 +338,11 @@ raw_payload optional
 
 ### 微博热搜
 
-微博热搜是第一阶段最有价值的社区热点发现候选源，但当前不等于已具备稳定真实采集路径。
+微博热搜是第一阶段最有价值的社区热点发现源之一。当前微博热点获取方式采用 RSSHub `/weibo/search/hot` 作为话题种子，并用微博 CLI `search/statuses/limited` 对已知话题做内容和互动补强。
 
 项目路径判断：
 
-- RSSHub `/weibo/search/hot` 可作为实验性热搜话题种子入口，但列表顺序只能派生 `list_position`，不能解释为官方 rank 或真实热度值。
+- RSSHub `/weibo/search/hot` 是当前微博热搜话题种子入口，但列表顺序只能派生 `list_position`，不能解释为官方 rank 或真实热度值。
 - 微博 CLI `search/statuses/limited` 可对已有话题做低频搜索补强，获取代表性微博正文、发布时间、微博 ID 和转评赞字段。
 - 可选使用微博 CLI 评论 / 转发命令补充代表性微博样本，但不做大规模评论或传播链采集。
 - CLI 搜索结果必须经过相关性过滤，低相关微博只进入审计日志。
@@ -382,7 +384,7 @@ source_type = community_hotlist
 signal_role = attention_signal
 score_contribution_role = attention / velocity
 source_origin = rsshub / weibo_cli
-source_status = experimental_fallback / fallback_candidate
+source_status = use
 ```
 
 处理规则：

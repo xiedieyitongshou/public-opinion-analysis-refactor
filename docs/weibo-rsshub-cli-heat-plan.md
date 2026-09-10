@@ -48,10 +48,10 @@ RSSHub 负责微博热搜种子
 
 | 来源 | 角色 | 主要字段 | 评分用途 | 状态建议 |
 |---|---|---|---|---|
-| RSSHub 微博热搜 | 事件种子 | `title`、`link`、列表序号 `list_position`、`fetched_at` | 话题出现信号，不单独代表热度 | `experimental_fallback` |
-| 微博 CLI `search/statuses/limited` | 微博内容补强 | 微博正文、发布时间、微博 ID、用户、互动字段、搜索结果数 | 微博话题相关帖子样本和热度近似 | `fallback_pending_credentials` |
-| 微博 CLI 评论接口 | 代表性微博补强 | 评论列表、评论时间、评论总数、用户反馈 | 讨论质量和反馈样本 | `fallback_pending_credentials` |
-| 微博 CLI 转发接口 | 传播补强 | 转发列表、转发总数、转发时间 | 传播强度样本 | `fallback_pending_credentials` |
+| RSSHub 微博热搜 | 事件种子 | `title`、`link`、列表序号 `list_position`、`fetched_at` | 当前微博热点获取链路的话题种子，不单独代表热度 | `use` |
+| 微博 CLI `search/statuses/limited` | 微博内容补强 | 微博正文、发布时间、微博 ID、用户、互动字段、搜索结果数 | 当前微博热点获取链路的内容和互动样本 | `use` |
+| 微博 CLI 评论接口 | 代表性微博补强 | 评论列表、评论时间、评论总数、用户反馈 | 讨论质量和反馈样本 | `postpone` |
+| 微博 CLI 转发接口 | 传播补强 | 转发列表、转发总数、转发时间 | 传播强度样本 | `postpone` |
 
 ## 采集链路
 
@@ -187,7 +187,7 @@ listed_at = null
 ```text
 platform = weibo
 source_origin = weibo_cli
-source_status = fallback_pending_credentials
+source_status = use
 external_id = status.id
 mid = status.mid optional
 title = text 前 40-80 字
@@ -319,9 +319,9 @@ weibo_signal_score
 - 微博源只有 RSSHub 种子、缺少 CLI 补强时，事件可以保留，但微博分置信度降低。
 - 微博 CLI 搜索无高相关结果时，不补造微博热度，只记录失败原因。
 
-## CLI smoke test 计划
+## CLI smoke test 结论与回归检查
 
-### 前置条件
+### 已满足前置条件
 
 - 完成微博开放平台开发者认证。
 - 安装 `@weibo-ai/weibo-cli`。
@@ -330,7 +330,7 @@ weibo_signal_score
 - 使用 `weibo-cli doctor` 检查认证和服务状态。
 - 使用 `weibo-cli commands list --available` 获取当前可用命令。
 
-### 测试命令
+### 已验证命令
 
 ```bash
 weibo-cli doctor
@@ -372,19 +372,22 @@ RSSHub 热搜：跳过列表第 1 条，取列表第 2-11 条
 
 ## source_status 决策
 
-初始状态：
+当前状态：
 
 ```text
-weibo_rsshub_hot_search = experimental_fallback
-weibo_cli_search_statuses_limited = fallback_pending_credentials
-weibo_cli_comments = fallback_pending_credentials
-weibo_cli_reposts = fallback_pending_credentials
+weibo_rsshub_hot_search = use
+weibo_cli_search_statuses_limited = use
+weibo_cli_comments = postpone
+weibo_cli_reposts = postpone
 ```
 
-升级条件：
+保持为当前微博热点获取链路的原因：
 
-- `weibo_cli_search_statuses_limited` 连续多次 smoke test 成功，字段稳定，额度可控，可升为 `fallback`。
-- `weibo_cli_comments` 只在已知微博 ID 补强中稳定可用时升为 `fallback`。
+- RSSHub 是第三方转换层，字段只足够提供 topic seed、link、list_position 和 fetched_at。
+- CLI 搜索已经通过低频 smoke test，可提供正文、发布时间、ID / MID、用户、转评赞和 `total_number_proxy`。
+- RSSHub + CLI 组合足够支撑第一阶段微博侧平台内 TopN、跨源匹配和证据展示。
+- 该链路已经作为当前微博热点获取方式使用，但仍不提供微博真实全量热度或官方热度值。
+- 评论和转发接口只作为代表性微博的后续可选补强，不作为 MVP 必需路径。
 
 降级条件：
 
@@ -477,7 +480,7 @@ v0.3 的最小实现已经收敛为两层：
 
 ```text
 RSSHub `/weibo/search/hot`：默认启用，获取微博热搜话题种子。
-微博 CLI `search/statuses/limited`：默认关闭，只在认证、服务和额度可用时做小样本补强。
+微博 CLI `search/statuses/limited`：作为低频补强启用；无凭据、额度不足或命令失败时自动降级为 RSSHub-only。
 ```
 
 本地运行 RSSHub-only：

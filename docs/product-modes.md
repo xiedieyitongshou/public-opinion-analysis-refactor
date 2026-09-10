@@ -179,10 +179,12 @@ v0.3 只保留模式 B 的最小占位能力：
 
 - 实时全网搜索。
 - 复杂 RAG。
-- embedding 检索。
+- 面向用户查询的完整 embedding 检索。
 - 向量数据库。
 - 多轮自主搜索 agent。
 - 证据不足时的自动深度采集。
+
+说明：v0.3 可以在模式 A 的 Event Resolver 内部使用 embedding 做事件匹配 rerank，但这不等于模式 B 已交付完整语义检索产品。模式 B 最小入口仍以已有 `items` / `events` / `event_snapshots` 的关键词和时间过滤为主。
 
 ### 降级策略
 
@@ -426,7 +428,7 @@ v0.3 预留：
 v0.3 不实现：
 
 - 完整 RAG。
-- embedding 检索。
+- 面向用户查询的完整 embedding 检索。
 - 向量数据库。
 - 多轮自主搜索 agent。
 - 自动定向深度采集。

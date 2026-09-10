@@ -43,7 +43,7 @@
 
 | 来源类型 | 数据源 | 启用条件 | 建议频率 | 单次上限 |
 |---|---|---|---:|---:|
-| 即时热榜 | 微博热搜 | 仅 `use` / `fallback` 后启用 | 每 2 小时 | Top 50 |
+| 即时热榜 | 微博热搜 | `use`，采用 RSSHub + CLI 当前链路 | 每 2 小时 | Top 50 |
 | 问题热榜 | 知乎热榜 | 仅 `use` / `fallback` 后启用 | 每 3-4 小时 | Top 50 |
 | 视频热门 | B站热门 / 排行榜 | 后续候选 | 每 6 小时 | Top 50 |
 | 新闻源 | 人民网 | `use` | 每 4-6 小时 | 50-100 条 |
@@ -91,6 +91,7 @@
 | 事件快照 | `event_snapshots` | 走势判断 | 高频短期，低频中期 |
 | 简报草稿 | `draft reports` | 人工发布前确认 | 短期 |
 | 正式日报 | `published daily_reports` | 历史产出展示 | 长期 |
+| 语义索引 | `event_embeddings` / `semantic_fingerprint` | 事件匹配 rerank 和模式 B 后续检索预留 | 跟随 items / events 生命周期 |
 | 工具日志 | `agent_tool_calls` | 可观测性和排障 | 短期 |
 
 ## 保留周期
@@ -108,10 +109,13 @@
 | `event_snapshots` 日级压缩快照 | 30-90 天 | 保存每日 max / avg / last |
 | `draft reports` / 自动草稿 | 3-7 天 | 只保留近期待确认草稿 |
 | `published daily_reports` / 正式日报 | 长期 | 项目展示和历史回顾 |
+| `event_embeddings` / 语义向量 | 跟随 `items` 或活跃 `events` | 只保存向量 ID、模型、生成时间和必要索引，不长期保留无引用向量 |
 | `agent_tool_calls` / 工具日志 | 7-14 天 | 排障和观测 |
 | `evaluation_runs` | 30-90 天 | 质量趋势观察 |
 
 长期保留不等于全量保留。归档事件只保留轻量字段，不保留完整原始数据。
+
+embedding 和语义索引是派生数据，不是事实来源。删除原始条目或归档事件时，应同步清理无引用向量；公开日报只保留匹配解释和来源引用，不暴露完整向量。
 
 ## 事件生命周期
 

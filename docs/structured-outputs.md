@@ -233,6 +233,8 @@ block
   "raw_payload": {},
   "quality_flags": ["string"],
   "content_hash": "string",
+  "event_text_for_match": "string|null",
+  "event_text_for_embedding": "string|null",
   "retention_until": "datetime|null"
 }
 ```
@@ -282,6 +284,14 @@ content_hash
   "event_type": "string|null",
   "action_terms": ["string"],
   "event_time_hint": "datetime|null",
+  "event_text_for_match": "string|null",
+  "event_text_for_embedding": "string|null",
+  "semantic_fingerprint": {
+    "embedding_model": "string|null",
+    "embedding_vector_id": "string|null",
+    "embedding_created_at": "datetime|null",
+    "embedding_quality_flags": ["string"]
+  },
   "confidence": 0.0,
   "is_weak_signal": false,
   "weak_signal_reason": "string|null",
@@ -332,6 +342,22 @@ B站视频条目默认可以标记：
   "item_ids": ["string"],
   "confidence": 0.0,
   "reason": "string",
+  "matched_by": ["id_match|url_match|title_containment|entity_time_rule|bm25_ngram|embedding_rerank"],
+  "match_features_json": {
+    "id_match": false,
+    "url_match": false,
+    "title_containment": false,
+    "keyword_overlap": 0.0,
+    "ngram_overlap": 0.0,
+    "bm25_score": 0.0,
+    "embedding_similarity": null,
+    "entity_overlap": 0.0,
+    "action_overlap": 0.0,
+    "object_overlap": 0.0,
+    "time_distance_hours": null,
+    "hard_constraints_passed": false,
+    "guardrail_flags": ["string"]
+  },
   "review_required": false,
   "blocks_auto_analysis": false,
   "blocks_publish": false
@@ -343,6 +369,8 @@ B站视频条目默认可以标记：
 - 高置信度自动合并。
 - 中置信度写入候选关系，不阻断自动链路。
 - 核心实体或时间冲突禁止自动合并。
+- BM25 / n-gram 提供可解释召回，embedding 提供语义召回或 rerank。
+- embedding 高相似不能单独触发自动合并，必须同时满足实体、动作、对象或时间窗口硬约束。
 - 弱信号不强行写成事实。
 
 ## 评分与快照 Schema
@@ -769,7 +797,13 @@ v0.3 不实现模式 B 完整链路，只保留可复用结构。
 {
   "run_id": "string",
   "event_signals": [],
-  "existing_events": []
+  "existing_events": [],
+  "match_config": {
+    "use_bm25_ngram": true,
+    "use_embedding": true,
+    "auto_merge_confidence_threshold": 0.85,
+    "candidate_review_confidence_threshold": 0.60
+  }
 }
 ```
 
@@ -777,6 +811,98 @@ v0.3 不实现模式 B 完整链路，只保留可复用结构。
 
 - `event_signals`：`EventSignal[]`
 - `existing_events`：`Event[]`
+- `match_config`：事件匹配配置，允许 embedding 不可用时降级为规则 + BM25 / n-gram
+
+### EventMatchRetrievalInput
+
+```json
+{
+  "run_id": "string",
+  "event_signal": {},
+  "candidate_events": [],
+  "limit": 20
+}
+```
+
+字段：
+
+- `event_signal`：当前待匹配的 `EventSignal`
+- `candidate_events`：候选 `Event[]`
+- `limit`：最大召回数量
+
+### EventMatchRetrievalOutput
+
+```json
+{
+  "meta": {},
+  "candidates": [
+    {
+      "event_id": "string",
+      "retrieval_method": "bm25_ngram|embedding",
+      "bm25_score": 0.0,
+      "ngram_overlap": 0.0,
+      "embedding_similarity": null,
+      "matched_fragments": ["string"]
+    }
+  ]
+}
+```
+
+字段：
+
+- `meta`：`ToolResultMeta`
+- `candidates`：召回候选及可审计分数
+
+### EmbedEventTextInput
+
+```json
+{
+  "run_id": "string",
+  "event_signal_id": "string",
+  "event_text_for_embedding": "string",
+  "embedding_model": "string"
+}
+```
+
+### EmbedEventTextOutput
+
+```json
+{
+  "meta": {},
+  "embedding_model": "string",
+  "embedding_vector_id": "string|null",
+  "embedding_created_at": "datetime|null",
+  "embedding_quality_flags": ["string"]
+}
+```
+
+### RerankEventMatchesInput
+
+```json
+{
+  "run_id": "string",
+  "event_signal": {},
+  "retrieved_candidates": [],
+  "match_config": {}
+}
+```
+
+### RerankEventMatchesOutput
+
+```json
+{
+  "meta": {},
+  "ranked_candidates": [
+    {
+      "event_id": "string",
+      "match_confidence": "high|medium|low|rejected",
+      "recommended_action": "merge|candidate_review|reject|create",
+      "matched_by": ["string"],
+      "match_features_json": {}
+    }
+  ]
+}
+```
 
 ### MatchAndResolveEventsOutput
 

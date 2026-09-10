@@ -85,6 +85,7 @@ public_safety
 常用判定字段：
 
 - `EventResolution.confidence`：判断是否允许自动合并。
+- `EventResolution.matched_by` 和 `match_features_json`：判断是否由 BM25 / n-gram 或 embedding 辅助命中，以及硬约束是否通过。
 - `EventSignal.is_weak_signal`：判断弱信号是否被当作事实。
 - `EventSignal.entities` 和 `Event.entities`：判断核心实体是否冲突。
 - `EventSignal.event_time_hint`、`Event.first_seen_at`、`Event.last_seen_at`：判断时间窗口是否冲突。
@@ -108,6 +109,8 @@ public_safety
 | `event_merge.low_confidence` | `EventResolution.confidence < 0.85` | warn | 不自动合并；`0.60 <= confidence < 0.85` 写入候选复核，`confidence < 0.60` 新建低置信事件或忽略弱信号 |
 | `event_merge.entity_conflict` | 核心实体冲突 | block | 禁止自动合并 |
 | `event_merge.time_conflict` | 事件时间窗口冲突 | block | 禁止自动合并 |
+| `event_merge.embedding_conflict` | embedding 高相似但核心实体或时间冲突 | block | 禁止自动合并，记录 `semantic_false_positive_risk` |
+| `event_merge.embedding_only` | 只有 embedding 高相似，缺少实体、动作、对象或时间硬约束 | warn | 不自动合并，写入候选复核 |
 | `event_merge.weak_signal_only` | 仅由弱社区信号支持 | warn | 不作为确定事件发布 |
 | `event_merge.bilibili_weak_match` | B站视频标题弱匹配已有事件 | warn | 只作为传播信号候选 |
 
@@ -118,6 +121,7 @@ public_safety
 中置信度 -> 记录候选关系，不合并，不阻断
 低置信度 -> 新建低置信度事件或忽略弱信号
 实体/时间冲突 -> 禁止合并
+embedding-only -> 最多进入中置信度复核
 ```
 
 ### source_quality

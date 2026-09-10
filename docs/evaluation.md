@@ -261,6 +261,49 @@ content_hash
 
 - `evaluation_cases` 中人工标注的 should_merge / should_not_merge 样例。
 - `EventResolution.action`、`EventResolution.confidence` 和 `reason`。
+- `EventResolution.matched_by` 和 `match_features_json`，用于拆分规则、BM25 / n-gram 和 embedding 的贡献。
+
+### hybrid_match_component_metrics
+
+定义：
+
+```text
+分别统计规则强匹配、BM25 / n-gram 召回、embedding rerank 的 precision / recall / false positive
+```
+
+用途：
+
+- 判断 BM25 / n-gram 是否提升了短文本和关键词相关事件的召回。
+- 判断 embedding 是否提升了跨平台改写和同义表达的召回。
+- 判断 embedding 是否引入短话题泛化、历史内容污染和同名不同事件误合并。
+- 决定是否调整 `embedding_similarity`、`keyword_overlap`、`ngram_overlap`、`bm25_score` 和时间窗口阈值。
+
+数据需求：
+
+- `match_features_json.keyword_overlap`
+- `match_features_json.ngram_overlap`
+- `match_features_json.bm25_score`
+- `match_features_json.embedding_similarity`
+- `match_features_json.entity_overlap`
+- `match_features_json.time_distance_hours`
+- `match_features_json.guardrail_flags`
+- 人工标注的 should_merge / should_not_merge。
+
+建议输出：
+
+| 组件 | 指标 |
+|---|---|
+| 规则强匹配 | precision、recall、误拒绝样例 |
+| BM25 / n-gram | 新增召回数、正确新增合并数、误合并数 |
+| embedding rerank | 新增召回数、正确新增合并数、误合并数 |
+| Guardrails | 实体冲突拦截数、时间冲突拦截数、semantic_false_positive_risk 数 |
+| 人工复核 | candidate_review 数量、复核后确认合并比例 |
+
+第一阶段阈值口径：
+
+- embedding 高相似但缺少实体、动作、对象或时间支撑时，不计入自动合并通过。
+- embedding 高相似但实体 / 时间冲突时，必须计入 guardrail 成功拦截。
+- BM25 / n-gram 与 embedding 结论冲突时，默认进入人工复核，不作为自动合并错误。
 
 ### async_review_task_count
 
