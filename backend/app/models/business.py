@@ -29,6 +29,10 @@ class Source(TimestampMixin, Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
     name: Mapped[str] = mapped_column(String(120), nullable=False, unique=True, index=True)
     source_type: Mapped[str] = mapped_column(String(40), nullable=False, index=True)
+    source_status: Mapped[str] = mapped_column(
+        String(60), default="use", nullable=False, index=True
+    )
+    source_origin: Mapped[str | None] = mapped_column(String(60), index=True)
     platform: Mapped[str] = mapped_column(String(80), nullable=False, index=True)
     base_url: Mapped[str | None] = mapped_column(String(500))
     credibility_weight: Mapped[float] = mapped_column(Float, default=1.0, nullable=False)
@@ -49,6 +53,11 @@ class Item(TimestampMixin, Base):
     external_id: Mapped[str | None] = mapped_column(String(255), index=True)
     title: Mapped[str] = mapped_column(String(500), nullable=False, index=True)
     url: Mapped[str | None] = mapped_column(String(1000))
+    source_status: Mapped[str] = mapped_column(
+        String(60), default="use", nullable=False, index=True
+    )
+    source_origin: Mapped[str | None] = mapped_column(String(60), index=True)
+    signal_role: Mapped[str | None] = mapped_column(String(80), index=True)
     author: Mapped[str | None] = mapped_column(String(255))
     summary: Mapped[str | None] = mapped_column(Text)
     content: Mapped[str | None] = mapped_column(Text)
@@ -60,6 +69,8 @@ class Item(TimestampMixin, Base):
     raw_payload_json: Mapped[dict[str, Any] | None] = mapped_column(JSON)
     raw_metrics_json: Mapped[dict[str, Any] | None] = mapped_column(JSON)
     normalized_json: Mapped[dict[str, Any] | None] = mapped_column(JSON)
+    quality_flags_json: Mapped[list[str] | None] = mapped_column(JSON)
+    signal_contribution_roles_json: Mapped[list[str] | None] = mapped_column(JSON)
     source_citation_json: Mapped[dict[str, Any] | None] = mapped_column(JSON)
 
     source: Mapped[Source] = relationship(back_populates="items")

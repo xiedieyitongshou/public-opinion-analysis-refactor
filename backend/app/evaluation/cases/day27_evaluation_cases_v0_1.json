@@ -1,0 +1,464 @@
+{
+  "case_set_id": "day27_evaluation_cases_v0_1",
+  "version": "0.1",
+  "created_at": "2026-09-11T00:00:00+08:00",
+  "scope": "Sampling-driven gold cases for event matching, search enrichment filtering, feature eligibility, hotspot classification, and intra-category ordering.",
+  "source_materials": [
+    "reports/zhihu-hotlist-search-sampling-v0.1.md",
+    "reports/weibo-rsshub-sampling-v0.1.md",
+    "reports/weibo-to-zhihu-search-sampling-v0.1.md",
+    "reports/weibo-cli-search-statuses-limited-live-v0.1.md",
+    "reports/official-news-structure-probe-v0.1.md",
+    "reports/cross-source-classification-probe-v0.1.md",
+    "notes/source-probe-raw/zhihu-hotlist-search-sampling.json",
+    "notes/source-probe-raw/weibo-to-zhihu-search-sampling.json",
+    "notes/source-probe-raw/official-news-structure-probe-v0.1.raw.json",
+    "backend/data/weibo-cli-live-samples-summary.json"
+  ],
+  "feature_policy": {
+    "may_contribute_to_classification_or_sorting": [
+      "zhihu_hot_list.rank",
+      "zhihu_hot_list.fetched_at",
+      "zhihu_search.retained_result_count_after_relevance_filter",
+      "zhihu_search.comment_count_after_relevance_filter",
+      "zhihu_search.vote_up_count_after_relevance_filter",
+      "zhihu_search.ranking_score_after_relevance_filter",
+      "zhihu_search.edit_time_after_relevance_filter",
+      "weibo_rsshub.topic_present",
+      "weibo_rsshub.list_position_as_weak_attention_signal",
+      "weibo_rsshub.fetched_at",
+      "weibo_cli.matched_status_count_after_relevance_filter",
+      "weibo_cli.latest_status_created_at_after_relevance_filter",
+      "weibo_cli.comments_count_after_relevance_filter",
+      "weibo_cli.reposts_count_after_relevance_filter",
+      "weibo_cli.attitudes_count_after_relevance_filter",
+      "weibo_cli.total_number_proxy_with_proxy_flag",
+      "official_rss.published_at_when_present",
+      "official_rss.source_name",
+      "official_rss.source_status",
+      "official_rss.source_coverage_count"
+    ],
+    "must_not_contribute_to_classification_or_sorting": [
+      "zhihu_search.rejected_or_audit_only_results",
+      "zhihu_search.metrics_from_low_related_or_historical_results",
+      "weibo_cli.low_related_or_marketing_statuses",
+      "weibo_cli.total_number_proxy_without_search_result_total_proxy_flag",
+      "weibo_rsshub.hot_value_when_missing_or_unparsed",
+      "weibo_rsshub.pubDate_when_missing",
+      "weibo_rsshub.list_position_as_official_heat_value",
+      "official_rss.raw_metrics_when_absent",
+      "official_source_presence_as_public_heat_claim"
+    ]
+  },
+  "event_cases": [
+    {
+      "case_id": "evt_c_001_taizi_li_tuchun_death",
+      "title": "太子奶创始人李途纯去世",
+      "sample_type": ["community_high_official_not_found", "weibo_topn_with_zhihu_search_support"],
+      "source_observations": {
+        "weibo_rsshub": {
+          "present": true,
+          "rank": 3,
+          "title": "太子奶创始人李途纯去世",
+          "quality_flags": ["missing_pub_date", "missing_hot_value", "list_position_derived_from_rss_order"]
+        },
+        "weibo_cli": {
+          "present": true,
+          "returned_status_count": 10,
+          "total_number_proxy": 957,
+          "latest_status_created_at": "2026-09-09T03:15:18+00:00",
+          "quality_flags": ["search_result_total_proxy", "query_driven_sample"]
+        },
+        "zhihu_search": {
+          "present": true,
+          "returned_count": 3,
+          "retained_count": 3,
+          "rejected_count": 0,
+          "best_relation_reasons": ["topic_title_contained", "query_contained", "keyword_overlap_high"]
+        },
+        "official": {"present": false, "support_status": "not_found"}
+      },
+      "expected": {
+        "platform_presence": {"weibo_topn": true, "weibo_cli": true, "zhihu_search": true, "official_source": false},
+        "cross_platform_match_type": "search_supported",
+        "official_support_status": "not_found",
+        "priority_category": "C_cross_platform_without_official",
+        "confidence_level": "medium",
+        "search_hit_quality": "same_id_or_title",
+        "primary_platform_rank": 3,
+        "source_health": "use",
+        "conservative_language_required": true,
+        "sort_expectation_within_category": "rank_above_evt_c_002_and_evt_c_003"
+      },
+      "human_label_notes": "微博 TopN 与知乎高相关搜索结果指向同一死亡事件；当前官媒 RSS 样本未命中，日报不能写成已被官媒确认。"
+    },
+    {
+      "case_id": "evt_c_002_children_house_second_bedroom",
+      "title": "为什么子女买房会把父母安排在次卧",
+      "sample_type": ["community_high_official_not_found", "weibo_topn_with_zhihu_search_support", "search_noise_partial"],
+      "source_observations": {
+        "weibo_rsshub": {
+          "present": true,
+          "rank": 6,
+          "title": "为什么子女买房会把父母安排在次卧",
+          "quality_flags": ["missing_pub_date", "missing_hot_value", "list_position_derived_from_rss_order"]
+        },
+        "zhihu_search": {
+          "present": true,
+          "returned_count": 3,
+          "retained_count_observed": 2,
+          "retained_count_human_expected": 1,
+          "rejected_count_human_expected": 2,
+          "quality_flags": ["zhihu_search_noise_detected", "historical_or_aggregator_result_detected"]
+        },
+        "official": {"present": false, "support_status": "not_found"}
+      },
+      "expected": {
+        "platform_presence": {"weibo_topn": true, "zhihu_search": true, "official_source": false},
+        "cross_platform_match_type": "search_supported",
+        "official_support_status": "not_found",
+        "priority_category": "C_cross_platform_without_official",
+        "confidence_level": "medium",
+        "search_hit_quality": "keyword_overlap",
+        "primary_platform_rank": 6,
+        "source_health": "use",
+        "conservative_language_required": true,
+        "sort_expectation_within_category": "rank_below_evt_c_001_due_weaker_match"
+      },
+      "human_label_notes": "第一个知乎问题可作为讨论补证；知乎热榜日报页不应参与分类或排序。"
+    },
+    {
+      "case_id": "evt_c_003_netizen_donation_one_yuan",
+      "title": "网红宣传捐款百万实际只捐1元",
+      "sample_type": ["community_high_official_not_found", "search_filter_false_negative", "weibo_topn_with_zhihu_search_support_expected"],
+      "source_observations": {
+        "weibo_rsshub": {
+          "present": true,
+          "rank": 7,
+          "title": "网红宣传捐款百万实际只捐1元",
+          "quality_flags": ["missing_pub_date", "missing_hot_value", "list_position_derived_from_rss_order"]
+        },
+        "weibo_cli": {
+          "present": true,
+          "returned_status_count": 10,
+          "total_number_proxy": 81161,
+          "latest_status_created_at": "2026-09-09T03:30:00+00:00",
+          "quality_flags": ["search_result_total_proxy", "query_driven_sample", "low_related_status_detected"]
+        },
+        "zhihu_search": {
+          "present": true,
+          "returned_count": 3,
+          "retained_count_observed": 0,
+          "retained_count_human_expected": 1,
+          "example_expected_match_title": "网红晒百万捐款截图被查实仅捐 1 元,借灾情「诈捐」博流量该如何惩处?",
+          "quality_flags": ["current_filter_false_negative"]
+        },
+        "official": {"present": false, "support_status": "not_found"}
+      },
+      "expected": {
+        "platform_presence": {"weibo_topn": true, "weibo_cli": true, "zhihu_search": true, "official_source": false},
+        "cross_platform_match_type": "search_supported",
+        "official_support_status": "not_found",
+        "priority_category": "C_cross_platform_without_official",
+        "confidence_level": "medium",
+        "search_hit_quality": "entity_action_match",
+        "primary_platform_rank": 7,
+        "source_health": "use",
+        "conservative_language_required": true,
+        "sort_expectation_within_category": "rank_below_evt_c_002_until_filter_accepts_clean_zhihu_match"
+      },
+      "human_label_notes": "当前规则把同一诈捐事件误拒；后续匹配应识别“宣传捐款百万实际只捐1元”与“百万捐款截图仅捐1元”的实体-动作-对象等价。"
+    },
+    {
+      "case_id": "evt_e_001_zhihu_ancient_towns_similarity",
+      "title": "全国各地古镇相似度高达99%",
+      "sample_type": ["single_platform_zhihu_only", "zhihu_hot_list_internal_enrichment"],
+      "source_observations": {
+        "zhihu_hot_list": {
+          "present": true,
+          "rank": 1,
+          "url": "https://www.zhihu.com/question/591935274",
+          "quality_flags": ["missing_hot_value", "missing_published_at"]
+        },
+        "zhihu_search": {
+          "present": true,
+          "returned_count": 3,
+          "retained_count": 3,
+          "best_relation_reasons": ["same_question_id", "candidate_title_contained", "keyword_overlap_high"]
+        },
+        "weibo_rsshub": {"present": false, "support_status": "not_observed_in_sample"},
+        "official": {"present": false, "support_status": "not_found"}
+      },
+      "expected": {
+        "platform_presence": {"zhihu_topn": true, "zhihu_search": true, "official_source": false},
+        "cross_platform_match_type": "single_platform_only",
+        "official_support_status": "not_found",
+        "priority_category": "E_single_platform_only",
+        "confidence_level": "medium",
+        "search_hit_quality": "same_id_or_title",
+        "primary_platform_rank": 1,
+        "source_health": "use",
+        "conservative_language_required": true,
+        "sort_expectation_within_category": "rank_above_weibo_single_platform_rank_10"
+      },
+      "human_label_notes": "知乎搜索只增强同一知乎问题，不构成跨平台支撑。"
+    },
+    {
+      "case_id": "evt_e_002_eating_show_hypokalemia",
+      "title": "吃播圈催吐导泄都造成血钾暴跌",
+      "sample_type": ["weibo_rsshub_topic_no_zhihu_discussion", "single_platform_weibo_only"],
+      "source_observations": {
+        "weibo_rsshub": {
+          "present": true,
+          "rank": 10,
+          "title": "吃播圈催吐导泄都造成血钾暴跌",
+          "quality_flags": ["missing_pub_date", "missing_hot_value", "list_position_derived_from_rss_order"]
+        },
+        "weibo_cli": {
+          "present": true,
+          "returned_status_count": 10,
+          "total_number_proxy": 5543,
+          "latest_status_created_at": "2026-09-09T03:25:53+00:00",
+          "quality_flags": ["search_result_total_proxy", "query_driven_sample"]
+        },
+        "zhihu_search": {
+          "present": true,
+          "returned_count": 3,
+          "retained_count": 0,
+          "rejected_count": 3,
+          "quality_flags": ["no_zhihu_discussion_found", "zhihu_search_noise_detected"]
+        },
+        "official": {"present": false, "support_status": "not_found"}
+      },
+      "expected": {
+        "platform_presence": {"weibo_topn": true, "weibo_cli": true, "zhihu_search": false, "official_source": false},
+        "cross_platform_match_type": "single_platform_only",
+        "official_support_status": "not_found",
+        "priority_category": "E_single_platform_only",
+        "confidence_level": "low",
+        "search_hit_quality": "none",
+        "primary_platform_rank": 10,
+        "source_health": "use",
+        "conservative_language_required": true,
+        "sort_expectation_within_category": "rank_below_evt_e_001_due_lower_rank_and_no_cross_platform_support"
+      },
+      "human_label_notes": "微博 RSSHub 话题和 CLI 样本可保留；知乎搜索未命中高相关讨论，不能补造跨平台热度。"
+    },
+    {
+      "case_id": "evt_f_001_chinanews_green_low_carbon_forum",
+      "title": "“工业互联网+绿色低碳”融合创新发展论坛在沈阳举办",
+      "sample_type": ["official_reported_community_low_heat", "official_only"],
+      "source_observations": {
+        "official": {
+          "present": true,
+          "source_id": "chinanews_scroll_rss",
+          "source_status": "use",
+          "published_at": "2026-09-10T15:00:03+08:00",
+          "url": "https://www.chinanews.com.cn/cj/2026/09-10/10693964.shtml",
+          "quality_flags": ["missing_author"]
+        },
+        "weibo_rsshub": {"present": false, "support_status": "not_observed_in_sample"},
+        "zhihu_hot_list": {"present": false, "support_status": "not_observed_in_sample"}
+      },
+      "expected": {
+        "platform_presence": {"official_source": true},
+        "cross_platform_match_type": "official_only",
+        "official_support_status": "supported",
+        "priority_category": "F_official_only",
+        "confidence_level": "medium",
+        "search_hit_quality": "none",
+        "primary_platform_rank": null,
+        "source_health": "use",
+        "conservative_language_required": false,
+        "sort_expectation_within_category": "rank_above_evt_f_002_due_use_source_and_fresh_published_at"
+      },
+      "human_label_notes": "只能写作官媒报道事件，不能写成公众热议。"
+    },
+    {
+      "case_id": "evt_f_002_xinhua_video_new_in_china",
+      "title": "微视频｜“新”在中国",
+      "sample_type": ["official_reported_community_low_heat", "official_only", "fallback_source"],
+      "source_observations": {
+        "official": {
+          "present": true,
+          "source_id": "xinhua_politics_rss",
+          "source_status": "fallback",
+          "published_at": null,
+          "url": "http://www.news.cn/politics/2022-12/14/c_1129207254.htm",
+          "quality_flags": ["missing_published_at"]
+        },
+        "weibo_rsshub": {"present": false, "support_status": "not_observed_in_sample"},
+        "zhihu_hot_list": {"present": false, "support_status": "not_observed_in_sample"}
+      },
+      "expected": {
+        "platform_presence": {"official_source": true},
+        "cross_platform_match_type": "official_only",
+        "official_support_status": "weak_supported",
+        "priority_category": "F_official_only",
+        "confidence_level": "low",
+        "search_hit_quality": "none",
+        "primary_platform_rank": null,
+        "source_health": "fallback",
+        "conservative_language_required": false,
+        "sort_expectation_within_category": "rank_below_evt_f_001_due_fallback_and_missing_published_at"
+      },
+      "human_label_notes": "新华网 fallback 可做弱官媒证据，但发布时间缺失会降低排序和置信度。"
+    },
+    {
+      "case_id": "evt_degrade_001_zhihu_only_when_weibo_rsshub_missing",
+      "title": "美网女单第四轮郑钦文 2-0 斯瓦泰克挺进 8 强",
+      "sample_type": ["weibo_rsshub_missing_degradation", "single_platform_zhihu_only"],
+      "source_observations": {
+        "zhihu_hot_list": {
+          "present": true,
+          "rank": 4,
+          "url": "https://www.zhihu.com/question/2080414404730779495",
+          "quality_flags": ["missing_hot_value", "missing_published_at"]
+        },
+        "zhihu_search": {"present": true, "returned_count": 3, "retained_count": 3},
+        "weibo_rsshub": {
+          "present": false,
+          "support_status": "source_unavailable_or_topic_missing",
+          "quality_flags": ["weibo_rsshub_missing"]
+        },
+        "official": {"present": false, "support_status": "not_found"}
+      },
+      "expected": {
+        "platform_presence": {"zhihu_topn": true, "zhihu_search": true, "weibo_topn": false, "official_source": false},
+        "cross_platform_match_type": "single_platform_only",
+        "official_support_status": "not_found",
+        "priority_category": "E_single_platform_only",
+        "confidence_level": "medium",
+        "search_hit_quality": "same_id_or_title",
+        "primary_platform_rank": 4,
+        "source_health": "use",
+        "conservative_language_required": true,
+        "sort_expectation_within_category": "do_not_block_classification_when_weibo_missing"
+      },
+      "human_label_notes": "微博 RSSHub 缺失或本轮未覆盖时，不阻塞知乎候选；只降低微博侧 presence，不把缺失当作负面事实证据。"
+    }
+  ],
+  "matching_cases": [
+    {
+      "case_id": "match_001_zhihu_hotlist_same_question",
+      "parent_title": "如何看待全国各地古镇相似度高达 99%，连「特色小吃」都一模一样？为何会出现这一局面？",
+      "enrichment_title": "如何看待全国各地古镇相似度高达 99%,连「特色小吃」都一模一样?为何会出现这一局面? - 知乎",
+      "source_pair": ["zhihu_hot_list", "zhihu_search"],
+      "observed_relation_reasons": ["same_question_id", "candidate_title_contained", "keyword_overlap_high"],
+      "expected": {
+        "same_event": true,
+        "relation_decision": "accepted",
+        "confidence_level": "high",
+        "should_contribute_to_classification": true,
+        "should_contribute_to_sorting": true
+      }
+    },
+    {
+      "case_id": "match_002_weibo_taizi_to_zhihu",
+      "parent_title": "太子奶创始人李途纯去世",
+      "enrichment_title": "太子奶创始人李途纯去世,曾以8888万夺央视「标王」,被拘禁15个月后获无罪释放,如何评价他的一生? - 知乎",
+      "source_pair": ["weibo_rsshub", "zhihu_search"],
+      "observed_relation_reasons": ["topic_title_contained", "query_contained", "keyword_overlap_high"],
+      "expected": {
+        "same_event": true,
+        "relation_decision": "accepted",
+        "confidence_level": "high",
+        "should_contribute_to_classification": true,
+        "should_contribute_to_sorting": true
+      }
+    },
+    {
+      "case_id": "match_003_weibo_netizen_donation_false_negative",
+      "parent_title": "网红宣传捐款百万实际只捐1元",
+      "enrichment_title": "网红晒百万捐款截图被查实仅捐 1 元,借灾情「诈捐」博流量该如何惩处?",
+      "source_pair": ["weibo_rsshub", "zhihu_search"],
+      "observed_relation_reasons": [],
+      "observed_baseline_decision": "rejected",
+      "expected": {
+        "same_event": true,
+        "relation_decision": "accepted",
+        "confidence_level": "medium",
+        "should_contribute_to_classification": true,
+        "should_contribute_to_sorting": true
+      }
+    },
+    {
+      "case_id": "match_004_weibo_children_to_zhihu_daily_pollution",
+      "parent_title": "为什么子女买房会把父母安排在次卧",
+      "enrichment_title": "知乎热榜日报 | 2026年4月13日 - 知乎",
+      "source_pair": ["weibo_rsshub", "zhihu_search"],
+      "observed_relation_reasons": ["keyword_overlap_high"],
+      "expected": {
+        "same_event": false,
+        "relation_decision": "audit_only",
+        "confidence_level": "low",
+        "should_contribute_to_classification": false,
+        "should_contribute_to_sorting": false
+      }
+    },
+    {
+      "case_id": "match_005_generic_apple_huawei_noise",
+      "parent_title": "苹果 华为",
+      "enrichment_title": "苹果、华为、小米、OV,到底谁家的Care+最厚道? - 知乎",
+      "source_pair": ["weibo_rsshub", "zhihu_search"],
+      "observed_relation_reasons": ["topic_title_contained", "query_contained", "keyword_overlap_high"],
+      "expected": {
+        "same_event": false,
+        "relation_decision": "audit_only",
+        "confidence_level": "low",
+        "should_contribute_to_classification": false,
+        "should_contribute_to_sorting": false
+      }
+    },
+    {
+      "case_id": "match_006_weibo_eating_show_no_zhihu_support",
+      "parent_title": "吃播圈催吐导泄都造成血钾暴跌",
+      "enrichment_title": "吃播网红干饭莹莹去世年仅 24 岁,其曾称「反复吃,钾流失」,钾流失有多危险?",
+      "source_pair": ["weibo_rsshub", "zhihu_search"],
+      "observed_baseline_decision": "rejected",
+      "expected": {
+        "same_event": false,
+        "relation_decision": "audit_only",
+        "confidence_level": "low",
+        "should_contribute_to_classification": false,
+        "should_contribute_to_sorting": false
+      }
+    }
+  ],
+  "error_cases": [
+    {
+      "case_id": "err_001_false_negative_netizen_donation",
+      "type": "search_filter_false_negative",
+      "observed": "Rule baseline rejected all 3 Zhihu results for the Weibo topic.",
+      "expected": "At least one Zhihu result should be accepted because entity/action/object match the same alleged donation event.",
+      "metric_use": "Count as recall miss for event matching and search enrichment."
+    },
+    {
+      "case_id": "err_002_false_positive_zhihu_daily_page",
+      "type": "historical_or_aggregator_pollution",
+      "observed": "Keyword-overlap baseline retained a Zhihu daily report page for the parent-bedroom topic.",
+      "expected": "Audit only; aggregator pages must not contribute to classification or sorting.",
+      "metric_use": "Count as precision risk and quality_flags exclusion test."
+    },
+    {
+      "case_id": "err_003_false_positive_generic_apple_huawei",
+      "type": "generic_short_topic_pollution",
+      "observed": "Keyword-overlap baseline retained a generic Apple/Huawei service comparison result.",
+      "expected": "Audit only until entity/action/object or time-window evidence is available.",
+      "metric_use": "Count as short-query false positive risk."
+    },
+    {
+      "case_id": "err_004_rsshub_rank_misuse",
+      "type": "feature_misuse_guardrail",
+      "observed": "RSSHub items expose list order but no stable hot_value or pubDate.",
+      "expected": "Use list_position only as weak attention signal and never as official heat value.",
+      "metric_use": "Guardrail test for no cross-platform total score and no overclaim."
+    }
+  ],
+  "coverage_gaps": [
+    "No real A_cross_platform_with_official sample was observed in the Day 15-20 materials.",
+    "No real B_single_platform_with_search_and_official sample was observed because official RSS did not match community samples.",
+    "No real D_single_platform_with_official sample was observed in the sampled window.",
+    "No full RSSHub outage sample was observed; evt_degrade_001 marks the expected behavior when RSSHub is unavailable or misses a topic, and future validation runs should replace it with a real failure sample."
+  ]
+}

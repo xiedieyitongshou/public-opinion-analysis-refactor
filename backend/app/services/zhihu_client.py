@@ -186,8 +186,8 @@ def normalize_hot_list_items(result: ZhihuHotListResult) -> list[dict[str, Any]]
                 "source_origin": "official_api",
                 "source_status": "use",
                 "platform": "zhihu",
-                "signal_role": "discussion_focus_signal",
-                "score_contribution_role": ["discussion", "attention", "community_heat"],
+                "signal_role": "attention_signal",
+                "signal_contribution_role": ["attention", "discussion", "community_hot_candidate"],
                 "external_id": content_hash[:24],
                 "title": item.title,
                 "url": item.url,
@@ -259,8 +259,8 @@ def normalize_search_items(
                 "source_origin": "official_api",
                 "source_status": "use",
                 "platform": "zhihu",
-                "signal_role": "discussion_focus_signal",
-                "score_contribution_role": ["discussion", "community_heat"],
+                "signal_role": "search_enrichment_signal",
+                "signal_contribution_role": ["discussion", "interaction"],
                 "external_id": str(item.content_id)
                 if item.content_id is not None
                 else content_hash[:24],

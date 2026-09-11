@@ -1,0 +1,139 @@
+{
+  "generated_at": "2026-09-09T03:43:47.207109+00:00",
+  "source": "weibo_cli_search_statuses_limited",
+  "command_pattern": "npx -y @weibo-ai/weibo-cli@latest search statuses/limited --q <topic> --type 1 --count 10 --output json",
+  "items": [
+    {
+      "topic": "吃播圈催吐导泄都造成血钾暴跌",
+      "total_number_proxy": 5543,
+      "returned_status_count": 10,
+      "top_samples": [
+        {
+          "external_id": "5341198218694159",
+          "mid": "5341198218694159",
+          "text": "【#出汗乏力当心低钾血症#！#很多人忽视了钾的重要性#】专家介绍，轻症中暑和轻症低钾血症症状相似度极高，仅凭体感很难区分。普通中暑属于高温脱水、体温调节紊乱，患者转移到阴凉通风处、补充水分后，症状可快速缓解；低钾血症是体内电解质缺失，即便降温补水，四肢无力、心慌疲惫的症状依然无法改善 ​",
+          "url": null,
+          "author": "文明宁夏",
+          "created_at": "2026-09-09T03:25:53+00:00",
+          "repost_count": 0,
+          "comment_count": 0,
+          "like_count": 0,
+          "quality_flags": []
+        },
+        {
+          "external_id": "5341197737395680",
+          "mid": "5341197737395680",
+          "text": "千万不要反复催吐\n\n一\n\n近日，24岁吃播网红“干饭莹莹”因反复催吐导致血钾暴跌至2.3mmol/L，从发视频提醒粉丝到心脏骤停离世仅3天，事件引发社会广泛关注。\n\n生活中所见，有的女孩子怕长胖，又想吃。于是就想了个办法，吃完就催吐。那么，反复催吐对健康会有哪些伤害呢？\n\n从西医来看，催吐不只是把食 ​",
+          "url": null,
+          "author": "选择中医__董洪涛",
+          "created_at": "2026-09-09T03:23:58+00:00",
+          "repost_count": 1,
+          "comment_count": 2,
+          "like_count": 4,
+          "quality_flags": []
+        },
+        {
+          "external_id": "5341196739939811",
+          "mid": "5341196739939811",
+          "text": "【#出汗乏力当心低钾血症#！#很多人忽视了钾的重要性#】专家介绍，轻症中暑和轻症低钾血症症状相似度极高，仅凭体感很难区分。普通中暑属于高温脱水、体温调节紊乱，患者转移到阴凉通风处、补充水分后，症状可快速缓解；低钾血症是体内电解质缺失，即便降温补水，四肢无力、心慌疲惫的症状依然无法改善 ​",
+          "url": null,
+          "author": "武汉交通广播",
+          "created_at": "2026-09-09T03:20:00+00:00",
+          "repost_count": 0,
+          "comment_count": 0,
+          "like_count": 0,
+          "quality_flags": []
+        }
+      ],
+      "raw_file": "backend\\data\\weibo-cli-live-samples\\吃播圈催吐导泄都造成血钾暴跌.json"
+    },
+    {
+      "topic": "太子奶创始人李途纯去世",
+      "total_number_proxy": 957,
+      "returned_status_count": 10,
+      "top_samples": [
+        {
+          "external_id": "5341195557408735",
+          "mid": "5341195557408735",
+          "text": "#太子奶创始人李途纯去世#  那些移民的，估计没有过硬的关系才出走的吧，，也怪不得人家。。 ​",
+          "url": null,
+          "author": "不看评论区有毒",
+          "created_at": "2026-09-09T03:15:18+00:00",
+          "repost_count": 0,
+          "comment_count": 0,
+          "like_count": 0,
+          "quality_flags": []
+        },
+        {
+          "external_id": "5341194223356475",
+          "mid": "5341194223356475",
+          "text": "#太子奶创始人李途纯去世# \n9月8日，李途纯之子李帅对媒体表示，原湖南太子奶集团总裁、董事局主席李途纯于7日在北京去世，“发生时无人在身边，等救护车赶到时已经没有了生命体征”。1996年，李途纯用100万元启动资金，在湖南株洲建立了太子牛奶厂。1997年，李途纯砸下8888万元，夺得央视黄金时段广告 ​",
+          "url": null,
+          "author": "第一财经YiMagazine",
+          "created_at": "2026-09-09T03:10:00+00:00",
+          "repost_count": 0,
+          "comment_count": 0,
+          "like_count": 0,
+          "quality_flags": []
+        },
+        {
+          "external_id": "5341190012535898",
+          "mid": "5341190012535898",
+          "text": "【#李途纯离世一代乳酸菌开拓者终谢幕##李途纯突发脑溢血摔倒#】\n9月8日，太子奶创始人李途纯在北京去世。其子李帅向澎湃新闻证实；第一财经援引知情人士消息称，李途纯患高血压，昨晚突发脑溢血摔倒，身边无人陪伴。\n公开资料显示，其身份证登记出生年份为1960年，实际出生于1956年。\n1996年，李途纯 ​",
+          "url": null,
+          "author": "经理人杂志",
+          "created_at": "2026-09-09T02:53:16+00:00",
+          "repost_count": 0,
+          "comment_count": 0,
+          "like_count": 1,
+          "quality_flags": []
+        }
+      ],
+      "raw_file": "backend\\data\\weibo-cli-live-samples\\太子奶创始人李途纯去世.json"
+    },
+    {
+      "topic": "网红宣传捐款百万实际只捐1元",
+      "total_number_proxy": 81161,
+      "returned_status_count": 10,
+      "top_samples": [
+        {
+          "external_id": "5341199255735396",
+          "mid": "5341199255735396",
+          "text": "【#网红晒捐百万实捐1元比不捐更恶劣#】#网红捐1元立百万人设是对善意的玩弄#7月4日以来，台风“美莎克”过境，广西南宁多地遭受严重洪涝灾害，社会各界纷纷伸出援手。有人晒出真实的捐款凭证，传递善意；也有人把慈善当成流量风口，精心炮制一场“伪善”的表演。\n\n近日，平台万粉网红“安澜”被曝宣传 ​",
+          "url": null,
+          "author": "新浪广东",
+          "created_at": "2026-09-09T03:30:00+00:00",
+          "repost_count": 0,
+          "comment_count": 0,
+          "like_count": 0,
+          "quality_flags": []
+        },
+        {
+          "external_id": "5341190964379655",
+          "mid": "5341190964379655",
+          "text": "哎上课专升本学员反馈\n[不愧是你][不愧是你][不愧是你]\n【数学老师太牛了，我就学了三个多月，考了116】\n\n#高考数学132分开学考只考12分#网红宣传捐款百万实际只捐1元##湖南专升本# ​",
+          "url": null,
+          "author": "湖南专升本宝藏呀",
+          "created_at": "2026-09-09T02:57:02+00:00",
+          "repost_count": 0,
+          "comment_count": 0,
+          "like_count": 0,
+          "quality_flags": []
+        },
+        {
+          "external_id": "5341186602829283",
+          "mid": "5341186602829283",
+          "text": "#网红宣称捐款百万吸粉实际只捐1元#【#网红虚假宣传捐款百万被禁言#】受今年10号台风“美莎克”影响，7月4日以来，广西南宁多地遭受严重洪涝灾害，社会各界纷纷捐款捐物，支援防汛救灾。不少网友主动晒出捐款凭证，传递善意。但也有人打起流量的歪主意，借灾情炮制虚假善举博取关注。继福建日报全媒体 ​",
+          "url": null,
+          "author": "哈尔滨日报",
+          "created_at": "2026-09-09T02:39:43+00:00",
+          "repost_count": 0,
+          "comment_count": 0,
+          "like_count": 0,
+          "quality_flags": []
+        }
+      ],
+      "raw_file": "backend\\data\\weibo-cli-live-samples\\网红宣传捐款百万实际只捐1元.json"
+    }
+  ]
+}

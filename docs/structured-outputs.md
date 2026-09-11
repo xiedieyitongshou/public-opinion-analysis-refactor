@@ -125,6 +125,50 @@ warn
 block
 ```
 
+### SourceStatus
+
+```text
+use
+fallback
+experimental_fallback
+postpone
+use_pending_credentials
+fallback_pending_credentials
+```
+
+说明：
+
+- `use`：已验证，可进入正式 collector。
+- `fallback`：可访问但字段或稳定性有缺口，只做补充。
+- `experimental_fallback`：只用于采样、演示或弱候选补充。
+- `postpone`：不进入正式采集。
+- `use_pending_credentials`：官方契约明确，但凭据或额度仍需验证。
+- `fallback_pending_credentials`：授权路径明确，但稳定性、额度或成本仍未确认。
+
+### SourceOrigin
+
+```text
+official_rss
+official_api
+rsshub
+weibo_cli
+mock
+```
+
+### SignalRole
+
+```text
+event_signal
+topic_discovery_signal
+attention_signal
+discussion_focus_signal
+evidence_signal
+search_enrichment_signal
+mixed_signal
+```
+
+`signal_role` 描述该条标准化数据在流程中的用途。它不是热度分，也不是跨平台数值归一化。
+
 ## 工作流输入 Schema
 
 ### DailyBriefingRunConfig
@@ -211,7 +255,7 @@ block
 
 ### NormalizedItem
 
-`NormalizedItem` 是所有来源统一后的基础内容结构。
+`NormalizedItem` 是所有来源统一后的基础内容结构。这里的 normalized 指数据结构归一化，不表示把微博、知乎和官媒的热度指标归一化成同一个数值尺度。
 
 ```json
 {
@@ -219,7 +263,10 @@ block
   "source_id": "string",
   "source_name": "string",
   "source_type": "official_news",
+  "source_status": "use",
+  "source_origin": "official_rss",
   "platform": "people",
+  "signal_role": "evidence_signal",
   "channel": "string|null",
   "rank": "number|null",
   "title": "string",
@@ -231,7 +278,10 @@ block
   "content_text": "string|null",
   "raw_metrics": {},
   "raw_payload": {},
+  "normalized": {},
+  "source_citation": {},
   "quality_flags": ["string"],
+  "signal_contribution_role": ["string"],
   "content_hash": "string",
   "event_text_for_match": "string|null",
   "event_text_for_embedding": "string|null",
@@ -246,12 +296,55 @@ item_id
 source_id
 source_name
 source_type
+source_status
+source_origin
 platform
+signal_role
 title
 url
 fetched_at
 content_hash
 ```
+
+`signal_contribution_role` 是可选派生字段，MVP 阶段不要求 collector 必填。分类阶段可以根据 `source_origin`、`signal_role`、`raw_metrics` 和 `quality_flags` 推导该信号对 `attention`、`discussion`、`evidence`、`authority`、`velocity` 等维度的贡献。
+
+字段质量约束：
+
+- 缺少 `title` 时必须写入 `quality_flags = ["missing_title"]`。
+- 缺少 `url` 时必须写入 `quality_flags = ["missing_url"]`。
+- RSSHub 微博列表序号必须标记为 `list_position_derived_from_rss_order` 和 `not_heat_metric`。
+- 搜索增强结果低相关时只进入审计日志，不进入事件分类支撑。
+
+### RawMetric
+
+`RawMetric` 用于保存平台原始字段或代理字段，不做跨平台数值归一化。
+
+允许出现但不保证每个来源都有的 key：
+
+```text
+rank
+rank_delta
+list_position
+hot_value
+comment_count
+vote_count
+ranking_score
+edit_time
+read_count
+mention_count
+report_count
+total_number_proxy
+matched_status_count
+published_at
+fetched_at
+```
+
+规则：
+
+- `rank` / `list_position` 必须记录来源，例如 `rank_source` 或 quality flag。
+- `hot_value` 缺失时不得补造。
+- `total_number_proxy` 只能表达搜索结果规模代理，不等于平台真实讨论总量。
+- 官媒报道数量只能作为覆盖和证据支撑，不能直接解释为公众热度。
 
 ## 事件处理 Schema
 
@@ -259,16 +352,93 @@ content_hash
 
 ```json
 {
-  "item_id": "string",
+  "item_id": "string|null",
+  "source_signal_id": "string|null",
   "title": "string",
-  "url": "string",
+  "url": "string|null",
   "source_name": "string",
   "source_type": "official_news",
+  "source_status": "use",
+  "source_origin": "official_rss",
   "platform": "people",
   "published_at": "datetime|null",
-  "fetched_at": "datetime"
+  "fetched_at": "datetime",
+  "quality_flags": ["string"],
+  "raw_metrics_used": {},
+  "citation_role": "primary|supporting|discussion|official_support|search_enrichment|audit"
 }
 ```
+
+规则：
+
+- 缺少原始链接时必须写入 `quality_flags = ["missing_url"]`。
+- `source_status` 和 `source_origin` 必须保留到展示层，供前端和日报解释数据可用性。
+- `citation_role = audit` 的证据只能用于审计说明，不应作为事实或分类支撑。
+
+### SearchEnrichmentRelation
+
+`SearchEnrichmentRelation` 记录搜索增强结果与已有候选之间的相关性判断。它用于审计 `zhihu_search` 和微博 CLI 搜索结果是否可以参与分类支撑。
+
+```json
+{
+  "source": "zhihu_search|weibo_cli|global_search",
+  "parent_candidate_id": "string|null",
+  "parent_signal_id": "string|null",
+  "user_query_id": "string|null",
+  "parent_title": "string",
+  "enrichment_title": "string|null",
+  "decision": "accepted|audit_only|rejected",
+  "confidence": 0.0,
+  "matched_by": ["same_zhihu_question_id|title_containment|hashtag_match|keyword_overlap_high"],
+  "rejected_by": ["keyword_overlap_low|historical_content_pollution|time_window_conflict"],
+  "quality_flags": ["string"],
+  "audit_only": false
+}
+```
+
+规则：
+
+- `zhihu_search` 和微博 CLI 搜索结果必须挂到已有候选、已有信号或用户指定事件。
+- `decision = accepted` 才能参与分类支撑。
+- `decision = audit_only` 或 `rejected` 只能进入审计日志，不参与分类支撑。
+- `global_search` 只用于模式 B 或人工补证，不进入模式 A 常规定时热榜采集。
+
+### SourceSignal
+
+`SourceSignal` 保存来源级原始信号、平台内排序特征、搜索增强关系和分类依据。它位于 `NormalizedItem` 和 `EventSignal` 之间。
+
+```json
+{
+  "source_signal_id": "string",
+  "item_id": "string|null",
+  "source_id": "string",
+  "source_type": "community_hotlist",
+  "source_status": "use",
+  "source_origin": "official_api",
+  "platform": "zhihu",
+  "signal_role": "attention_signal",
+  "title": "string",
+  "url": "string|null",
+  "published_at": "datetime|null",
+  "fetched_at": "datetime",
+  "parent_candidate_id": "string|null",
+  "parent_signal_id": "string|null",
+  "user_query_id": "string|null",
+  "raw_metrics": {},
+  "platform_features": {},
+  "classification_features": {},
+  "relation_to_parent": {},
+  "contributes_to_classification": true,
+  "audit_only": false,
+  "quality_flags": ["string"]
+}
+```
+
+边界：
+
+- `signal_role = search_enrichment_signal` 时，必须有 `parent_candidate_id`、`parent_signal_id` 或 `user_query_id`。
+- 搜索增强结果如果 `audit_only = true`，必须设置 `contributes_to_classification = false`。
+- RSSHub 微博话题种子可以生成弱候选，但不能单独写成微博真实热度证据。
 
 ### EventSignal
 
@@ -276,8 +446,8 @@ content_hash
 
 ```json
 {
-  "signal_id": "string",
-  "item_id": "string",
+  "event_signal_id": "string",
+  "source_signal_ids": ["string"],
   "title": "string",
   "keywords": ["string"],
   "entities": ["string"],
@@ -285,8 +455,8 @@ content_hash
   "action_terms": ["string"],
   "event_time_hint": "datetime|null",
   "event_text_for_match": "string|null",
-  "event_text_for_embedding": "string|null",
   "semantic_fingerprint": {
+    "event_text_for_embedding": "string|null",
     "embedding_model": "string|null",
     "embedding_vector_id": "string|null",
     "embedding_created_at": "datetime|null",
@@ -295,7 +465,10 @@ content_hash
   "confidence": 0.0,
   "is_weak_signal": false,
   "weak_signal_reason": "string|null",
-  "source_citation": {},
+  "source_statuses": ["use"],
+  "source_roles": ["attention_signal"],
+  "platforms": ["zhihu"],
+  "source_signal_count": 1,
   "quality_flags": ["string"]
 }
 ```
@@ -308,6 +481,43 @@ B站视频条目默认可以标记：
   "weak_signal_reason": "video_title_may_not_represent_event_fact"
 }
 ```
+
+### EventCandidate
+
+`EventCandidate` 是事件合并前的候选事件容器，用于把主发现来源和搜索增强来源挂在同一个候选下。
+
+```json
+{
+  "event_candidate_id": "string",
+  "title": "string",
+  "candidate_key": "string",
+  "primary_event_signal_id": "string",
+  "event_signal_ids": ["string"],
+  "source_signal_ids": ["string"],
+  "created_from": "official_rss|zhihu_hot_list|weibo_rsshub|user_query|mixed",
+  "platform_presence": {
+    "zhihu_hot_list": true,
+    "zhihu_search": false,
+    "weibo_rsshub": false,
+    "weibo_cli": false,
+    "official_rss": false
+  },
+  "source_statuses": ["use"],
+  "search_enrichment_relations": [],
+  "rejected_enrichment_count": 0,
+  "audit_only_signal_count": 0,
+  "confidence_level": "high|medium|low|unknown",
+  "eligible_for_classification": true,
+  "quality_flags": ["string"]
+}
+```
+
+候选生成边界：
+
+- 知乎 `hot_list` 可以创建模式 A 热点候选。
+- 微博 RSSHub 可以创建模式 A 话题候选，但默认是弱话题种子。
+- 官媒 RSS 可以创建事实 / 报道候选。
+- `zhihu_search` 和微博 CLI 只补强已有候选或用户指定事件，不能递归扩展新采集链路。
 
 ### Event
 
@@ -453,15 +663,84 @@ B站视频条目默认可以标记：
   "title": "string",
   "summary": "string",
   "domain": "string|null",
-  "total_score": 0.0,
+  "priority_category": "A_cross_platform_with_official|B_single_platform_with_search_and_official|C_cross_platform_without_official|D_single_platform_with_official|E_single_platform_only|F_official_only|unknown",
+  "category_rank": 1,
+  "platform_presence": {
+    "zhihu_topn": true,
+    "zhihu_search": false,
+    "weibo_topn": false,
+    "weibo_cli": false,
+    "official_source": false,
+    "mock": false
+  },
+  "cross_platform_match_type": "natural_topn_overlap|search_supported|weak_search_supported|single_platform_only|official_only|none|unknown",
+  "official_support_status": "supported|weak_supported|not_found|not_checked",
+  "confidence_level": "high|medium|low|unknown",
+  "primary_platform": "zhihu|null",
+  "primary_platform_rank": 3,
+  "platform_bucket": "top3|top10|top20|tail|null",
+  "platform_strength": "strong|medium|weak|unknown|null",
+  "rank_delta": "number|null",
   "trend_status": "unknown",
-  "platform_scores": [],
+  "evidence_summary": {
+    "lead": "string",
+    "platform_evidence": ["string"],
+    "official_evidence": ["string"],
+    "discussion_evidence": ["string"],
+    "limitations": ["string"],
+    "conservative_language_required": false
+  },
   "source_citations": [],
+  "quality_flags": ["string"],
   "risk_notes": ["string"],
-  "confidence": 0.0,
-  "publish_eligibility": "ready_for_review|needs_review|blocked_for_publish"
+  "publish_eligibility": "ready_for_review|needs_review|blocked_for_publish",
+  "classification_detail": {}
 }
 ```
+
+规则：
+
+- `EventCard` 必须至少包含一个 `SourceCitation`。
+- `official_support_status = not_found` 时，必须使用保守措辞，并在 `risk_notes` 中标记 `official_support_not_found`。
+- `confidence_level = low` 的事件不能直接 `ready_for_review`。
+- `priority_category` 只表达分类，不是跨平台总分。
+- `platform_presence` 必须区分 TopN 出现和搜索补强出现，避免把 `search_supported` 写成自然双平台上榜。
+
+### HotspotClassification
+
+`HotspotClassification` 是 Day25 的分类结果，可以写入 `EventCard.classification_detail`。
+
+```json
+{
+  "priority_category": "A_cross_platform_with_official|B_single_platform_with_search_and_official|C_cross_platform_without_official|D_single_platform_with_official|E_single_platform_only|F_official_only|unknown",
+  "confidence_level": "high|medium|low|unknown",
+  "category_rank": 0,
+  "cross_platform_match_type": "natural_topn_overlap|search_supported|weak_search_supported|single_platform_only|official_only|none|unknown",
+  "official_support_status": "supported|weak_supported|not_found|not_checked",
+  "platform_presence": {},
+  "sort_key": {
+    "category_rank": 0,
+    "official_support_rank": 0,
+    "match_strength_rank": 0,
+    "primary_rank_bucket_rank": 0,
+    "snapshot_presence_rank": 0,
+    "rank_delta_rank": 0,
+    "search_hit_quality_rank": 0,
+    "freshness_rank": 0,
+    "source_health_rank": 0,
+    "noise_rank": 0
+  },
+  "reasons": ["string"],
+  "limitations": ["string"],
+  "quality_flags": ["string"]
+}
+```
+
+规则：
+
+- `sort_key` 是字典序排序键，不是跨平台综合分。
+- MVP 禁止输出或依赖 `total_priority_score`。
+- `confidence_level` 表示证据链完整度和分类稳定性，不表示事实真伪保证。
 
 ### BriefingSection
 
@@ -470,7 +749,8 @@ B站视频条目默认可以标记：
   "section_type": "overview|top_events|domain_hotspots|platform_hotspots|rising_events|risk_notes|sources",
   "title": "string",
   "summary": "string|null",
-  "event_cards": []
+  "event_cards": [],
+  "notes": ["string"]
 }
 ```
 
@@ -481,16 +761,23 @@ B站视频条目默认可以标记：
   "daily_report_id": "string|null",
   "run_id": "string",
   "report_date": "date",
+  "title": "string",
   "summary": "string",
   "sections": [],
-  "draft_status": "draft",
-  "publish_status": "blocked|null",
+  "draft_status": "draft|draft_ready_for_review|draft_needs_review|draft_blocked",
+  "publish_status": "published|published_with_warning|blocked|draft|null",
   "source_citation_count": 0,
   "risk_notes": ["string"],
   "created_at": "datetime",
   "retention_until": "datetime|null"
 }
 ```
+
+规则：
+
+- `source_citation_count` 由所有 `EventCard.source_citations` 统计得到。
+- `DailyBriefing` 必须至少包含一个 section。
+- Evaluation / guardrails 可以阻断发布，但不应删除已采集证据。
 
 ### PublishedReport
 
@@ -667,6 +954,7 @@ v0.3 不实现模式 B 完整链路，只保留可复用结构。
     "start": "datetime",
     "end": "datetime"
   },
+  "filters": {},
   "created_at": "datetime"
 }
 ```
@@ -678,13 +966,15 @@ v0.3 不实现模式 B 完整链路，只保留可复用结构。
   "evidence_id": "string",
   "event_id": "string|null",
   "item_id": "string|null",
+  "source_signal_id": "string|null",
   "title": "string",
-  "url": "string",
+  "url": "string|null",
   "source_name": "string",
   "platform": "string",
   "published_at": "datetime|null",
   "match_score": 0.0,
-  "confidence": 0.0
+  "confidence": 0.0,
+  "quality_flags": ["string"]
 }
 ```
 
@@ -694,11 +984,18 @@ v0.3 不实现模式 B 完整链路，只保留可复用结构。
 {
   "event_query_id": "string",
   "matched_events": [],
-  "related_items": [],
+  "retrieved_evidence": [],
   "platform_heat": [],
-  "limitations": ["string"]
+  "limitations": ["string"],
+  "generated_at": "datetime"
 }
 ```
+
+模式 B 边界：
+
+- `matched_events` 复用 `EventCard`，避免指定事件搜索与日报展示产生两套解释口径。
+- `retrieved_evidence` 可以包含历史 item、source signal 或 event 级证据。
+- `platform_heat` 只能使用已有平台内字段和代理字段，不输出跨平台真实热度结论。
 
 ## 工具 Input / Output Wrapper
 

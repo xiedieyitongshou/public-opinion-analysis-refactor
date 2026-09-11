@@ -96,6 +96,27 @@ public_safety
 
 ## 规则类型
 
+Day26 运行时实现的规则类型：
+
+```text
+event_merge
+summary
+source_quality
+tool_output
+briefing_publish
+classification_quality
+```
+
+每条规则输出：
+
+```text
+pass
+warn
+block
+```
+
+`warn` 和 `block` 会生成 `GuardrailViolation` 结构；当运行时传入数据库 session 时，违规记录会写入 `guardrail_violations`。
+
 ### event_merge
 
 目标：
@@ -183,6 +204,65 @@ embedding-only -> 最多进入中置信度复核
 | `publish.critical_issue` | 存在 block 级问题 | block | 阻断正式发布 |
 | `publish.needs_review` | 存在关键 warn | warn | 草稿标记为 `draft_needs_review` |
 | `publish.ready` | 无 block 且无关键 warn | pass | 草稿标记为 `draft_ready_for_review` |
+
+## Day26 运行时默认规则
+
+当前后端实现了第一批确定性规则：
+
+| 规则 ID | 类型 | 条件 | 等级 |
+|---|---|---|---|
+| `briefing.no_source_citation` | `briefing_publish` | `EventCard` 没有 `source_citations` | block |
+| `source.missing_url` | `source_quality` | 事件卡片所有 citation 都缺 URL | block |
+| `classification.community_without_official_requires_conservative` | `classification_quality` | `official_support_status = not_found` 但未要求保守措辞 | warn |
+| `classification.official_only_not_public_heat` | `classification_quality` | `F_official_only` 被写成公众热议 / 全网热议 | block |
+| `source.audit_only_search_not_supporting` | `source_quality` | `audit_only` 搜索增强被用于分类支撑 | block |
+| `summary.single_community_source_fact_claim` | `summary` | 单一社区来源写成确定事实 | block |
+
+代码位置：
+
+```text
+backend/app/guardrails/registry.py
+backend/app/guardrails/default_rules.py
+```
+
+默认工具 `run_briefing_guardrails` 已接入该 registry。输入可以是：
+
+```json
+{
+  "payload": {
+    "event_cards": []
+  },
+  "subject_type": "daily_briefing",
+  "subject_id": "string|null"
+}
+```
+
+输出包含：
+
+```text
+status
+blocks_publish
+review_required
+checks
+violations
+```
+
+## Day26 基础 API
+
+运行时观测接口：
+
+| 接口 | 作用 |
+|---|---|
+| `GET /health` | 健康检查 |
+| `GET /ops/guardrails/rules` | 查看已注册 guardrail 规则 |
+| `GET /ops/guardrails/violations` | 查看 guardrail 违规记录 |
+| `GET /ops/sources` | 查看数据源状态、来源形态和平台 |
+| `GET /ops/items` | 查看标准化内容列表 |
+| `GET /ops/events` | 查看事件列表和事件详情 JSON |
+| `GET /ops/agent-tasks` | 查看 agent 任务列表 |
+| `GET /ops/tool-calls` | 查看工具调用日志 |
+
+这些 API 是观测和调试接口，不替代正式业务 API。
 
 ## 不属于 Guardrails 的内容
 

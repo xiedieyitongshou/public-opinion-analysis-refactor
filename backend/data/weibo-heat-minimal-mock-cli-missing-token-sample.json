@@ -1,0 +1,178 @@
+{
+  "generated_at": "2026-09-09T03:18:03.693678+00:00",
+  "rsshub": {
+    "fetched_at": "2026-09-09T03:18:03.693678+00:00",
+    "http_status": 200,
+    "content_type": "application/rss+xml; charset=utf-8",
+    "response_bytes": 898,
+    "attempts": 3,
+    "parse_ok": true,
+    "item_count": 4,
+    "error": null,
+    "base_url": "http://127.0.0.1:8765",
+    "route": "/weibo/search/hot",
+    "url": "http://127.0.0.1:8765/weibo/search/hot",
+    "requested_limit": 4,
+    "skip_top": 1,
+    "selected_count": 3
+  },
+  "cli": {
+    "enabled": true,
+    "command": [
+      "npx",
+      "-y",
+      "@weibo-ai/weibo-cli@latest"
+    ],
+    "topic_limit": 1,
+    "search_count": 5,
+    "timeout_seconds": 30.0,
+    "raw_payload_included": false
+  },
+  "items": [
+    {
+      "source_id": "weibo_rsshub_hot_search",
+      "source_name": "微博热搜 RSSHub",
+      "source_type": "community_hotlist",
+      "source_origin": "rsshub",
+      "source_status": "experimental_fallback",
+      "platform": "weibo",
+      "signal_role": "topic_seed",
+      "score_contribution_role": [
+        "attention",
+        "community_heat"
+      ],
+      "external_id": "a5cf8cd404f8cafa8f546b7d",
+      "topic": "太子奶创始人李途纯去世",
+      "title": "太子奶创始人李途纯去世",
+      "url": "https://m.weibo.cn/search?q=taizinai",
+      "summary": "太子奶创始人李途纯去世",
+      "published_at": null,
+      "fetched_at": "2026-09-09T03:18:03.693678+00:00",
+      "raw_metrics": {
+        "list_position": 2,
+        "hot_value": null,
+        "weibo_search_total_number_proxy": null,
+        "matched_status_count": null,
+        "top_status_repost_count": null,
+        "top_status_comment_count": null,
+        "top_status_like_count": null
+      },
+      "normalized": {
+        "weibo_signal_status": "cli_unavailable",
+        "weibo_list_position_source": "rss_item_order",
+        "topic_present": true
+      },
+      "quality_flags": [
+        "list_position_derived_from_rss_order",
+        "not_heat_metric",
+        "missing_pub_date",
+        "missing_hot_value",
+        "weibo_cli_missing_token"
+      ],
+      "cli_enrichment": {
+        "enabled": true,
+        "available": false,
+        "command": [
+          "npx",
+          "-y",
+          "@weibo-ai/weibo-cli@latest",
+          "search",
+          "statuses/limited",
+          "--q",
+          "太子奶创始人李途纯去世",
+          "--output",
+          "json"
+        ],
+        "returncode": 1,
+        "stderr": "npm warn Unknown env config \"min-release-age\". This will stop working in the next major version of npm.\n缺少登录令牌。请运行 `weibo-cli auth login`；SSH、远程或无图形界面可显式使用 `weibo-cli auth login --device`。无人值守环境请配置 WEIBO_CLI_TOKEN 或 WEIBO_CLI_REFRESH_TOKEN。",
+        "total_number_proxy": null,
+        "samples": [],
+        "raw_payload": null,
+        "quality_flags": [
+          "weibo_cli_missing_token"
+        ]
+      }
+    },
+    {
+      "source_id": "weibo_rsshub_hot_search",
+      "source_name": "微博热搜 RSSHub",
+      "source_type": "community_hotlist",
+      "source_origin": "rsshub",
+      "source_status": "experimental_fallback",
+      "platform": "weibo",
+      "signal_role": "topic_seed",
+      "score_contribution_role": [
+        "attention",
+        "community_heat"
+      ],
+      "external_id": "7e3b3bf8e6e0fad2ebc77446",
+      "topic": "网红宣传捐款百万实际只捐1元",
+      "title": "网红宣传捐款百万实际只捐1元",
+      "url": "https://m.weibo.cn/search?q=donation",
+      "summary": "网红宣传捐款百万实际只捐1元",
+      "published_at": null,
+      "fetched_at": "2026-09-09T03:18:03.693678+00:00",
+      "raw_metrics": {
+        "list_position": 3,
+        "hot_value": null,
+        "weibo_search_total_number_proxy": null,
+        "matched_status_count": null,
+        "top_status_repost_count": null,
+        "top_status_comment_count": null,
+        "top_status_like_count": null
+      },
+      "normalized": {
+        "weibo_signal_status": "rsshub_only",
+        "weibo_list_position_source": "rss_item_order",
+        "topic_present": true
+      },
+      "quality_flags": [
+        "list_position_derived_from_rss_order",
+        "not_heat_metric",
+        "missing_pub_date",
+        "missing_hot_value"
+      ],
+      "cli_enrichment": null
+    },
+    {
+      "source_id": "weibo_rsshub_hot_search",
+      "source_name": "微博热搜 RSSHub",
+      "source_type": "community_hotlist",
+      "source_origin": "rsshub",
+      "source_status": "experimental_fallback",
+      "platform": "weibo",
+      "signal_role": "topic_seed",
+      "score_contribution_role": [
+        "attention",
+        "community_heat"
+      ],
+      "external_id": "35fc1b984e63fc0170eeb0d9",
+      "topic": "吃播圈催吐导泄都造成血钾暴跌",
+      "title": "吃播圈催吐导泄都造成血钾暴跌",
+      "url": "https://m.weibo.cn/search?q=eating",
+      "summary": "吃播圈催吐导泄都造成血钾暴跌 12345",
+      "published_at": null,
+      "fetched_at": "2026-09-09T03:18:03.693678+00:00",
+      "raw_metrics": {
+        "list_position": 4,
+        "hot_value": 12345,
+        "weibo_search_total_number_proxy": null,
+        "matched_status_count": null,
+        "top_status_repost_count": null,
+        "top_status_comment_count": null,
+        "top_status_like_count": null
+      },
+      "normalized": {
+        "weibo_signal_status": "rsshub_only",
+        "weibo_list_position_source": "rss_item_order",
+        "topic_present": true
+      },
+      "quality_flags": [
+        "list_position_derived_from_rss_order",
+        "not_heat_metric",
+        "missing_pub_date"
+      ],
+      "cli_enrichment": null
+    }
+  ]
+}

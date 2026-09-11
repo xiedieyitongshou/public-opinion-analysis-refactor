@@ -1,0 +1,25 @@
+FROM node:22-bookworm-slim
+
+WORKDIR /app
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends python3 python3-pip python3-venv \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN npm install -g @weibo-ai/weibo-cli@0.9.1
+
+COPY backend/pyproject.toml backend/README.md ./
+COPY backend/app ./app
+COPY backend/scripts ./scripts
+
+RUN python3 -m venv /opt/venv \
+    && /opt/venv/bin/pip install --no-cache-dir --upgrade pip \
+    && /opt/venv/bin/pip install --no-cache-dir -e .
+
+ENV PATH="/opt/venv/bin:${PATH}"
+ENV WEIBO_RSSHUB_BASE_URL="http://rsshub:1200"
+ENV WEIBO_RSSHUB_ROUTE="/weibo/search/hot"
+ENV WEIBO_RSSHUB_SKIP_TOP="1"
+ENV WEIBO_CLI_COMMAND="weibo-cli"
+
+CMD ["python", "scripts/weibo_heat_minimal.py", "--json"]

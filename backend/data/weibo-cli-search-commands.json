@@ -1,0 +1,305 @@
+﻿{
+  "service_status": "trial_active",
+  "total": 4,
+  "available_count": 2,
+  "groups": [
+    "search"
+  ],
+  "commands": [
+    {
+      "id": "286",
+      "group": "search",
+      "action": "hot_word_cate/biz",
+      "name": "search hot_word_cate/biz",
+      "api_path": "search/hot_word_cate/biz",
+      "invocation_path": "/search/hot_word_cate/biz.json",
+      "method": "GET",
+      "title": "搜索分类榜单",
+      "description": "搜索分类榜单",
+      "required_fields": [
+        "category"
+      ],
+      "input_schema": {
+        "count": "int",
+        "category": "int"
+      },
+      "flags": [
+        {
+          "name": "count",
+          "type": "int",
+          "required": false
+        },
+        {
+          "name": "category",
+          "type": "int",
+          "required": true,
+          "description": "分类：1=文娱榜、2=社会榜、3=科技榜、4=acg榜、5=生活榜、6=体育榜",
+          "enum": [
+            "1",
+            "2",
+            "3",
+            "4",
+            "5",
+            "6"
+          ]
+        }
+      ],
+      "trial_enabled": false,
+      "status": "active",
+      "created_at": "2026-06-04T17:36:35.000Z",
+      "updated_at": "2026-09-07T11:03:03.000Z",
+      "access": "locked",
+      "reason": "trial_allowlist"
+    },
+    {
+      "id": "285",
+      "group": "search",
+      "action": "hot_word/biz",
+      "name": "search hot_word/biz",
+      "api_path": "search/hot_word/biz",
+      "invocation_path": "/search/hot_word/biz.json",
+      "method": "GET",
+      "title": "微博热搜主榜",
+      "description": "微博热搜主榜",
+      "required_fields": [],
+      "input_schema": {
+        "count": "int"
+      },
+      "flags": [
+        {
+          "name": "count",
+          "type": "int",
+          "required": false
+        }
+      ],
+      "trial_enabled": false,
+      "status": "active",
+      "created_at": "2026-06-04T17:36:35.000Z",
+      "updated_at": "2026-09-07T11:03:03.000Z",
+      "access": "locked",
+      "reason": "trial_allowlist"
+    },
+    {
+      "id": "287",
+      "group": "search",
+      "action": "statuses/limited",
+      "name": "search statuses/limited",
+      "api_path": "search/statuses/limited",
+      "invocation_path": "/search/statuses/limited.json",
+      "method": "GET",
+      "title": "搜索含某关键词的微博",
+      "description": "搜索含某关键词的微博",
+      "required_fields": [
+        "q",
+        "type"
+      ],
+      "input_schema": {
+        "q": "string",
+        "dup": "int",
+        "ids": "string",
+        "city": "int",
+        "hasv": "int",
+        "page": "int",
+        "sort": "string",
+        "type": "int",
+        "count": "int",
+        "hasat": "int",
+        "istag": "int",
+        "hasori": "int",
+        "haspic": "int",
+        "hasret": "int",
+        "endtime": "int",
+        "haslink": "int",
+        "hastext": "int",
+        "antispam": "int",
+        "base_app": "int",
+        "hasmusic": "int",
+        "hasvideo": "int",
+        "is_batch": "int",
+        "starttime": "int"
+      },
+      "flags": [
+        {
+          "name": "q",
+          "type": "string",
+          "required": true,
+          "description": "搜索的关键字( 不能包含{、}、“ 等特殊字符)。"
+        },
+        {
+          "name": "dup",
+          "type": "int",
+          "required": false,
+          "description": "是否排重（不显示相似数据），0：否、1：是，默认为1。"
+        },
+        {
+          "name": "ids",
+          "type": "string",
+          "required": false,
+          "description": "搜索指定批量用户的微博，传用户UID，多个用~分隔，最多不超过50个。"
+        },
+        {
+          "name": "city",
+          "type": "int",
+          "required": false,
+          "description": "搜索的城市ID，参考省份城市编码表。"
+        },
+        {
+          "name": "hasv",
+          "type": "int",
+          "required": false,
+          "description": "是否为v用户发言，0：否、1：是，默认为空（全部）。"
+        },
+        {
+          "name": "page",
+          "type": "int",
+          "required": false,
+          "description": "页码，默认为1。"
+        },
+        {
+          "name": "sort",
+          "type": "string",
+          "required": false,
+          "description": "排序方式，time：时间倒序、hot：热门度【设置此参数只会返回精选微博】、fwnum：按转发数倒序、cmtnum：评论数倒序，默认为time。"
+        },
+        {
+          "name": "type",
+          "type": "int",
+          "required": true,
+          "description": "获取类型，1：微博、2：评论、3：私信，默认为1。"
+        },
+        {
+          "name": "count",
+          "type": "int",
+          "required": false,
+          "description": "每页返回的数量，最小为10，最大50。（默认返回10条）"
+        },
+        {
+          "name": "hasat",
+          "type": "int",
+          "required": false,
+          "description": "是否包含@，0：不包含@、1：只包含@，默认为空（全部）。"
+        },
+        {
+          "name": "istag",
+          "type": "int",
+          "required": false,
+          "description": "是否严格为搜##内的话题，0：否、1：##内模糊匹配、2：##内精确匹配，默认为0。"
+        },
+        {
+          "name": "hasori",
+          "type": "int",
+          "required": false,
+          "description": "是否包含原创，0：不包含原创、1：只包含原创，默认为空（全部）。"
+        },
+        {
+          "name": "haspic",
+          "type": "int",
+          "required": false,
+          "description": "是否包含图片，0：不包含图片、1：只包含图片，默认为空（全部）。"
+        },
+        {
+          "name": "hasret",
+          "type": "int",
+          "required": false,
+          "description": "是否包含转发，0：不包含转发、1：只包含转发，默认为空（全部）。"
+        },
+        {
+          "name": "endtime",
+          "type": "int",
+          "required": false,
+          "description": "搜索范围结束时间，取值为时间戳，单位为秒。"
+        },
+        {
+          "name": "haslink",
+          "type": "int",
+          "required": false,
+          "description": "是否包含链接，0：不包含链接、1：只包含链接，默认为空（全部）。"
+        },
+        {
+          "name": "hastext",
+          "type": "int",
+          "required": false,
+          "description": "是否包含纯文本，0：不包含纯文本、1：只包含纯文本，默认为空（全部）。"
+        },
+        {
+          "name": "antispam",
+          "type": "int",
+          "required": false,
+          "description": "是否反垃圾（不显示低质量数据），0：否、1：是，默认为1。"
+        },
+        {
+          "name": "base_app",
+          "type": "int",
+          "required": false,
+          "description": "是否只获取当前应用的数据。0为否（所有数据），1为是（仅当前应用），默认为0。"
+        },
+        {
+          "name": "hasmusic",
+          "type": "int",
+          "required": false,
+          "description": "是否包含音乐，0：不包含音乐、1：只包含音乐，默认为空（全部）。"
+        },
+        {
+          "name": "hasvideo",
+          "type": "int",
+          "required": false,
+          "description": "是否包含视频，0：不包含视频、1：只包含视频，默认为空（全部）。"
+        },
+        {
+          "name": "is_batch",
+          "type": "int",
+          "required": false,
+          "description": "是否使用批量模式，0：否、1：是，默认为0。"
+        },
+        {
+          "name": "starttime",
+          "type": "int",
+          "required": false,
+          "description": "搜索范围起始时间，取值为时间戳，单位为秒。"
+        }
+      ],
+      "trial_enabled": true,
+      "status": "active",
+      "created_at": "2026-06-04T17:36:35.000Z",
+      "updated_at": "2026-09-07T11:03:03.000Z",
+      "access": "allowed"
+    },
+    {
+      "id": "288",
+      "group": "search",
+      "action": "suggestions/users/biz",
+      "name": "search suggestions/users/biz",
+      "api_path": "search/suggestions/users/biz",
+      "invocation_path": "/search/suggestions/users/biz.json",
+      "method": "GET",
+      "title": "搜用户搜索建议",
+      "description": "搜用户搜索建议",
+      "required_fields": [
+        "q"
+      ],
+      "input_schema": {
+        "q": "string",
+        "count": "int"
+      },
+      "flags": [
+        {
+          "name": "q",
+          "type": "string",
+          "required": true,
+          "description": "搜索的关键字。"
+        },
+        {
+          "name": "count",
+          "type": "int",
+          "required": false,
+          "description": "返回的记录条数，默认为10。"
+        }
+      ],
+      "trial_enabled": true,
+      "status": "active",
+      "created_at": "2026-06-04T17:36:35.000Z",
+      "updated_at": "2026-09-07T11:03:03.000Z",
+      "access": "allowed"
+    }
+  ]
+}

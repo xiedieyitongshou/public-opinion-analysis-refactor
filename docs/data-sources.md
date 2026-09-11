@@ -35,9 +35,12 @@
 当前已完成第 2 周 Agent Runtime 和 Tool Runtime，后续计划不回滚已完成工程骨架。从第 3 周开始，数据源可行性测试作为正式 Collector 开发前的硬闸门：
 
 ```text
-source_status = use      # 稳定公开入口已验证，可进入第 4 周 collector
-source_status = fallback # 可访问但字段或稳定性有缺口，可作为补充源
-source_status = postpone # 未确认稳定公开入口，不进入正式 collector
+source_status = use                         # 稳定公开入口或授权入口已验证
+source_status = fallback                    # 可访问但字段或稳定性有缺口，可作为补充源
+source_status = experimental_fallback       # 只用于采样、演示或弱候选补充
+source_status = postpone                    # 未确认稳定入口，不进入正式 collector
+source_status = use_pending_credentials     # 官方 API 契约明确，但仍需凭据 / 额度验证
+source_status = fallback_pending_credentials# 授权路径明确但稳定性、额度或成本仍未确认
 ```
 
 第 4 周只实现 `use` 或经过明确降级设计的 `fallback` 来源。`postpone` 来源可以保留在产品设计和 mock 链路中，但不能作为第一阶段真实采集的硬依赖。
@@ -96,7 +99,8 @@ source_status = postpone # 未确认稳定公开入口，不进入正式 collect
 | `source_id` | 是 | 数据源 ID |
 | `source_name` | 是 | 数据源名称 |
 | `source_type` | 是 | `official_news` / `community_hotlist` / `community_question_hotlist` |
-| `source_status` | 是 | `use` / `fallback` / `postpone`，由第 3 周 smoke test 决定 |
+| `source_status` | 是 | `use` / `fallback` / `experimental_fallback` / `postpone` / `use_pending_credentials` / `fallback_pending_credentials`，由真实采样和授权验证决定 |
+| `source_origin` | 是 | `official_rss` / `official_api` / `rsshub` / `weibo_cli` / `mock` |
 | `platform` | 是 | 平台标识 |
 | `channel` | 否 | 栏目或分区 |
 | `rank` | 否 | 榜单排名 |
@@ -110,8 +114,8 @@ source_status = postpone # 未确认稳定公开入口，不进入正式 collect
 | `raw_metrics` | 否 | 原始热度指标 JSON |
 | `raw_payload` | 否 | 原始字段 JSON，用于调试和追溯 |
 | `quality_flags` | 否 | 字段缺失、异常或低置信度标记 |
-| `signal_role` | 否 | `event_signal` / `attention_signal` / `evidence_signal` / `mixed_signal` |
-| `score_contribution_role` | 否 | `attention` / `evidence` / `authority` / `velocity` / `coverage` |
+| `signal_role` | 是 | `event_signal` / `topic_discovery_signal` / `attention_signal` / `discussion_focus_signal` / `evidence_signal` / `search_enrichment_signal` / `mixed_signal` |
+| `signal_contribution_role` | 否 | 可选派生字段，MVP 不要求 collector 必填；后续可用于解释 `attention` / `discussion` / `evidence` / `authority` / `velocity` / `coverage` 等贡献 |
 
 第一阶段只要求稳定获得：
 
@@ -381,9 +385,9 @@ total_number_proxy optional
 
 ```text
 source_type = community_hotlist
-signal_role = attention_signal
-score_contribution_role = attention / velocity
-source_origin = rsshub / weibo_cli
+signal_role = topic_discovery_signal      # RSSHub 话题种子
+signal_contribution_role = weak_attention_seed optional
+source_origin = rsshub
 source_status = use
 ```
 
@@ -440,8 +444,8 @@ fetched_at
 
 ```text
 source_type = community_question_hotlist
-signal_role = discussion_focus_signal
-score_contribution_role = discussion / attention
+signal_role = attention_signal
+signal_contribution_role = discussion / attention / community_hot_candidate optional
 source_origin = official_api
 source_status = use
 ```
@@ -490,7 +494,7 @@ fetched_at
 ```text
 source_type = community_video_hotlist
 signal_role = attention_signal
-score_contribution_role = attention / velocity
+signal_contribution_role = attention / velocity optional
 ```
 
 处理规则：
@@ -640,25 +644,33 @@ authority_score：权威报道强度，主要来自人民网、新华网、央�
 coverage_score：跨来源覆盖度，来自不同 source_type / platform 的覆盖情况
 ```
 
-综合排序使用 `total_priority_score`，但展示时必须保留分项解释：
+MVP 阶段不生成跨平台 `total_priority_score`。热点结果先拆成分类和证据字段：
 
 ```text
-total_priority_score
-= attention_score * attention_weight
-+ velocity_score * velocity_weight
-+ discussion_score * discussion_weight
-+ evidence_score * evidence_weight
-+ authority_score * authority_weight
-+ coverage_score * coverage_weight
+priority_category
+platform_presence
+cross_platform_match_type
+official_support_status
+confidence_level
+evidence_summary
+category_rank
 ```
 
-第一阶段建议默认权重：
+类内排序使用字典序 sort keys，而不是把微博、知乎和官媒原始数值直接相加：
 
-| 分项 | 默认权重 | 主要来源 | 说明 |
-|---|---:|---|---|
-| `attention_score` | 0.30 | 微博、知乎 | 反映公众关注强度 |
-| `velocity_score` | 0.20 | 微博、知乎、新闻更新频率 | 反映短期升温 |
-| `discussion_score` | 0.10 | 知乎 | 反映问题讨论和解释需求 |
+```text
+official_support_rank
+match_strength_rank
+primary_rank_bucket
+snapshot_presence_count
+rank_delta_direction
+search_hit_quality_rank
+freshness_bucket
+source_health_rank
+noise_rank
+```
+
+跨平台综合分只作为后续研究项。只有在数据覆盖、指标口径和人工评估样本足够时，才考虑重新引入可解释的综合评分。
 | `evidence_score` | 0.20 | 新闻源、可引用来源 | 反映证据充分度 |
 | `authority_score` | 0.10 | 人民网、新华网、央视网 | 反映权威报道强度 |
 | `coverage_score` | 0.10 | 所有来源 | 反映跨平台覆盖 |

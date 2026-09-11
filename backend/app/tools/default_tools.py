@@ -8,6 +8,8 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
+from app.guardrails import default_guardrail_registry
+from app.schemas import GuardrailCheckInput, GuardrailRunResult
 from app.tools.runtime import ToolContext, ToolDefinition, ToolRegistry
 
 
@@ -37,10 +39,45 @@ class SearchExistingEvidenceOutput(BaseModel):
     message: str
 
 
+class RunBriefingGuardrailsInput(BaseModel):
+    payload: dict[str, Any] = Field(default_factory=dict)
+    subject_type: str | None = "daily_briefing"
+    subject_id: str | None = None
+
+
+class RunBriefingGuardrailsOutput(BaseModel):
+    status: str
+    blocks_publish: bool
+    review_required: bool
+    checks: list[dict[str, Any]] = Field(default_factory=list)
+    violations: list[dict[str, Any]] = Field(default_factory=list)
+
+
 def placeholder_handler(input_data: PlaceholderInput, context: ToolContext) -> PlaceholderOutput:
     return PlaceholderOutput(
         message=f"{context.actor} requested a placeholder tool; implementation is scheduled later.",
         data=input_data.payload,
+    )
+
+
+def run_briefing_guardrails_handler(
+    input_data: RunBriefingGuardrailsInput,
+    context: ToolContext,
+) -> RunBriefingGuardrailsOutput:
+    result: GuardrailRunResult = default_guardrail_registry.run(
+        GuardrailCheckInput(
+            payload=input_data.payload,
+            subject_type=input_data.subject_type,
+            subject_id=input_data.subject_id,
+            agent_task_id=context.task_id,
+        )
+    )
+    return RunBriefingGuardrailsOutput(
+        status=result.status,
+        blocks_publish=result.blocks_publish,
+        review_required=result.review_required,
+        checks=[check.model_dump(mode="json") for check in result.checks],
+        violations=[violation.model_dump(mode="json") for violation in result.violations],
     )
 
 
@@ -68,7 +105,6 @@ def build_default_tool_registry() -> ToolRegistry:
         "calculate_event_scores",
         "generate_daily_briefing",
         "review_briefing_quality",
-        "run_briefing_guardrails",
         "create_human_review_task",
         "save_daily_report",
         "render_briefing_image",
@@ -93,6 +129,19 @@ def build_default_tool_registry() -> ToolRegistry:
                 max_retries=1,
             )
         )
+
+    registry.register(
+        ToolDefinition(
+            name="run_briefing_guardrails",
+            description="Run MVP guardrails over briefing or event-card payloads.",
+            input_model=RunBriefingGuardrailsInput,
+            output_model=RunBriefingGuardrailsOutput,
+            handler=run_briefing_guardrails_handler,
+            has_side_effect=False,
+            retryable=False,
+            max_retries=0,
+        )
+    )
 
     registry.register(
         ToolDefinition(

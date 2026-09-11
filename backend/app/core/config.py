@@ -62,6 +62,21 @@ class Settings(BaseSettings):
         ge=1,
         le=20,
     )
+    weibo_rsshub_skip_top: int = Field(
+        default=1,
+        alias="WEIBO_RSSHUB_SKIP_TOP",
+        ge=0,
+        le=10,
+    )
+    weibo_cli_enabled: bool = Field(default=False, alias="WEIBO_CLI_ENABLED")
+    weibo_cli_command: str = Field(default="weibo-cli", alias="WEIBO_CLI_COMMAND")
+    weibo_cli_topic_limit: int = Field(default=3, alias="WEIBO_CLI_TOPIC_LIMIT", ge=0, le=10)
+    weibo_cli_search_count: int = Field(default=5, alias="WEIBO_CLI_SEARCH_COUNT", ge=1, le=20)
+    weibo_cli_timeout_seconds: float = Field(
+        default=30.0,
+        alias="WEIBO_CLI_TIMEOUT_SECONDS",
+        gt=0,
+    )
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 

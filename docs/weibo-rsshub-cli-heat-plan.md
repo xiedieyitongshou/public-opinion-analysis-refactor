@@ -171,7 +171,7 @@ weibo-cli statuses repost_timeline/all --id "<weibo_id>" --count 20 --output jso
 ```text
 platform = weibo
 source_origin = rsshub
-signal_role = topic_seed
+signal_role = topic_discovery_signal
 topic_present = true
 list_position = item_order
 hot_value = null

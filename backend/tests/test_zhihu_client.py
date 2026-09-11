@@ -1,6 +1,7 @@
 import httpx
 import pytest
 
+from app.schemas import NormalizedItem
 from app.services.zhihu_client import (
     ZhihuAuthError,
     ZhihuClient,
@@ -54,7 +55,9 @@ def test_fetch_hot_list_maps_official_fields() -> None:
     assert normalized[0]["title"] == "事件 A"
     assert normalized[0]["raw_metrics"]["rank"] == 1
     assert normalized[0]["source_origin"] == "official_api"
-    assert "community_heat" in normalized[0]["score_contribution_role"]
+    assert normalized[0]["signal_role"] == "attention_signal"
+    assert "community_hot_candidate" in normalized[0]["signal_contribution_role"]
+    assert NormalizedItem.model_validate(normalized[0]).source_status == "use"
 
 
 def test_fetch_hot_list_requires_access_secret() -> None:
@@ -134,3 +137,5 @@ def test_search_maps_engagement_fields() -> None:
     assert result.items[0].vote_up_count == 34
     assert normalized[0]["raw_metrics"]["ranking_score"] == 0.98
     assert normalized[0]["normalized"]["candidate_rank"] == 1
+    assert normalized[0]["signal_role"] == "search_enrichment_signal"
+    assert NormalizedItem.model_validate(normalized[0]).source_origin == "official_api"
