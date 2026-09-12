@@ -8,8 +8,14 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
+from app.collectors import default_collector_registry
 from app.guardrails import default_guardrail_registry
-from app.schemas import GuardrailCheckInput, GuardrailRunResult
+from app.schemas import (
+    FetchSourceItemsInput,
+    FetchSourceItemsOutput,
+    GuardrailCheckInput,
+    GuardrailRunResult,
+)
 from app.tools.runtime import ToolContext, ToolDefinition, ToolRegistry
 
 
@@ -60,6 +66,13 @@ def placeholder_handler(input_data: PlaceholderInput, context: ToolContext) -> P
     )
 
 
+def fetch_source_items_handler(
+    input_data: FetchSourceItemsInput,
+    context: ToolContext,
+) -> FetchSourceItemsOutput:
+    return default_collector_registry.collect(input_data, db=context.db_session)
+
+
 def run_briefing_guardrails_handler(
     input_data: RunBriefingGuardrailsInput,
     context: ToolContext,
@@ -97,8 +110,20 @@ def search_existing_evidence_handler(
 def build_default_tool_registry() -> ToolRegistry:
     registry = ToolRegistry()
 
+    registry.register(
+        ToolDefinition(
+            name="fetch_source_items",
+            description="Dispatch registered collectors and return crawl validation results.",
+            input_model=FetchSourceItemsInput,
+            output_model=FetchSourceItemsOutput,
+            handler=fetch_source_items_handler,
+            has_side_effect=True,
+            retryable=True,
+            max_retries=1,
+        )
+    )
+
     placeholder_tools = [
-        "fetch_source_items",
         "normalize_raw_items",
         "extract_event_signals",
         "match_and_resolve_events",

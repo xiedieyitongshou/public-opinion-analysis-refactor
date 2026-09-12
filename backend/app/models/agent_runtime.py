@@ -101,6 +101,24 @@ class GuardrailViolation(TimestampMixin, Base):
     resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
+class CrawlValidationRun(TimestampMixin, Base):
+    __tablename__ = "crawl_validation_runs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    plan_id: Mapped[str | None] = mapped_column(String(120), index=True)
+    status: Mapped[str] = mapped_column(String(40), nullable=False, default="pending", index=True)
+    requested_source_ids_json: Mapped[list[str] | None] = mapped_column(JSON)
+    skipped_source_ids_json: Mapped[list[str] | None] = mapped_column(JSON)
+    unavailable_source_ids_json: Mapped[list[str] | None] = mapped_column(JSON)
+    promote_to_event_pool: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    source_results_json: Mapped[list[dict[str, Any]] | None] = mapped_column(JSON)
+    summary_json: Mapped[dict[str, Any] | None] = mapped_column(JSON)
+    raw_sample_manifest_json: Mapped[dict[str, Any] | None] = mapped_column(JSON)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    error_message: Mapped[str | None] = mapped_column(Text)
+
+
 class EvaluationRun(TimestampMixin, Base):
     __tablename__ = "evaluation_runs"
 

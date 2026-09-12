@@ -182,7 +182,7 @@ def normalize_hot_list_items(result: ZhihuHotListResult) -> list[dict[str, Any]]
             {
                 "source_id": "zhihu_hot_list",
                 "source_name": "知乎热榜",
-                "source_type": "community_hotlist",
+                "source_type": "community_question_hotlist",
                 "source_origin": "official_api",
                 "source_status": "use",
                 "platform": "zhihu",

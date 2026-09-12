@@ -51,11 +51,11 @@ source_status = fallback_pending_credentials# 授权路径明确但稳定性、�
 
 | 来源 | 当前状态 | 工程判断 | 说明 |
 |---|---|---|---|
-| 人民网 | `use` | 可进入第 4 周 collector | RSS 可访问，标题、链接、发布时间、摘要等字段较完整 |
-| 中国新闻网 | `use` | 可进入第 4 周 collector | RSS 可访问，字段较完整；需要 XML 容错解析 |
+| 人民网 | `use` | 可进入第 5 周 collector，作为官媒证据源第二批接入 | RSS 可访问，标题、链接、发布时间、摘要等字段较完整 |
+| 中国新闻网 | `use` | 可进入第 5 周 collector，作为官媒证据源第二批接入 | RSS 可访问，字段较完整；需要 XML 容错解析 |
 | 新华网 | `fallback` | 可做降级 collector 或继续寻找更好入口 | RSS 可访问，标题和链接稳定；当前入口发布时间缺失 |
 | 微博热搜 | `use` | RSSHub 提供话题种子，微博 CLI 对已知话题做搜索 / 互动补强，已能支撑第一阶段所需微博侧信号 | 直连公开页触发访客 / 登录校验；不使用账号 cookie 或反爬绕过 |
-| 知乎热榜 | `use` | 可进入第 4 周 collector | 知乎数据开放平台 `hot_list` Access Secret smoke test 已通过；直连公开页仍不使用 |
+| 知乎热榜 | `use` | 可进入第 5 周 collector，作为社区热点主链路第一批接入 | 知乎数据开放平台 `hot_list` Access Secret smoke test 已通过；直连公开页仍不使用 |
 
 ## 数据源分层
 
@@ -551,7 +551,7 @@ signal_contribution_role = attention / velocity optional
 
 ## 接入优先级与第 3 周闸门
 
-当前已完成第 2 周工程骨架，后续不回滚 Agent Runtime / Tool Runtime。第 3 周应优先解决数据源获取途径可行性，再进入第 4 周正式 Collector 开发。
+当前已完成第 2 周工程骨架，后续不回滚 Agent Runtime / Tool Runtime。第 3 周应优先解决数据源获取途径可行性，第 4 周固化 schema、guardrails 和分类边界，再进入第 5 周正式 Collector 开发。
 
 第 3 周建议按以下顺序执行：
 
@@ -560,15 +560,15 @@ Day 15：对 3 个官媒源和 2 个文字社区源做获取路径 smoke test
 Day 16：知乎官方 API 授权 smoke test 已通过；微博收敛为 RSSHub 话题种子 + CLI 搜索补强
 Day 17：基于 use / fallback 源修正 NormalizedItem 和 EventSignal
 Day 18-20：基于真实字段修正 guardrails、scoring 和基础 API
-Day 21：确认第 4 周正式 collector 清单
+Day 21：确认第 4 周数据设计输入和第 5 周正式 collector 清单草案
 ```
 
 正式 Collector 的开发顺序由 `source_status` 决定，而不是由产品期望决定：
 
 ```text
-use：进入第 4 周正式 collector
+use：进入第 5 周正式 collector
 fallback：可做降级 collector 或补充源
-postpone：不进入第 4 周正式 collector，只保留 mock 或候选说明
+postpone：不进入第 5 周正式 collector，只保留 mock 或候选说明
 ```
 
 建议第一阶段分批接入。
@@ -576,35 +576,42 @@ postpone：不进入第 4 周正式 collector，只保留 mock 或候选说明
 第一批：
 
 ```text
-中国新闻网
-人民网
 微博热搜
+知乎热榜
+知乎搜索增强
+微博 CLI 搜索补强
 ```
 
 目标是验证：
 
-- 新闻源采集。
-- 社区热榜采集。
+- 社区热点主链路采集。
+- 知乎 `hot_list` 平台内 TopN 输入。
+- 知乎 `zhihu_search` 低频讨论和互动补强。
+- 微博 RSSHub 话题种子。
+- 微博 CLI 已知话题搜索和互动样本补强。
 - `NormalizedItem` 标准化。
 - 入库去重。
 - 统一事件候选池。
-- 基础热度分项评分。
+- 平台内 rank、搜索补强、质量标记和失败降级。
 
 第二批：
 
 ```text
+中国新闻网
+人民网
 新华网
-知乎热榜
 ```
 
 目标是增强：
 
+- 官媒 / 新闻源 evidence collector。
 - 重大事件权威来源。
-- 问题型讨论信号。
+- 人民网、中国新闻网两个 `use` 新闻源。
+- 新华网 `fallback` 权威补证源。
 - 事件合并质量。
 - 新闻报道链路与社区话题焦点的交叉验证。
 
-如果微博 RSSHub / CLI 或知乎数据平台在 Day 15-16 后仍不可用，第 4 周不应强行实现对应真实 collector。此时应保留 mock community source 验证事件池、评分和 guardrails。
+如果微博 RSSHub / CLI 或知乎数据平台在第 5 周实现时不可用，不应强行绕过平台限制实现对应真实 collector。此时应保留 mock community source 或最近一次有效样本验证事件池、评分和 guardrails，并在输出中降低对应来源置信度。
 
 后续候选：
 
@@ -810,4 +817,4 @@ BBS / 社区源：
 B站热门 / 排行榜
 ```
 
-这个组合可以覆盖事件确认、权威议程、即时关注和问题讨论，同时把第一阶段工程复杂度控制在可落地范围内。视频社区传播信号后续再评估，不作为 v0.3 第一阶段必需能力。
+# 这个组合可以覆盖事件确认、权威议程、即时关注和问题讨论，同时把第一阶段工程复杂度控制在可落地范围内。视频社区传播信号后续再评估，不作为 v0.3 第一阶段必需能力。

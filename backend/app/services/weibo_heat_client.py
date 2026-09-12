@@ -158,6 +158,7 @@ class WeiboHeatClient:
         limit: int | None = None,
         skip_top: int | None = None,
         with_cli: bool | None = None,
+        cli_topic_limit: int | None = None,
         include_cli_raw: bool = False,
     ) -> WeiboHeatResult:
         safe_limit = _clamp(limit or self.config.rsshub_fetch_limit, 1, 50)
@@ -175,12 +176,16 @@ class WeiboHeatClient:
         )
         selected_items = rsshub_items[safe_skip_top:]
         cli_should_run = self.config.cli_enabled if with_cli is None else with_cli
-        cli_topic_limit = min(self.config.cli_topic_limit, len(selected_items))
+        safe_cli_topic_limit = _clamp(
+            self.config.cli_topic_limit if cli_topic_limit is None else cli_topic_limit,
+            0,
+            len(selected_items),
+        )
 
         topics: list[WeiboHeatTopic] = []
         for index, item in enumerate(selected_items, start=1):
             cli_enrichment = None
-            if cli_should_run and index <= cli_topic_limit:
+            if cli_should_run and index <= safe_cli_topic_limit:
                 cli_enrichment = self.search_with_cli(
                     item.title or "",
                     include_raw=include_cli_raw,
@@ -207,7 +212,7 @@ class WeiboHeatClient:
             cli={
                 "enabled": cli_should_run,
                 "command": split_command(self.config.cli_command),
-                "topic_limit": cli_topic_limit,
+                "topic_limit": safe_cli_topic_limit,
                 "search_count": self.config.cli_search_count,
                 "timeout_seconds": self.config.cli_timeout_seconds,
                 "raw_payload_included": include_cli_raw,

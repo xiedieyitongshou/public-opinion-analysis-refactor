@@ -1,5 +1,6 @@
 """Agent planning and execution primitives."""
 
+from app.agents.collector import CollectorAgent, CollectorAgentRunResult
 from app.agents.planning import Plan, Planner, PlanStep, TaskGraph
 from app.agents.runner import AgentTaskRunner
 from app.agents.state_machine import (
@@ -19,6 +20,8 @@ from app.agents.structured_output import (
 
 __all__ = [
     "AgentTaskRunner",
+    "CollectorAgent",
+    "CollectorAgentRunResult",
     "DraftStatus",
     "Plan",
     "PlanStep",

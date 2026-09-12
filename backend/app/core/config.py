@@ -77,6 +77,29 @@ class Settings(BaseSettings):
         alias="WEIBO_CLI_TIMEOUT_SECONDS",
         gt=0,
     )
+    people_rss_url: str = Field(
+        default="http://www.people.com.cn/rss/politics.xml",
+        alias="PEOPLE_RSS_URL",
+    )
+    chinanews_rss_url: str = Field(
+        default="https://www.chinanews.com.cn/rss/scroll-news.xml",
+        alias="CHINANEWS_RSS_URL",
+    )
+    xinhua_rss_url: str = Field(
+        default="http://www.xinhuanet.com/politics/news_politics.xml",
+        alias="XINHUA_RSS_URL",
+    )
+    official_rss_fetch_limit: int = Field(
+        default=20,
+        alias="OFFICIAL_RSS_FETCH_LIMIT",
+        ge=1,
+        le=50,
+    )
+    official_rss_timeout_seconds: float = Field(
+        default=20.0,
+        alias="OFFICIAL_RSS_TIMEOUT_SECONDS",
+        gt=0,
+    )
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 

@@ -9,8 +9,9 @@ from app.tools import ToolContext, ToolRegistry, default_tool_registry
 
 
 class AgentTaskRunner:
-    def __init__(self, registry: ToolRegistry | None = None) -> None:
+    def __init__(self, registry: ToolRegistry | None = None, *, actor: str = "agent") -> None:
         self.registry = registry or default_tool_registry
+        self.actor = actor
 
     def run_plan(self, plan: Plan, db: Session) -> list[AgentTask]:
         tasks: list[AgentTask] = []
@@ -36,7 +37,7 @@ class AgentTaskRunner:
             result = self.registry.call(
                 step.tool_name,
                 step.input_json,
-                context=ToolContext(task_id=task.id),
+                context=ToolContext(task_id=task.id, actor=self.actor),
                 db=db,
             )
             task.output_json = result.output

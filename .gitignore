@@ -221,6 +221,7 @@ __marimo__/
 backend/data/*.db
 backend/data/*.sqlite
 backend/data/*.sqlite3
+backend/data/weibo-cli-live-samples/
 notes/source-probe-raw/
 
 # IDE project files

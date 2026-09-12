@@ -10,6 +10,15 @@ from app.schemas.classification import (
     SearchHitQuality,
     SourceHealth,
 )
+from app.schemas.collectors import (
+    CollectorMetadata,
+    CollectorRunConfig,
+    CollectorRunStatus,
+    CrawlValidationResult,
+    FetchSourceItemsInput,
+    FetchSourceItemsOutput,
+    SourceRunStatus,
+)
 from app.schemas.display import (
     BriefingSection,
     BriefingSectionType,
@@ -60,6 +69,9 @@ from app.schemas.signals import (
 __all__ = [
     "BriefingSection",
     "BriefingSectionType",
+    "CollectorMetadata",
+    "CollectorRunConfig",
+    "CollectorRunStatus",
     "ConfidenceLevel",
     "CrossPlatformMatchType",
     "DailyBriefing",
@@ -78,6 +90,9 @@ __all__ = [
     "GuardrailRunResult",
     "GuardrailSeverity",
     "GuardrailViolationRecord",
+    "CrawlValidationResult",
+    "FetchSourceItemsInput",
+    "FetchSourceItemsOutput",
     "HotspotClassification",
     "HotspotClassificationInput",
     "HotspotSortKey",
@@ -101,6 +116,7 @@ __all__ = [
     "SourceFieldMapping",
     "SourceHealth",
     "SourceOrigin",
+    "SourceRunStatus",
     "SourceSignal",
     "SourceStatus",
     "SourceType",

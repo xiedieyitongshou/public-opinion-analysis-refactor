@@ -3,6 +3,7 @@
 from app.models.agent_runtime import (
     AgentTask,
     AgentToolCall,
+    CrawlValidationRun,
     EvaluationCase,
     EvaluationRun,
     GuardrailViolation,
@@ -21,6 +22,7 @@ from app.models.business import (
 __all__ = [
     "AgentTask",
     "AgentToolCall",
+    "CrawlValidationRun",
     "DailyReport",
     "Event",
     "EventQuery",

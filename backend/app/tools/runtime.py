@@ -6,7 +6,7 @@ from datetime import UTC, datetime
 from time import perf_counter
 from typing import Any
 
-from pydantic import BaseModel, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from sqlalchemy.orm import Session
 
 from app.models import AgentToolCall
@@ -29,9 +29,12 @@ class ToolExecutionError(ToolRegistryError):
 
 
 class ToolContext(BaseModel):
+    model_config = ConfigDict(arbitrary_types_allowed=True)
+
     task_id: int | None = None
     trace_id: str | None = None
     actor: str = "agent"
+    db_session: Any | None = Field(default=None, exclude=True)
 
 
 class ToolResult(BaseModel):
@@ -94,6 +97,8 @@ class ToolRegistry:
     ) -> ToolResult:
         definition = self.get(name)
         context = context or ToolContext()
+        if db is not None and context.db_session is None:
+            context = context.model_copy(update={"db_session": db})
         raw_input = raw_input or {}
         attempts_allowed = 1 + (definition.max_retries if definition.retryable else 0)
         last_error: str | None = None
