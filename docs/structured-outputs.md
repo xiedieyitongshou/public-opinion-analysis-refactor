@@ -308,10 +308,28 @@ content_hash
 
 `signal_contribution_role` 是可选派生字段，MVP 阶段不要求 collector 必填。分类阶段可以根据 `source_origin`、`signal_role`、`raw_metrics` 和 `quality_flags` 推导该信号对 `attention`、`discussion`、`evidence`、`authority`、`velocity` 等维度的贡献。
 
+标准化规则：
+
+- `title`：去除 HTML、首尾空白和重复空白；原始标题保留在 `raw_payload.raw_title` 或来源原始字段中。
+- `summary` / `content_text`：去除 HTML、URL 噪声、重复换行和明显模板片段；缺失不阻断流程。
+- `published_at` / `fetched_at`：统一解析为 timezone-aware datetime；无法解析发布时间时保留 `published_at = null`。
+- `raw_metrics`：只保存来源原始指标和语义标记，不做跨平台热度数值归一化。
+- `event_text_for_match`：拼接标题、摘要、话题词、核心正文片段和来源时间，供规则匹配、BM25 / n-gram 和 embedding 使用。
+- `event_text_for_embedding`：在 `event_text_for_match` 基础上去除平台提问壳、话题井号、URL、重复标点和明显模板词。
+
+`content_hash` 语义：
+
+- 当前 `content_hash` 是 item dedup hash，不是严格正文内容 hash。
+- 生成优先级为 `source_id + external_id/guid`、`source_id + 清洗后的 url`、`source_id + 清洗后的 title + published_at 日期`，最后才退化到 `source_id + 清洗后的 title + fetched_at`。
+- `dedup_hash` 和 `content_body_hash` 暂不进入 MVP 正式 schema；如后续需要区分来源条目去重和正文变更检测，再单独扩展。
+
 字段质量约束：
 
 - 缺少 `title` 时必须写入 `quality_flags = ["missing_title"]`。
 - 缺少 `url` 时必须写入 `quality_flags = ["missing_url"]`。
+- 缺少 `summary` 时写入 `quality_flags = ["missing_summary"]`。
+- 缺少或无法解析 `published_at` 时写入 `missing_published_at` 或 `invalid_published_at`。
+- 缺少原始指标时写入 `quality_flags = ["no_raw_metrics"]`，但不阻断标准化。
 - RSSHub 微博列表序号必须标记为 `list_position_derived_from_rss_order` 和 `not_heat_metric`。
 - 搜索增强结果低相关时只进入审计日志，不进入事件分类支撑。
 
@@ -439,10 +457,26 @@ fetched_at
 - `signal_role = search_enrichment_signal` 时，必须有 `parent_candidate_id`、`parent_signal_id` 或 `user_query_id`。
 - 搜索增强结果如果 `audit_only = true`，必须设置 `contributes_to_classification = false`。
 - RSSHub 微博话题种子可以生成弱候选，但不能单独写成微博真实热度证据。
+- `source_citation` 不在 `SourceSignal` 中重复存储；需要来源引用时通过 `SourceSignal.item_id` 回溯 `NormalizedItem.source_citation`。
+- `raw_metrics` 和 `platform_features` 是来源级字段，不传入 `EventSignal` 作为直接字段，避免把来源指标误读为事件热度。
 
 ### EventSignal
 
-`EventSignal` 可以由规则或 LLM 生成，但必须通过 schema 校验。
+`EventSignal` 是事件抽取结果，不是最终展示给用户的 `EventCard`，也不负责热点排序、热度比较或日报文案生成。
+
+主链路：
+
+```text
+NormalizedItem
+-> SourceSignal
+-> EventSignal
+-> EventCandidate
+-> Event
+-> Classification / Trend / Scoring
+-> EventCard / DailyBriefing
+```
+
+`EventSignal` 可以由规则或 LLM 生成，但必须通过 schema 校验。微博热搜话题、知乎热榜问题、知乎搜索补强、微博 CLI 补强和官媒新闻标题都抽取为同一种事件信号结构。
 
 ```json
 {
@@ -454,7 +488,7 @@ fetched_at
   "event_type": "string|null",
   "action_terms": ["string"],
   "event_time_hint": "datetime|null",
-  "event_text_for_match": "string|null",
+  "event_text_for_match": "string",
   "semantic_fingerprint": {
     "event_text_for_embedding": "string|null",
     "embedding_model": "string|null",
@@ -472,6 +506,35 @@ fetched_at
   "quality_flags": ["string"]
 }
 ```
+
+字段边界：
+
+- `source_id`、`source_type`、`source_origin`、`source_status`、`signal_role`、`raw_metrics` 和 `item_id` 属于 `SourceSignal` 来源级字段。
+- `source_citation` 保留在 `NormalizedItem`，由 `SourceSignal.item_id` 回溯。
+- `EventSignal` 只保留 `source_signal_ids`、`source_statuses`、`source_roles`、`platforms` 等引用和聚合字段，避免重复存储造成歧义。
+- `object_terms`、`location_hints`、`topic_terms` 暂不作为 `EventSignal` 必填字段；后续如需落库，再统一增加 `event_attributes` 扩展字段。
+- `canonical_entity_text`、`canonical_action_text`、`title_fingerprint`、`time_window_hint` 是 Day 39 `match_features_json` 的派生特征，不作为 `EventSignal` 必填字段。
+- `semantic_fingerprint.embedding_text_version` 不进入 MVP 必填 schema；只有实现向量文本版本管理时再作为可选扩展字段落库。
+
+校验和派生规则：
+
+- `source_signal_ids` 不能为空。
+- `source_signal_count` 是派生字段，计算规则为 `len(source_signal_ids)`；如果工具或 LLM 传入该字段，schema 校验阶段必须覆盖为真实数量。
+- `source_signal_count` 不能单独作为证据强度或热度依据。
+- `confidence` 必须满足 `0.0 <= confidence <= 1.0`。
+- `confidence` 只表示事件信号抽取质量，例如标题是否清晰、实体 / 动作 / 时间线索是否充分、来源字段是否完整；它不表示事实真伪保证、公众热度或事件合并置信度。
+- `confidence_level` 保留给后续分类和展示阶段，不在 `EventSignal` 中使用。
+- `is_weak_signal = true` 时必须填写 `weak_signal_reason`。
+- MVP 阶段 `evidence_text` 不进入 `EventSignal` 正式 schema，避免和 `source_citation` / `source_citations` 混淆；如需调试摘录，先写入工具日志或后续统一的 `extraction_detail_json`。
+- 进入事件合并前，`source_signal_ids` 必须能回溯到至少一个有效来源引用；无法回溯 `NormalizedItem.source_citation` 或来源 URL 的信号只能写入审计日志，不能进入 `EventCandidate` / `Event` 合并。
+- 代码实现中，`EventSignal` 使用严格 schema；`confidence_level`、`evidence_text`、`object_terms`、`location_hints`、`topic_terms`、`embedding_text_version` 等非正式字段会被拒绝。合并前追溯校验由 `EventSignalTraceabilityCheck` 执行，负责验证 `EventSignal -> SourceSignal -> NormalizedItem/source_citation` 链路。
+
+短话题弱信号判定：
+
+- 标题 / 话题名过短、泛词化或营销化，且缺少明确实体、动作、对象、时间窗口中的至少两个关键约束时，必须设置 `is_weak_signal = true` 和 `weak_signal_reason`。
+- 典型来源包括仅 RSSHub 话题名、单个 hashtag、无正文补强的热榜短标题。
+- 社区先出现、新闻源未覆盖的内容可以生成低证据强度 `EventSignal` / `EventCandidate`，但不能在本阶段直接写成确定事实或高热度事件。
+- 官媒新闻可以生成 `evidence_signal` 或 `event_signal`，但官媒来源不自动等于公众关注高；热度分类和官媒支撑判断由 Classification Agent 处理。
 
 B站视频条目默认可以标记：
 
@@ -1065,28 +1128,37 @@ v0.3 不实现模式 B 完整链路，只保留可复用结构。
 ```json
 {
   "run_id": "string",
-  "items": [],
+  "source_signals": [],
   "use_llm": true
 }
 ```
 
 字段：
 
-- `items`：`NormalizedItem[]`
+- `source_signals`：`SourceSignal[]`
+- 如果上游仍提供 `NormalizedItem[]`，必须先派生为 `SourceSignal[]`，不能绕过 `SourceSignal` 直接生成跨来源 `EventSignal`。
 
 ### ExtractEventSignalsOutput
 
 ```json
 {
-  "meta": {},
-  "event_signals": []
+  "run_id": "string",
+  "status": "not_implemented|succeeded|partial|failed|skipped",
+  "event_signals": [],
+  "audit_only_source_signal_ids": ["string"],
+  "quality_flags": ["string"],
+  "errors": ["string"]
 }
 ```
 
 字段：
 
-- `meta`：`ToolResultMeta`
+- `run_id`：本轮抽取运行 ID，必须与输入对应。
+- `status`：工具业务状态；Day 37 只注册 schema 占位，实际抽取逻辑在 Day 38 实现。
 - `event_signals`：`EventSignal[]`
+- `audit_only_source_signal_ids`：输入中仅可审计、不得进入事件合并的 `SourceSignal` ID。
+- `quality_flags`：工具级质量标记。
+- `errors`：schema validation 或抽取失败原因。
 
 ### MatchAndResolveEventsInput
 

@@ -81,6 +81,8 @@ class NormalizedItem(BaseModel):
     content: str | None = None
     content_text: str | None = None
     content_hash: str | None = None
+    event_text_for_match: str | None = None
+    event_text_for_embedding: str | None = None
     language: str | None = None
     published_at: datetime | str | None = None
     raw_metrics: dict[str, Any] = Field(default_factory=dict)

@@ -167,8 +167,10 @@ Schema：
 
 作用：
 
-- 从 `NormalizedItem` 中抽取 `EventSignal`。
+- 从 `SourceSignal` 中抽取 `EventSignal`。
 - 识别关键词、实体、事件类型、动作词和时间线索。
+- 对规则或 LLM 输出执行 strict schema validation。
+- 在进入事件合并前执行 `EventSignalTraceabilityCheck`，确保 `EventSignal -> SourceSignal -> NormalizedItem.source_citation / URL` 可回溯。
 
 对应阶段：
 
@@ -179,9 +181,16 @@ Schema：
 - Input：`ExtractEventSignalsInput`
 - Output：`ExtractEventSignalsOutput`
 
+Input 边界：
+
+- `ExtractEventSignalsInput.source_signals` 必须为 `SourceSignal[]`。
+- 如果上游仍提供 `NormalizedItem[]`，必须先派生为 `SourceSignal[]`，不能绕过 `SourceSignal` 直接生成跨来源 `EventSignal`。
+
 副作用：
 
-- 可写入事件信号中间表或日志。
+- Day 37 只注册 schema 契约，不做业务写入。
+- 工具调用仍由 Tool Runtime 记录调用日志。
+- Day 38 实现抽取逻辑后，可写入事件信号中间表或抽取审计日志。
 
 重试策略：
 
@@ -193,6 +202,8 @@ Schema：
 - LLM 不可用时使用规则抽取。
 - B站标题默认标记为弱信号，除非包含明确实体、动作和事件对象。
 - 低置信度信号不阻断自动链路。
+- strict schema validation 失败时该条信号不进入事件合并。
+- 无法通过 `EventSignalTraceabilityCheck` 的信号只写入审计日志，不进入 `EventCandidate` / `Event` 合并。
 
 ### match_and_resolve_events
 

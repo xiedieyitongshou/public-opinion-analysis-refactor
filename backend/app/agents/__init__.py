@@ -1,6 +1,7 @@
 """Agent planning and execution primitives."""
 
 from app.agents.collector import CollectorAgent, CollectorAgentRunResult
+from app.agents.normalizer import NormalizerAgent, normalize_item
 from app.agents.planning import Plan, Planner, PlanStep, TaskGraph
 from app.agents.runner import AgentTaskRunner
 from app.agents.state_machine import (
@@ -23,6 +24,7 @@ __all__ = [
     "CollectorAgent",
     "CollectorAgentRunResult",
     "DraftStatus",
+    "NormalizerAgent",
     "Plan",
     "PlanStep",
     "Planner",
@@ -34,6 +36,7 @@ __all__ = [
     "can_transition_task",
     "transition_draft",
     "transition_task",
+    "normalize_item",
     "validate_structured_output",
     "validate_structured_output_or_raise",
 ]

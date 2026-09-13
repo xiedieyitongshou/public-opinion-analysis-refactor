@@ -5,9 +5,16 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from app.schemas.normalized import Platform, SignalRole, SourceOrigin, SourceStatus, SourceType
+from app.schemas.normalized import (
+    NormalizedItem,
+    Platform,
+    SignalRole,
+    SourceOrigin,
+    SourceStatus,
+    SourceType,
+)
 
 SearchEnrichmentSource = Literal["zhihu_search", "weibo_cli", "global_search"]
 RelationDecision = Literal["accepted", "audit_only", "rejected"]
@@ -84,6 +91,8 @@ class SourceSignal(BaseModel):
 
 
 class SemanticFingerprint(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     event_text_for_embedding: str | None = None
     embedding_model: str | None = None
     embedding_vector_id: str | None = None
@@ -93,6 +102,8 @@ class SemanticFingerprint(BaseModel):
 
 class EventSignal(BaseModel):
     """Event-level signal extracted from one or more source signals."""
+
+    model_config = ConfigDict(extra="forbid")
 
     event_signal_id: str
     source_signal_ids: list[str]
@@ -121,6 +132,80 @@ class EventSignal(BaseModel):
             raise ValueError("weak EventSignal must include weak_signal_reason")
         self.source_signal_count = len(self.source_signal_ids)
         return self
+
+
+def _item_has_source_citation(item: NormalizedItem) -> bool:
+    citation = item.source_citation or {}
+    citation_url = citation.get("url") or citation.get("link") or citation.get("source_url")
+    return bool(item.url or citation_url)
+
+
+class EventSignalTraceabilityCheck(BaseModel):
+    """Validate whether an EventSignal can enter event merge.
+
+    Day 37 keeps citations on NormalizedItem and references them through
+    SourceSignal.item_id. This wrapper is the merge-boundary check that prevents
+    orphan or audit-only signals from being promoted to EventCandidate/Event.
+    """
+
+    event_signal: EventSignal
+    source_signals: list[SourceSignal]
+    normalized_items: list[NormalizedItem]
+
+    @model_validator(mode="after")
+    def ensure_signal_sources_can_be_traced(self) -> EventSignalTraceabilityCheck:
+        source_by_id = {signal.source_signal_id: signal for signal in self.source_signals}
+        item_by_id = {
+            str(item.source_citation.get("item_id") or item.external_id or item.url): item
+            for item in self.normalized_items
+        }
+        missing_source_signal_ids = [
+            source_signal_id
+            for source_signal_id in self.event_signal.source_signal_ids
+            if source_signal_id not in source_by_id
+        ]
+        if missing_source_signal_ids:
+            raise ValueError(
+                "EventSignal source_signal_ids must reference provided SourceSignal records"
+            )
+
+        for source_signal_id in self.event_signal.source_signal_ids:
+            source_signal = source_by_id[source_signal_id]
+            if source_signal.audit_only:
+                raise ValueError("audit_only SourceSignal cannot enter event merge")
+            if not source_signal.item_id:
+                raise ValueError("SourceSignal must include item_id for citation traceability")
+            item = item_by_id.get(source_signal.item_id)
+            if item is None:
+                raise ValueError("SourceSignal.item_id must reference a provided NormalizedItem")
+            if not _item_has_source_citation(item):
+                raise ValueError("EventSignal source traceability requires source citation or URL")
+        return self
+
+
+class ExtractEventSignalsInput(BaseModel):
+    """Input contract for the extract_event_signals tool."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    run_id: str
+    source_signals: list[SourceSignal]
+    use_llm: bool = True
+
+
+class ExtractEventSignalsOutput(BaseModel):
+    """Structured output contract for the extract_event_signals tool."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    run_id: str
+    status: Literal["not_implemented", "succeeded", "partial", "failed", "skipped"] = (
+        "not_implemented"
+    )
+    event_signals: list[EventSignal] = Field(default_factory=list)
+    audit_only_source_signal_ids: list[str] = Field(default_factory=list)
+    quality_flags: list[str] = Field(default_factory=list)
+    errors: list[str] = Field(default_factory=list)
 
 
 class EventCandidate(BaseModel):

@@ -11,10 +11,14 @@ from pydantic import BaseModel, Field
 from app.collectors import default_collector_registry
 from app.guardrails import default_guardrail_registry
 from app.schemas import (
+    ExtractEventSignalsInput,
+    ExtractEventSignalsOutput,
     FetchSourceItemsInput,
     FetchSourceItemsOutput,
     GuardrailCheckInput,
     GuardrailRunResult,
+    NormalizeRawItemsInput,
+    NormalizeRawItemsOutput,
 )
 from app.tools.runtime import ToolContext, ToolDefinition, ToolRegistry
 
@@ -73,6 +77,30 @@ def fetch_source_items_handler(
     return default_collector_registry.collect(input_data, db=context.db_session)
 
 
+def normalize_raw_items_handler(
+    input_data: NormalizeRawItemsInput,
+    context: ToolContext,
+) -> NormalizeRawItemsOutput:
+    from app.agents.normalizer import NormalizerAgent
+
+    return NormalizerAgent().normalize(input_data)
+
+
+def extract_event_signals_handler(
+    input_data: ExtractEventSignalsInput,
+    context: ToolContext,
+) -> ExtractEventSignalsOutput:
+    audit_only_source_signal_ids = [
+        signal.source_signal_id for signal in input_data.source_signals if signal.audit_only
+    ]
+    return ExtractEventSignalsOutput(
+        run_id=input_data.run_id,
+        audit_only_source_signal_ids=audit_only_source_signal_ids,
+        quality_flags=["implementation_scheduled_day38"],
+        errors=[],
+    )
+
+
 def run_briefing_guardrails_handler(
     input_data: RunBriefingGuardrailsInput,
     context: ToolContext,
@@ -123,9 +151,20 @@ def build_default_tool_registry() -> ToolRegistry:
         )
     )
 
+    registry.register(
+        ToolDefinition(
+            name="normalize_raw_items",
+            description="Deterministically normalize source-mapped items into NormalizedItem.",
+            input_model=NormalizeRawItemsInput,
+            output_model=NormalizeRawItemsOutput,
+            handler=normalize_raw_items_handler,
+            has_side_effect=False,
+            retryable=False,
+            max_retries=0,
+        )
+    )
+
     placeholder_tools = [
-        "normalize_raw_items",
-        "extract_event_signals",
         "match_and_resolve_events",
         "calculate_event_scores",
         "generate_daily_briefing",
@@ -154,6 +193,22 @@ def build_default_tool_registry() -> ToolRegistry:
                 max_retries=1,
             )
         )
+
+    registry.register(
+        ToolDefinition(
+            name="extract_event_signals",
+            description=(
+                "Validate SourceSignal input and return EventSignal structured output; "
+                "extraction implementation is scheduled for Day 38."
+            ),
+            input_model=ExtractEventSignalsInput,
+            output_model=ExtractEventSignalsOutput,
+            handler=extract_event_signals_handler,
+            has_side_effect=False,
+            retryable=True,
+            max_retries=1,
+        )
+    )
 
     registry.register(
         ToolDefinition(

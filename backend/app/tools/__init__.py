@@ -1,8 +1,12 @@
 """Tool calling runtime."""
 
 from app.tools.default_tools import (
+    ExtractEventSignalsInput,
+    ExtractEventSignalsOutput,
     FetchSourceItemsInput,
     FetchSourceItemsOutput,
+    NormalizeRawItemsInput,
+    NormalizeRawItemsOutput,
     SearchExistingEvidenceInput,
     SearchExistingEvidenceOutput,
     default_tool_registry,
@@ -22,6 +26,10 @@ __all__ = [
     "SearchExistingEvidenceOutput",
     "FetchSourceItemsInput",
     "FetchSourceItemsOutput",
+    "NormalizeRawItemsInput",
+    "NormalizeRawItemsOutput",
+    "ExtractEventSignalsInput",
+    "ExtractEventSignalsOutput",
     "ToolAlreadyRegisteredError",
     "ToolContext",
     "ToolDefinition",

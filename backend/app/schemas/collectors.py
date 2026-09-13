@@ -7,6 +7,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, Field, model_validator
 
 from app.schemas.normalized import (
+    NormalizedItem,
     Platform,
     SignalRole,
     SourceOrigin,
@@ -126,3 +127,21 @@ class FetchSourceItemsOutput(BaseModel):
     field_completeness_summary: dict[str, float] = Field(default_factory=dict)
     validation_summary: dict[str, Any] = Field(default_factory=dict)
     blocks_auto_analysis: bool = False
+
+
+class NormalizeRawItemsInput(BaseModel):
+    """Input schema for the `normalize_raw_items` tool."""
+
+    items: list[dict[str, Any]] = Field(default_factory=list)
+    source_defaults: dict[str, Any] = Field(default_factory=dict)
+
+
+class NormalizeRawItemsOutput(BaseModel):
+    """Output schema for deterministic Day 36 normalization."""
+
+    status: Literal["succeeded", "partial", "failed", "skipped"]
+    normalized_count: int = 0
+    items: list[NormalizedItem] = Field(default_factory=list)
+    quality_flags: list[str] = Field(default_factory=list)
+    error_count: int = 0
+    errors: list[str] = Field(default_factory=list)
