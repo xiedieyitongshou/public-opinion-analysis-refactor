@@ -199,9 +199,7 @@ class ExtractEventSignalsOutput(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     run_id: str
-    status: Literal["not_implemented", "succeeded", "partial", "failed", "skipped"] = (
-        "not_implemented"
-    )
+    status: Literal["succeeded", "partial", "failed", "skipped"]
     event_signals: list[EventSignal] = Field(default_factory=list)
     audit_only_source_signal_ids: list[str] = Field(default_factory=list)
     quality_flags: list[str] = Field(default_factory=list)

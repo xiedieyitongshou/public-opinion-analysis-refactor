@@ -178,9 +178,8 @@ def test_extract_event_signals_tool_uses_day37_schema_contract() -> None:
     assert result.status == "succeeded"
     assert result.output is not None
     assert result.output["run_id"] == "run-1"
-    assert result.output["status"] == "not_implemented"
-    assert result.output["event_signals"] == []
-    assert "implementation_scheduled_day38" in result.output["quality_flags"]
+    assert result.output["status"] == "succeeded"
+    assert len(result.output["event_signals"]) == 1
 
 
 def test_extract_event_signals_tool_rejects_legacy_items_input() -> None:

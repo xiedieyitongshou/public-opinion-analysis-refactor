@@ -1,6 +1,13 @@
 """Agent planning and execution primitives."""
 
 from app.agents.collector import CollectorAgent, CollectorAgentRunResult
+from app.agents.event_extractor import (
+    DeepSeekEventExtractionClient,
+    EventSignalAssembler,
+    EventSignalExtractor,
+    LLMEventExtractionRefiner,
+    RuleEventExtractor,
+)
 from app.agents.event_matcher import EventMatcher
 from app.agents.event_resolver import EventResolverAgent
 from app.agents.normalizer import NormalizerAgent, normalize_item
@@ -25,9 +32,13 @@ __all__ = [
     "AgentTaskRunner",
     "CollectorAgent",
     "CollectorAgentRunResult",
+    "DeepSeekEventExtractionClient",
     "DraftStatus",
+    "EventSignalAssembler",
+    "EventSignalExtractor",
     "EventMatcher",
     "EventResolverAgent",
+    "LLMEventExtractionRefiner",
     "NormalizerAgent",
     "Plan",
     "PlanStep",
@@ -36,6 +47,7 @@ __all__ = [
     "StructuredOutputValidationResult",
     "TaskGraph",
     "TaskStatus",
+    "RuleEventExtractor",
     "can_transition_draft",
     "can_transition_task",
     "transition_draft",

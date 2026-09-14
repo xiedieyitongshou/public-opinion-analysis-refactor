@@ -92,15 +92,9 @@ def extract_event_signals_handler(
     input_data: ExtractEventSignalsInput,
     context: ToolContext,
 ) -> ExtractEventSignalsOutput:
-    audit_only_source_signal_ids = [
-        signal.source_signal_id for signal in input_data.source_signals if signal.audit_only
-    ]
-    return ExtractEventSignalsOutput(
-        run_id=input_data.run_id,
-        audit_only_source_signal_ids=audit_only_source_signal_ids,
-        quality_flags=["implementation_scheduled_day38"],
-        errors=[],
-    )
+    from app.agents.event_extractor import EventSignalExtractor
+
+    return EventSignalExtractor().extract(input_data)
 
 
 def match_and_resolve_events_handler(
@@ -215,8 +209,8 @@ def build_default_tool_registry() -> ToolRegistry:
         ToolDefinition(
             name="extract_event_signals",
             description=(
-                "Validate SourceSignal input and return EventSignal structured output; "
-                "extraction implementation is scheduled for Day 38."
+                "Extract strict EventSignal records from SourceSignal input using "
+                "the Day 38 rule-first pipeline."
             ),
             input_model=ExtractEventSignalsInput,
             output_model=ExtractEventSignalsOutput,

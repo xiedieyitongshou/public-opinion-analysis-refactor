@@ -100,8 +100,26 @@ class Settings(BaseSettings):
         alias="OFFICIAL_RSS_TIMEOUT_SECONDS",
         gt=0,
     )
+    event_extraction_use_llm: bool = Field(
+        default=False,
+        alias="EVENT_EXTRACTION_USE_LLM",
+    )
+    event_extraction_llm_confidence_threshold: float = Field(
+        default=0.65,
+        alias="EVENT_EXTRACTION_LLM_CONFIDENCE_THRESHOLD",
+        ge=0.0,
+        le=1.0,
+    )
+    llm_provider: str = Field(default="deepseek", alias="LLM_PROVIDER")
+    deepseek_api_key: str | None = Field(default=None, alias="DEEPSEEK_API_KEY")
+    deepseek_base_url: str = Field(default="https://api.deepseek.com", alias="DEEPSEEK_BASE_URL")
+    deepseek_model: str = Field(default="deepseek-chat", alias="DEEPSEEK_MODEL")
 
-    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
+    model_config = SettingsConfigDict(
+        env_file=("backend/.env", ".env", "../.env"),
+        env_file_encoding="utf-8",
+        extra="ignore",
+    )
 
 
 @lru_cache
