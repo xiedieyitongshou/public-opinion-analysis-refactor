@@ -518,6 +518,7 @@ NormalizedItem
 
 校验和派生规则：
 
+- `event_signal_id` 标识某一轮从来源信号抽取出的事件信号，推荐生成规则为 `hash(run_id + source_signal_id)`；它不是稳定事件 ID。跨轮次追踪同一事件依赖事件匹配 / 合并阶段生成或复用的 `event_id`。
 - `source_signal_ids` 不能为空。
 - `source_signal_count` 是派生字段，计算规则为 `len(source_signal_ids)`；如果工具或 LLM 传入该字段，schema 校验阶段必须覆盖为真实数量。
 - `source_signal_count` 不能单独作为证据强度或热度依据。
@@ -606,12 +607,14 @@ B站视频条目默认可以标记：
 }
 ```
 
+`event_id` 是稳定业务 ID，用于展示、跨轮次追踪、热度趋势、生命周期管理和日报引用。新事件第一版建议生成规则为 `evt_<YYYYMMDD>_<fingerprint_prefix>`；强匹配命中已有事件时必须复用已有 `event_id`。数据库自增主键只作为内部存储 ID，不作为展示层 `event_id`。
+
 ### EventResolution
 
 ```json
 {
   "event_id": "string",
-  "action": "merge|create|skip|candidate_review",
+  "action": "merge|create|candidate_review|reject|skip",
   "item_ids": ["string"],
   "confidence": 0.0,
   "reason": "string",
@@ -626,7 +629,7 @@ B站视频条目默认可以标记：
     "embedding_similarity": null,
     "entity_overlap": 0.0,
     "action_overlap": 0.0,
-    "object_overlap": 0.0,
+    "object_overlap": null,
     "time_distance_hours": null,
     "hard_constraints_passed": false,
     "guardrail_flags": ["string"]
@@ -643,7 +646,7 @@ B站视频条目默认可以标记：
 - 中置信度写入候选关系，不阻断自动链路。
 - 核心实体或时间冲突禁止自动合并。
 - BM25 / n-gram 提供可解释召回，embedding 提供语义召回或 rerank。
-- embedding 高相似不能单独触发自动合并，必须同时满足实体、动作、对象或时间窗口硬约束。
+- embedding 高相似不能单独触发自动合并；MVP 必须同时满足实体、动作或时间窗口硬约束。对象约束不进入第一版正式 `EventSignal`，留作后续扩展。
 - 弱信号不强行写成事实。
 
 ## 评分与快照 Schema
@@ -1136,6 +1139,7 @@ v0.3 不实现模式 B 完整链路，只保留可复用结构。
 字段：
 
 - `source_signals`：`SourceSignal[]`
+- `use_llm`：是否允许本轮使用 LLM refinement；`true` 只表示工具输入允许，不表示每条 `SourceSignal` 都调用 LLM。实际调用必须同时满足全局配置允许、`use_llm = true` 和逐条 `should_use_llm = true`。
 - 如果上游仍提供 `NormalizedItem[]`，必须先派生为 `SourceSignal[]`，不能绕过 `SourceSignal` 直接生成跨来源 `EventSignal`。
 
 ### ExtractEventSignalsOutput
@@ -1143,7 +1147,7 @@ v0.3 不实现模式 B 完整链路，只保留可复用结构。
 ```json
 {
   "run_id": "string",
-  "status": "not_implemented|succeeded|partial|failed|skipped",
+  "status": "succeeded|partial|failed|skipped",
   "event_signals": [],
   "audit_only_source_signal_ids": ["string"],
   "quality_flags": ["string"],
@@ -1154,7 +1158,7 @@ v0.3 不实现模式 B 完整链路，只保留可复用结构。
 字段：
 
 - `run_id`：本轮抽取运行 ID，必须与输入对应。
-- `status`：工具业务状态；Day 37 只注册 schema 占位，实际抽取逻辑在 Day 38 实现。
+- `status`：工具业务状态；空输入返回 `skipped`，全部可处理信号成功返回 `succeeded`，部分跳过或回退返回 `partial`，非空输入无法生成任何可合并信号且不是全部审计跳过时返回 `failed`。
 - `event_signals`：`EventSignal[]`
 - `audit_only_source_signal_ids`：输入中仅可审计、不得进入事件合并的 `SourceSignal` ID。
 - `quality_flags`：工具级质量标记。
@@ -1170,6 +1174,12 @@ v0.3 不实现模式 B 完整链路，只保留可复用结构。
   "match_config": {
     "use_bm25_ngram": true,
     "use_embedding": true,
+    "keyword_overlap_high": 0.55,
+    "ngram_overlap_high": 0.50,
+    "bm25_candidate_min_score": 0.45,
+    "embedding_candidate_min_similarity": 0.78,
+    "embedding_auto_merge_min_similarity": 0.86,
+    "time_window_same_event_hours": 72,
     "auto_merge_confidence_threshold": 0.85,
     "candidate_review_confidence_threshold": 0.60
   }
@@ -1180,7 +1190,7 @@ v0.3 不实现模式 B 完整链路，只保留可复用结构。
 
 - `event_signals`：`EventSignal[]`
 - `existing_events`：`Event[]`
-- `match_config`：事件匹配配置，允许 embedding 不可用时降级为规则 + BM25 / n-gram
+- `match_config`：事件匹配配置，允许 embedding 不可用时降级为规则 + BM25 / n-gram；阈值为第一版默认值，后续由 Evaluation 根据真实样本调整。
 
 ### EventMatchRetrievalInput
 
