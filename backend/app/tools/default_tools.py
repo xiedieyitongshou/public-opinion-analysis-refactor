@@ -17,6 +17,8 @@ from app.schemas import (
     FetchSourceItemsOutput,
     GuardrailCheckInput,
     GuardrailRunResult,
+    MatchAndResolveEventsInput,
+    MatchAndResolveEventsOutput,
     NormalizeRawItemsInput,
     NormalizeRawItemsOutput,
 )
@@ -101,6 +103,20 @@ def extract_event_signals_handler(
     )
 
 
+def match_and_resolve_events_handler(
+    input_data: MatchAndResolveEventsInput,
+    context: ToolContext,
+) -> MatchAndResolveEventsOutput:
+    from app.agents.event_resolver import EventResolverAgent
+
+    return EventResolverAgent().resolve(
+        input_data,
+        db=context.db_session,
+        agent_task_id=context.task_id,
+        tool_call_id=context.tool_call_id,
+    )
+
+
 def run_briefing_guardrails_handler(
     input_data: RunBriefingGuardrailsInput,
     context: ToolContext,
@@ -111,7 +127,9 @@ def run_briefing_guardrails_handler(
             subject_type=input_data.subject_type,
             subject_id=input_data.subject_id,
             agent_task_id=context.task_id,
-        )
+            tool_call_id=context.tool_call_id,
+        ),
+        db=context.db_session,
     )
     return RunBriefingGuardrailsOutput(
         status=result.status,
@@ -165,7 +183,6 @@ def build_default_tool_registry() -> ToolRegistry:
     )
 
     placeholder_tools = [
-        "match_and_resolve_events",
         "calculate_event_scores",
         "generate_daily_briefing",
         "review_briefing_quality",
@@ -210,6 +227,18 @@ def build_default_tool_registry() -> ToolRegistry:
         )
     )
 
+    registry.register(
+        ToolDefinition(
+            name="match_and_resolve_events",
+            description="Resolve EventSignal records into stable event IDs with Day 39 matching.",
+            input_model=MatchAndResolveEventsInput,
+            output_model=MatchAndResolveEventsOutput,
+            handler=match_and_resolve_events_handler,
+            has_side_effect=False,
+            retryable=True,
+            max_retries=1,
+        )
+    )
     registry.register(
         ToolDefinition(
             name="run_briefing_guardrails",

@@ -1,6 +1,8 @@
 """Agent planning and execution primitives."""
 
 from app.agents.collector import CollectorAgent, CollectorAgentRunResult
+from app.agents.event_matcher import EventMatcher
+from app.agents.event_resolver import EventResolverAgent
 from app.agents.normalizer import NormalizerAgent, normalize_item
 from app.agents.planning import Plan, Planner, PlanStep, TaskGraph
 from app.agents.runner import AgentTaskRunner
@@ -24,6 +26,8 @@ __all__ = [
     "CollectorAgent",
     "CollectorAgentRunResult",
     "DraftStatus",
+    "EventMatcher",
+    "EventResolverAgent",
     "NormalizerAgent",
     "Plan",
     "PlanStep",

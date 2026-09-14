@@ -4,6 +4,14 @@ from __future__ import annotations
 
 from typing import Any
 
+from app.guardrails.event_merge import (
+    check_event_merge_embedding_conflict,
+    check_event_merge_embedding_only,
+    check_event_merge_entity_conflict,
+    check_event_merge_low_confidence,
+    check_event_merge_time_conflict,
+    check_event_merge_weak_signal_only,
+)
 from app.guardrails.registry import GuardrailRegistry, GuardrailRule
 from app.schemas import GuardrailCheckInput, GuardrailCheckResult
 
@@ -49,6 +57,42 @@ def build_default_guardrail_registry() -> GuardrailRegistry:
             rule_type="summary",
             description="Block community-only cards that make fact-certainty claims.",
             handler=check_single_community_source_fact_claim,
+        ),
+        GuardrailRule(
+            name="event_merge.low_confidence",
+            rule_type="event_merge",
+            description="Warn when a matched event is below automatic merge confidence.",
+            handler=check_event_merge_low_confidence,
+        ),
+        GuardrailRule(
+            name="event_merge.entity_conflict",
+            rule_type="event_merge",
+            description="Block merges when core entities conflict.",
+            handler=check_event_merge_entity_conflict,
+        ),
+        GuardrailRule(
+            name="event_merge.time_conflict",
+            rule_type="event_merge",
+            description="Block merges when event time windows conflict.",
+            handler=check_event_merge_time_conflict,
+        ),
+        GuardrailRule(
+            name="event_merge.embedding_conflict",
+            rule_type="event_merge",
+            description="Block high embedding similarity when hard constraints conflict.",
+            handler=check_event_merge_embedding_conflict,
+        ),
+        GuardrailRule(
+            name="event_merge.embedding_only",
+            rule_type="event_merge",
+            description="Warn when embedding similarity lacks hard constraint support.",
+            handler=check_event_merge_embedding_only,
+        ),
+        GuardrailRule(
+            name="event_merge.weak_signal_only",
+            rule_type="event_merge",
+            description="Warn when only a weak community signal supports a merge.",
+            handler=check_event_merge_weak_signal_only,
         ),
     ):
         registry.register(rule)

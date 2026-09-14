@@ -106,6 +106,13 @@ def persist_guardrail_violation(
         message=result.message,
         subject_type=result.subject_type,
         subject_id=result.subject_id,
+        event_signal_id=result.evidence.get("event_signal_id"),
+        event_id=result.evidence.get("event_id"),
+        confidence=result.evidence.get("confidence"),
+        matched_by_json=result.evidence.get("matched_by"),
+        match_features_json=result.evidence.get("match_features_json"),
+        guardrail_flags_json=result.evidence.get("guardrail_flags"),
+        source_signal_ids_json=result.evidence.get("source_signal_ids"),
         evidence_json=result.evidence,
     )
     db.add(violation)

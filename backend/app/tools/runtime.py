@@ -32,6 +32,7 @@ class ToolContext(BaseModel):
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
     task_id: int | None = None
+    tool_call_id: int | None = None
     trace_id: str | None = None
     actor: str = "agent"
     db_session: Any | None = Field(default=None, exclude=True)
@@ -105,6 +106,8 @@ class ToolRegistry:
 
         for attempt in range(1, attempts_allowed + 1):
             tool_call = self._create_log(db, definition, context, raw_input, attempt)
+            if tool_call is not None:
+                context = context.model_copy(update={"tool_call_id": tool_call.id})
             started = perf_counter()
 
             try:

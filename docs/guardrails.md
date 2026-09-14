@@ -131,7 +131,7 @@ block
 | `event_merge.entity_conflict` | 核心实体冲突 | block | 禁止自动合并 |
 | `event_merge.time_conflict` | 事件时间窗口冲突 | block | 禁止自动合并 |
 | `event_merge.embedding_conflict` | embedding 高相似但核心实体或时间冲突 | block | 禁止自动合并，记录 `semantic_false_positive_risk` |
-| `event_merge.embedding_only` | 只有 embedding 高相似，缺少实体、动作、对象或时间硬约束 | warn | 不自动合并，写入候选复核 |
+| `event_merge.embedding_only` | 只有 embedding 高相似，缺少实体、动作或时间硬约束 | warn | 不自动合并，写入候选复核，记录 `embedding_only_without_hard_constraint` |
 | `event_merge.weak_signal_only` | 仅由弱社区信号支持 | warn | 不作为确定事件发布 |
 | `event_merge.bilibili_weak_match` | B站视频标题弱匹配已有事件 | warn | 只作为传播信号候选 |
 
@@ -143,6 +143,41 @@ block
 低置信度 -> 新建低置信度事件或忽略弱信号
 实体/时间冲突 -> 禁止合并
 embedding-only -> 最多进入中置信度复核
+```
+
+Day 40 接入边界：
+
+- Tool Registry 负责注册可调用工具 `match_and_resolve_events`。
+- Guardrail Registry 负责注册具体事件合并规则。
+- 运行入口为 `match_and_resolve_events -> match_event -> apply_merge_guardrails -> final EventResolution`。
+- `EventMatcher` 负责候选召回、相似度、匹配特征和初始推荐动作。
+- `Guardrails` 负责判断推荐动作是否允许执行。
+- `EventResolver Agent` 负责编排 matcher、guardrails、写库和复核流转。
+
+MVP 硬约束：
+
+- 只使用 `entity_overlap`、`action_overlap`、`time_distance_hours` 和 ID / URL 硬匹配。
+- 暂不新增 `object_terms`，也不把对象识别塞进 `EventSignal`。
+- 来源 URL 相同可作为强匹配和去重依据；URL 不同不能说明不是同一事件；跨平台合并仍以实体、动作、时间、关键词和语义匹配为主。
+
+违规持久化：
+
+`warn` / `block` 级事件合并规则应写入 `guardrail_violations`，至少保存：
+
+```text
+rule_name
+severity
+subject_type
+subject_id
+event_signal_id
+event_id
+confidence
+matched_by
+match_features_json
+guardrail_flags
+source_signal_ids
+agent_task_id
+tool_call_id
 ```
 
 ### source_quality

@@ -9,7 +9,7 @@
 - 事件匹配是确定性工具和可审计特征驱动，不让 LLM 凭直觉合并事件。
 - embedding 用于语义召回和 rerank，不单独决定自动合并。
 - BM25 / n-gram 保留可解释召回能力，适合短文本和关键词强相关场景。
-- 实体、动作、对象和时间窗口是自动合并的硬约束。
+- MVP 阶段实体、动作和时间窗口是自动合并的硬约束；对象约束不进入第一版正式 `EventSignal`，留作后续扩展。
 - 中置信度结果进入异步人工复核队列，不阻断自动采集分析链路。
 
 ## 当前基线
@@ -98,7 +98,7 @@ Agent 的职责是编排工具、选择降级路径、汇总结构化结果和�
   "embedding_similarity": null,
   "entity_overlap": 0.0,
   "action_overlap": 0.0,
-  "object_overlap": 0.0,
+  "object_overlap": null,
   "time_distance_hours": null,
   "source_pair": ["weibo", "zhihu"],
   "matched_by": ["bm25_ngram", "embedding_rerank"],
@@ -107,6 +107,68 @@ Agent 的职责是编排工具、选择降级路径、汇总结构化结果和�
 }
 ```
 
+## ID 与指纹生成
+
+`event_signal_id`、`event_fingerprint` 和 `event_id` 分工不同：
+
+- `event_signal_id`：Day 38 生成，表示某一轮 run 中从某个 `SourceSignal` 抽取出的一条事件信号，只用于溯源、debug 和日志回放。
+- `event_fingerprint`：Day 39 生成 / 派生，表示用于判断两个信号是否属于同一事件的匹配特征组合，用于候选召回、去重、辅助生成新 `event_id` 和解释匹配原因。
+- `event_id`：Day 39 生成或复用，表示聚合后的稳定事件对象，用于最终展示、跨轮次追踪、热度趋势、生命周期管理和日报引用。
+
+`event_fingerprint` 第一版生成规则：
+
+```text
+normalize(
+  sorted(entities)
+  + sorted(action_terms)
+  + core_keywords
+  + event_date_bucket
+  + stable_source_id_or_url_if_available
+)
+-> sha256
+```
+
+说明：
+
+- `event_date_bucket` 优先取 `event_time_hint` / `published_at` 的日期；缺失时使用 `first_seen_at` 日期。
+- 同平台稳定 ID 或 URL 命中时，可作为 fingerprint 的强特征。
+- fingerprint 是匹配辅助特征，不是最终展示 ID。
+
+`event_id` 第一版生成规则：
+
+```text
+evt_<YYYYMMDD>_<fingerprint_prefix>
+```
+
+规则：
+
+- 强匹配命中已有事件时，必须复用已有 `event_id`。
+- 新事件创建时生成新的稳定业务 `event_id`。
+- `YYYYMMDD` 优先取 `event_time_hint` / `published_at`，缺失时取 `first_seen_at`。
+- `fingerprint_prefix` 使用 `event_fingerprint` 的短哈希前缀。
+- 数据库自增主键只作为内部存储 ID，不作为展示层 `event_id`。
+
+## 默认阈值
+
+第一版阈值先作为可配置默认值，后续由 Evaluation 根据真实样本调参：
+
+| 参数 | 默认值 | 用途 |
+|---|---:|---|
+| `keyword_overlap_high` | `0.55` | 关键词 / 词片段强重合 |
+| `ngram_overlap_high` | `0.50` | n-gram 强重合 |
+| `bm25_candidate_min_score` | `0.45` | BM25 候选召回下限 |
+| `embedding_candidate_min_similarity` | `0.78` | embedding 候选召回下限 |
+| `embedding_auto_merge_min_similarity` | `0.86` | embedding 参与自动合并的最低相似度 |
+| `time_window_same_event_hours` | `72` | 默认同事件时间窗口 |
+| `auto_merge_confidence_threshold` | `0.85` | 自动合并阈值 |
+| `candidate_review_confidence_threshold` | `0.60` | 进入人工复核阈值 |
+
+阈值约束：
+
+- embedding 达到自动合并相似度也不能单独触发合并，MVP 仍必须满足实体、动作或时间窗口中的硬约束；对象约束留作后续扩展。
+- `confidence < candidate_review_confidence_threshold` 时默认拒绝合并或仅写审计。
+- 泛词、短话题和营销词可提高人工复核要求，不应降低自动合并阈值。
+
 ## 决策规则
 
 ### 自动合并
@@ -114,14 +176,14 @@ Agent 的职责是编排工具、选择降级路径、汇总结构化结果和�
 满足以下任一条件可以自动合并：
 
 - 同平台稳定 ID 或 URL 命中。
-- 跨平台标题强包含，且实体 / 动作 / 对象一致，时间窗口合理。
+- 跨平台标题强包含，且实体 / 动作一致，时间窗口合理。
 - BM25 / n-gram 高分、embedding 高相似、实体和时间硬约束均通过。
 
 ### 人工复核
 
 以下情况进入 `candidate_review`：
 
-- embedding 高相似，但实体、动作或对象缺失。
+- embedding 高相似，但实体、动作或时间硬约束缺失。
 - BM25 / n-gram 高分，但 embedding 一般或标题存在歧义。
 - 搜索结果相关，但存在历史内容污染风险。
 - 官媒报道与社区话题可能相关，但时间窗口或实体不完整。
@@ -133,7 +195,7 @@ Agent 的职责是编排工具、选择降级路径、汇总结构化结果和�
 - 核心实体冲突。
 - 时间窗口明显冲突。
 - 只有泛词相似，例如“苹果 华为”“开学考试”“新能源车”。
-- 只有 embedding 高相似，但没有实体、动作、对象或时间支撑。
+- 只有 embedding 高相似，但没有实体、动作或时间支撑。
 - 搜索结果低相关或明显历史污染。
 
 ## embedding 使用边界
