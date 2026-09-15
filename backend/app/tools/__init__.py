@@ -1,6 +1,8 @@
 """Tool calling runtime."""
 
 from app.tools.default_tools import (
+    CreateHumanReviewTaskInput,
+    CreateHumanReviewTaskOutput,
     ExtractEventSignalsInput,
     ExtractEventSignalsOutput,
     FetchSourceItemsInput,
@@ -26,6 +28,8 @@ from app.tools.runtime import (
 __all__ = [
     "SearchExistingEvidenceInput",
     "SearchExistingEvidenceOutput",
+    "CreateHumanReviewTaskInput",
+    "CreateHumanReviewTaskOutput",
     "FetchSourceItemsInput",
     "FetchSourceItemsOutput",
     "MatchAndResolveEventsInput",

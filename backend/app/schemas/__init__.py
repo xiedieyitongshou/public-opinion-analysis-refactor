@@ -48,6 +48,16 @@ from app.schemas.guardrails import (
     GuardrailSeverity,
     GuardrailViolationRecord,
 )
+from app.schemas.human_review import (
+    CreateHumanReviewTaskInput,
+    CreateHumanReviewTaskOutput,
+    HumanReviewDecision,
+    HumanReviewDecisionInput,
+    HumanReviewDecisionOutput,
+    HumanReviewStatus,
+    HumanReviewTaskRecord,
+    HumanReviewType,
+)
 from app.schemas.matching import (
     EventMatchConfig,
     EventMatchRetrievalInput,
@@ -95,6 +105,8 @@ __all__ = [
     "CollectorRunConfig",
     "CollectorRunStatus",
     "ConfidenceLevel",
+    "CreateHumanReviewTaskInput",
+    "CreateHumanReviewTaskOutput",
     "CrossPlatformMatchType",
     "DailyBriefing",
     "DraftStatus",
@@ -127,6 +139,12 @@ __all__ = [
     "HotspotClassification",
     "HotspotClassificationInput",
     "HotspotSortKey",
+    "HumanReviewDecision",
+    "HumanReviewDecisionInput",
+    "HumanReviewDecisionOutput",
+    "HumanReviewStatus",
+    "HumanReviewTaskRecord",
+    "HumanReviewType",
     "MatchAndResolveEventsInput",
     "MatchAndResolveEventsOutput",
     "MatchFeatures",

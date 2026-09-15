@@ -11,6 +11,8 @@ from pydantic import BaseModel, Field
 from app.collectors import default_collector_registry
 from app.guardrails import default_guardrail_registry
 from app.schemas import (
+    CreateHumanReviewTaskInput,
+    CreateHumanReviewTaskOutput,
     ExtractEventSignalsInput,
     ExtractEventSignalsOutput,
     FetchSourceItemsInput,
@@ -134,6 +136,24 @@ def run_briefing_guardrails_handler(
     )
 
 
+def create_human_review_task_handler(
+    input_data: CreateHumanReviewTaskInput,
+    context: ToolContext,
+) -> CreateHumanReviewTaskOutput:
+    from app.services.human_review import create_human_review_tasks
+
+    if context.db_session is None:
+        return CreateHumanReviewTaskOutput(
+            status="failed",
+            message="create_human_review_task requires a database session.",
+        )
+    return create_human_review_tasks(
+        context.db_session,
+        input_data,
+        agent_task_id=context.task_id,
+    )
+
+
 def search_existing_evidence_handler(
     input_data: SearchExistingEvidenceInput,
     context: ToolContext,
@@ -180,7 +200,6 @@ def build_default_tool_registry() -> ToolRegistry:
         "calculate_event_scores",
         "generate_daily_briefing",
         "review_briefing_quality",
-        "create_human_review_task",
         "save_daily_report",
         "render_briefing_image",
         "run_evaluation_suite",
@@ -241,6 +260,21 @@ def build_default_tool_registry() -> ToolRegistry:
             output_model=RunBriefingGuardrailsOutput,
             handler=run_briefing_guardrails_handler,
             has_side_effect=False,
+            retryable=False,
+            max_retries=0,
+        )
+    )
+
+    registry.register(
+        ToolDefinition(
+            name="create_human_review_task",
+            description=(
+                "Create or update Day 41 human review tasks from candidate_review payloads."
+            ),
+            input_model=CreateHumanReviewTaskInput,
+            output_model=CreateHumanReviewTaskOutput,
+            handler=create_human_review_task_handler,
+            has_side_effect=True,
             retryable=False,
             max_retries=0,
         )

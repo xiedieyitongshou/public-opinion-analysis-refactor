@@ -31,3 +31,6 @@ def test_day10_business_tables_are_created() -> None:
         "quality_flags_json",
         "signal_contribution_roles_json",
     }.issubset(item_columns)
+
+    event_columns = {column["name"] for column in inspector.get_columns("events")}
+    assert "event_id" in event_columns

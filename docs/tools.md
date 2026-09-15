@@ -434,8 +434,10 @@ Schema：
 
 作用：
 
+- 将 Day 40 的 `EventResolution.candidate_review` 写入异步复核队列。
 - 为候选合并、弱信号、高风险表述或发布决策创建异步复核任务。
 - 复核任务不阻断每 2-3 小时一次的自动采集分析链路。
+- 人工查询、详情查看和决策处理通过 Ops / Human Review API 完成，不作为自动 Agent Tool。
 
 对应阶段：
 
@@ -448,7 +450,25 @@ Schema：
 
 副作用：
 
-- 写入 `human_review_tasks` 或等价复核队列表。
+- 写入 `human_review_tasks`。
+- 同一 `review_type + event_signal_id + candidate_event_id + run_id` 不重复创建。
+- 已存在 pending 同类任务时，更新 `payload`、`priority` 和 `updated_at`。
+
+`event_merge_candidate` payload 至少保留：
+
+```text
+event_signal_id
+candidate_event_id
+recommended_action
+confidence
+reason
+matched_by
+match_features_json
+guardrail_flags
+source_signal_ids
+run_id
+source_citations
+```
 
 重试策略：
 
@@ -458,6 +478,38 @@ Schema：
 
 - 复核任务创建失败时记录 warning。
 - 只有涉及正式发布阻断的问题才设置 `blocks_publish = true`。
+
+Human Review API：
+
+| API | 作用 |
+|---|---|
+| `GET /ops/human-review/tasks` | 查询 pending / resolved / ignored 复核任务 |
+| `GET /ops/human-review/tasks/{id}` | 查看候选合并详情、来源引用、guardrail flags 和匹配特征 |
+| `POST /ops/human-review/tasks/{id}/decide` | 处理人工决策 |
+
+决策枚举：
+
+```text
+merge_to_existing
+create_new_event
+ignore
+reject
+```
+
+状态流转：
+
+```text
+pending -> resolved
+pending -> ignored
+```
+
+决策副作用：
+
+- `merge_to_existing`：复用 `candidate_event_id`，并在已有 `Event.event_detail_json` 中追加人工复核审计。
+- `create_new_event`：生成稳定业务 `event_id`，创建新的 `events` 记录。
+- `ignore`：仅将复核任务标记为 `ignored`，不进入事件合并。
+- `reject`：将复核任务标记为 `resolved`，记录拒绝审计，不创建事件。
+- 相关 `guardrail_violations` 标记为 `resolved`，不删除原始 violation。
 
 ### save_daily_report
 

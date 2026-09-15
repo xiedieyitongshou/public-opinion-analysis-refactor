@@ -913,19 +913,53 @@ B站视频条目默认可以标记：
 
 ```json
 {
-  "review_task_id": "string",
-  "run_id": "string",
+  "id": 1,
   "review_type": "event_merge_candidate|briefing_quality|publish_decision",
-  "status": "pending|resolved|ignored",
-  "priority": "low|medium|high",
-  "reason": "string",
-  "payload": {},
+  "status": "pending|resolved|ignored|cancelled",
+  "priority": 0,
+  "payload": {
+    "run_id": "string",
+    "event_signal_id": "string",
+    "candidate_event_id": "string|null",
+    "recommended_action": "merge|candidate_review|reject|create",
+    "confidence": 0.72,
+    "reason": "string",
+    "matched_by": ["entity_time_rule"],
+    "match_features_json": {},
+    "guardrail_flags": ["low_confidence"],
+    "source_signal_ids": ["string"],
+    "source_citations": []
+  },
+  "reviewer": "string|null",
+  "decision": "merge_to_existing|create_new_event|ignore|reject|null",
+  "decision_reason": "string|null",
   "created_at": "datetime",
+  "updated_at": "datetime",
   "resolved_at": "datetime|null"
 }
 ```
 
-人工复核是异步队列，不阻断每 2-3 小时一次的自动采集分析链路。
+Human review is an asynchronous queue and does not block the automatic
+collection-analysis loop that runs every 2-3 hours.
+
+Day 41 idempotency key:
+
+```text
+review_type + event_signal_id + candidate_event_id + run_id
+```
+
+When the same pending task already exists, update `payload`, `priority`, and
+`updated_at` instead of creating a duplicate task.
+
+Decision state transitions:
+
+- `merge_to_existing`: `pending -> resolved`
+- `create_new_event`: `pending -> resolved`
+- `reject`: `pending -> resolved`
+- `ignore`: `pending -> ignored`
+
+Decision handling must not delete the original guardrail violation. It only
+marks related `guardrail_violations.resolved` as `true`.
 
 ## Evaluation Schema
 
@@ -1439,27 +1473,59 @@ v0.3 不实现模式 B 完整链路，只保留可复用结构。
 
 ```json
 {
-  "run_id": "string",
-  "review_type": "event_merge_candidate|briefing_quality|publish_decision",
-  "payload": {},
-  "reason": "string",
-  "priority": "low|medium|high"
+  "review_type": "event_merge_candidate",
+  "run_id": "string|null",
+  "candidate_review": {},
+  "candidate_reviews": [],
+  "source_citations": [],
+  "priority": 0,
+  "payload": {}
 }
 ```
+
+Fields:
+
+- `candidate_review`: one Day 40 `EventResolution.candidate_review` payload.
+- `candidate_reviews`: multiple candidate review payloads.
+- `payload.event_resolutions[].candidate_review`: compatible extraction from
+  `match_and_resolve_events` output.
+- `source_citations`: source citation snapshot shown during review.
+- `priority`: integer priority; larger values appear first.
 
 ### CreateHumanReviewTaskOutput
 
 ```json
 {
-  "meta": {},
-  "human_review_task": {}
+  "status": "succeeded|skipped|failed",
+  "created_count": 0,
+  "updated_count": 0,
+  "skipped_count": 0,
+  "human_review_tasks": [],
+  "message": "string|null"
 }
 ```
 
-字段：
+### HumanReviewDecisionInput
 
-- `meta`：`ToolResultMeta`
-- `human_review_task`：`HumanReviewTask`
+```json
+{
+  "decision": "merge_to_existing|create_new_event|ignore|reject",
+  "reviewer": "string|null",
+  "decision_reason": "string|null",
+  "event_title": "string|null"
+}
+```
+
+### HumanReviewDecisionOutput
+
+```json
+{
+  "status": "succeeded|failed",
+  "human_review_task": {},
+  "event_id": "string|null",
+  "message": "string|null"
+}
+```
 
 ### SaveDailyReportInput
 

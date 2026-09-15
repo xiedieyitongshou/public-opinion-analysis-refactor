@@ -81,6 +81,7 @@ class Event(TimestampMixin, Base):
     __tablename__ = "events"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    event_id: Mapped[str | None] = mapped_column(String(120), unique=True, index=True)
     title: Mapped[str] = mapped_column(String(500), nullable=False, index=True)
     summary: Mapped[str | None] = mapped_column(Text)
     event_type: Mapped[str | None] = mapped_column(String(80), index=True)
