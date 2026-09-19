@@ -84,6 +84,14 @@ from app.schemas.normalized import (
     SourceStatus,
     SourceType,
 )
+from app.schemas.official_support import (
+    OfficialFreshnessBucket,
+    OfficialMatchQuality,
+    OfficialReference,
+    OfficialSupportConfig,
+    OfficialSupportDetail,
+    OfficialSupportResult,
+)
 from app.schemas.signals import (
     ConfidenceLevel,
     EventCandidate,
@@ -153,6 +161,12 @@ __all__ = [
     "NormalizeRawItemsInput",
     "NormalizeRawItemsOutput",
     "OfficialSupportStatus",
+    "OfficialFreshnessBucket",
+    "OfficialMatchQuality",
+    "OfficialReference",
+    "OfficialSupportConfig",
+    "OfficialSupportDetail",
+    "OfficialSupportResult",
     "Platform",
     "PlatformBucket",
     "PlatformPresence",

@@ -89,6 +89,14 @@ noise_rank                 # quality_flags 少者优先
 - 禁止把 RSSHub item 顺序描述为微博官方热度值。
 - 禁止把 `confidence_level` 写成事实真伪保证。
 
+## Day 43 official support boundary
+
+- `official_support_status` is produced by `match_official_support(event, official_items, config)`.
+- Official media matching reuses existing `items` / `Event` data; it does not crawl, search, or register a new Agent Tool.
+- Official evidence can explain evidence, authority, freshness, and coverage, but it must not be converted into public attention or community heat.
+- `F_official_only` means the event has official evidence but no community TopN/search support in the current sample.
+- `F_official_only` events may be shown in a separate "high evidence, low discussion" lane, but must not displace community hotspot main-list items solely because official media covered them.
+
 ## 代码位置
 
 ```text

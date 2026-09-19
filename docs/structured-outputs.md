@@ -772,6 +772,70 @@ B站视频条目默认可以标记：
 - `priority_category` 只表达分类，不是跨平台总分。
 - `platform_presence` 必须区分 TopN 出现和搜索补强出现，避免把 `search_supported` 写成自然双平台上榜。
 
+### OfficialSupportResult
+
+Day 43 adds `OfficialSupportResult` as a service-level structured output. It is not
+an Agent Tool output. The intended chain is:
+
+```text
+Event -> match_official_support -> OfficialSupportResult -> classify_hotspot
+```
+
+```json
+{
+  "event_id": "string|null",
+  "official_support_status": "not_checked|not_found|weak_supported|supported",
+  "official_references": [
+    {
+      "item_id": "string|null",
+      "title": "string",
+      "url": "string|null",
+      "source_name": "string",
+      "source_status": "use|fallback|...",
+      "published_at": "datetime|null",
+      "match_reason": "string",
+      "match_features": {
+        "entity_overlap": 1.0,
+        "action_overlap": 1.0,
+        "title_containment": true,
+        "keyword_overlap": 0.75,
+        "ngram_overlap": 0.5,
+        "time_distance_days": 0.0,
+        "within_time_window": true
+      },
+      "raw_metric": {
+        "read_count": 1000
+      },
+      "quality_flags": ["string"]
+    }
+  ],
+  "official_support_detail": {
+    "official_source_count": 1,
+    "authority_sources": ["People.cn"],
+    "freshness_bucket": "24h|72h|7d|stale|unknown",
+    "match_quality": "strong|weak|none|unknown",
+    "matched_item_ids": ["string"],
+    "quality_flags": ["string"]
+  },
+  "quality_flags": ["string"]
+}
+```
+
+Rules:
+
+- `supported` requires at least one `use` official item with URL, entity consistency,
+  a strong title/action/keyword/ngram match, and a reasonable time window.
+- `weak_supported` means official evidence exists but is fallback, missing fields,
+  stale, or only reaches weak match thresholds.
+- `not_found` means the official evidence pool was checked and no valid official
+  match was found.
+- `not_checked` means official support matching did not run or the official item
+  pool was unavailable/empty.
+- The primary evidence pool is `items` with `source_type = official_news`,
+  `source_status in use/fallback`, and `signal_role in evidence_signal/event_signal/mixed_signal`.
+- Existing `Event.source_citations_json` official references are only secondary
+  explanatory snapshots when the item pool is unavailable.
+
 ### HotspotClassification
 
 `HotspotClassification` 是 Day25 的分类结果，可以写入 `EventCard.classification_detail`。

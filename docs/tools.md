@@ -315,6 +315,15 @@ Schema：
 
 - 计算事件的平台热度、综合热度和走势状态。
 - 保存评分明细和 `event_snapshots`。
+- Day 43 起，官媒支撑识别由 `app.services.official_support.match_official_support`
+  完成，作为评分 / 分类前的 service 子步骤；不注册独立 Agent Tool。
+- 官媒 evidence pool 优先读取 `items` 中 `source_type = official_news`、
+  `source_status in use/fallback`、`signal_role in evidence_signal/event_signal/mixed_signal`
+  的标准化条目，不从 `Event.source_citations_json` 反向主检索。
+- `OfficialSupportResult.official_support_status` 应传入
+  `HotspotClassificationInput.official_support_status`，并可写入
+  `events.event_detail_json.official_support_status` 与
+  `events.event_detail_json.classification_detail.official_support_detail`。
 
 对应阶段：
 
