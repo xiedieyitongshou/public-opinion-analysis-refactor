@@ -324,6 +324,13 @@ Schema：
   `HotspotClassificationInput.official_support_status`，并可写入
   `events.event_detail_json.official_support_status` 与
   `events.event_detail_json.classification_detail.official_support_detail`。
+- Day 44 起，`calculate_event_scores` 调用
+  `app.services.platform_heat.item_to_platform_heat_signal` 和
+  `score_platform_signals` 计算知乎 / 微博平台内相对观察强度。
+- `calculate_event_scores` 负责读取 `Event` + `Item`、通过稳定业务
+  `Event.event_id` 定位事件、写入 `platform_scores`；`platform_heat`
+  service 不直接读写数据库。
+- 输出只表示单平台内强度，不生成微博、知乎、官媒原始指标相加的跨平台总分。
 
 对应阶段：
 

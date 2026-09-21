@@ -666,6 +666,44 @@ B站视频条目默认可以标记：
 }
 ```
 
+Day 44 platform-local heat scoring uses `PlatformHeatScore` as the service-level
+shape before persistence:
+
+```json
+{
+  "event_id": "stable-business-event-id",
+  "platform": "zhihu|weibo",
+  "platform_score": 0.0,
+  "platform_bucket": "top3|top10|top20|tail|unknown",
+  "platform_strength": "strong|medium|weak|unknown",
+  "score_status": "ok|partial|unknown",
+  "primary_platform_rank": 3,
+  "rank_delta": null,
+  "snapshot_presence_count": 1,
+  "raw_metrics_used": {},
+  "sub_scores": {},
+  "platform_presence": {
+    "zhihu_topn": false,
+    "zhihu_search": false,
+    "weibo_topn": false,
+    "weibo_cli": false
+  },
+  "quality_flags": ["insufficient_history"]
+}
+```
+
+Persistence mapping:
+
+- `PlatformScore.event_id` is the database foreign key to `events.id`.
+- `PlatformHeatScore.event_id` is the stable business `Event.event_id` and is
+  stored in `score_detail_json.business_event_id`.
+- `PlatformScore.normalized_score` stores `platform_score`.
+- `PlatformScore.raw_score` stores the primary raw platform signal when present.
+- `PlatformScore.score_detail_json` stores bucket, strength, status, rank,
+  snapshot count, raw metrics used, sub-scores, presence evidence, signal scores,
+  and quality flags.
+- Do not add Zhihu, Weibo, and official metrics into a cross-platform total.
+
 ### EventScore
 
 ```json

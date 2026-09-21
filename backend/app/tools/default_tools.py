@@ -7,10 +7,14 @@ placeholders make the registry, schemas, and call logging usable now.
 from typing import Any, Literal
 
 from pydantic import BaseModel, Field
+from sqlalchemy import select
 
 from app.collectors import default_collector_registry
 from app.guardrails import default_guardrail_registry
+from app.models import Event, Item, PlatformScore
 from app.schemas import (
+    CalculateEventScoresInput,
+    CalculateEventScoresOutput,
     CreateHumanReviewTaskInput,
     CreateHumanReviewTaskOutput,
     ExtractEventSignalsInput,
@@ -154,6 +158,103 @@ def create_human_review_task_handler(
     )
 
 
+def calculate_event_scores_handler(
+    input_data: CalculateEventScoresInput,
+    context: ToolContext,
+) -> CalculateEventScoresOutput:
+    from app.services.platform_heat import item_to_platform_heat_signal, score_platform_signals
+
+    db = context.db_session
+    if db is None:
+        return CalculateEventScoresOutput(
+            status="failed",
+            errors=["calculate_event_scores requires a database session."],
+        )
+
+    event_stmt = select(Event)
+    if input_data.event_ids:
+        event_stmt = event_stmt.where(Event.event_id.in_(input_data.event_ids))
+    events = db.scalars(event_stmt).all()
+    if not events:
+        return CalculateEventScoresOutput(status="skipped", quality_flags=["no_events"])
+
+    platform_scores = []
+    errors: list[str] = []
+    saved_count = 0
+    for event in events:
+        if not event.event_id:
+            errors.append(f"Event row {event.id} has no stable event_id.")
+            continue
+        items = db.scalars(
+            select(Item).where(
+                Item.event_id == event.id,
+                Item.status == "active",
+            )
+        ).all()
+        signals = []
+        for item in items:
+            signal = item_to_platform_heat_signal(item, event_id=event.event_id)
+            if signal.platform in input_data.platforms:
+                signals.append(signal)
+        for score in score_platform_signals(signals):
+            platform_scores.append(score)
+            if input_data.dry_run:
+                continue
+            record = PlatformScore(
+                event_id=event.id,
+                platform=score.platform,
+                raw_score=_primary_raw_score(score.raw_metrics_used),
+                normalized_score=score.platform_score,
+                score_detail_json={
+                    "business_event_id": score.event_id,
+                    "platform_bucket": score.platform_bucket,
+                    "platform_strength": score.platform_strength,
+                    "score_status": score.score_status,
+                    "primary_platform_rank": score.primary_platform_rank,
+                    "rank_delta": score.rank_delta,
+                    "snapshot_presence_count": score.snapshot_presence_count,
+                    "raw_metrics_used": score.raw_metrics_used,
+                    "sub_scores": score.sub_scores,
+                    "platform_presence": score.platform_presence.model_dump(mode="json"),
+                    "signal_scores": [
+                        signal_score.model_dump(mode="json")
+                        for signal_score in score.signal_scores
+                    ],
+                    "quality_flags": score.quality_flags,
+                },
+            )
+            db.add(record)
+            db.commit()
+            saved_count += 1
+
+    if platform_scores and not errors:
+        status = "succeeded"
+    elif platform_scores:
+        status = "partial"
+    else:
+        status = "failed"
+    return CalculateEventScoresOutput(
+        status=status,
+        platform_scores=platform_scores,
+        saved_count=saved_count,
+        errors=errors,
+        quality_flags=["partial_errors"] if errors else [],
+    )
+
+
+def _primary_raw_score(raw_metrics_used: dict[str, Any]) -> float | None:
+    for key in (
+        "rank",
+        "list_position",
+        "weibo_search_total_number_proxy",
+        "matched_status_count",
+    ):
+        value = raw_metrics_used.get(key)
+        if isinstance(value, int | float):
+            return float(value)
+    return None
+
+
 def search_existing_evidence_handler(
     input_data: SearchExistingEvidenceInput,
     context: ToolContext,
@@ -197,7 +298,6 @@ def build_default_tool_registry() -> ToolRegistry:
     )
 
     placeholder_tools = [
-        "calculate_event_scores",
         "generate_daily_briefing",
         "review_briefing_quality",
         "save_daily_report",
@@ -223,6 +323,22 @@ def build_default_tool_registry() -> ToolRegistry:
                 max_retries=1,
             )
         )
+
+    registry.register(
+        ToolDefinition(
+            name="calculate_event_scores",
+            description=(
+                "Calculate Day 44 platform-local Zhihu/Weibo heat scores and persist "
+                "PlatformScore rows."
+            ),
+            input_model=CalculateEventScoresInput,
+            output_model=CalculateEventScoresOutput,
+            handler=calculate_event_scores_handler,
+            has_side_effect=True,
+            retryable=False,
+            max_retries=0,
+        )
+    )
 
     registry.register(
         ToolDefinition(

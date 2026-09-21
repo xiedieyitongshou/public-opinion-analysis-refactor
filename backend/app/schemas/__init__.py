@@ -92,6 +92,17 @@ from app.schemas.official_support import (
     OfficialSupportDetail,
     OfficialSupportResult,
 )
+from app.schemas.platform_heat import (
+    CalculateEventScoresInput,
+    CalculateEventScoresOutput,
+    PlatformHeatBucket,
+    PlatformHeatConfig,
+    PlatformHeatScore,
+    PlatformHeatSignalInput,
+    PlatformHeatSignalScore,
+    PlatformHeatStatus,
+    PlatformPresenceEvidence,
+)
 from app.schemas.signals import (
     ConfidenceLevel,
     EventCandidate,
@@ -109,6 +120,8 @@ from app.schemas.signals import (
 __all__ = [
     "BriefingSection",
     "BriefingSectionType",
+    "CalculateEventScoresInput",
+    "CalculateEventScoresOutput",
     "CollectorMetadata",
     "CollectorRunConfig",
     "CollectorRunStatus",
@@ -168,8 +181,15 @@ __all__ = [
     "OfficialSupportDetail",
     "OfficialSupportResult",
     "Platform",
+    "PlatformHeatBucket",
+    "PlatformHeatConfig",
+    "PlatformHeatScore",
+    "PlatformHeatSignalInput",
+    "PlatformHeatSignalScore",
+    "PlatformHeatStatus",
     "PlatformBucket",
     "PlatformPresence",
+    "PlatformPresenceEvidence",
     "PriorityCategory",
     "PublishEligibility",
     "PublishStatus",
