@@ -11,6 +11,13 @@ from app.schemas.normalized import SourceStatus
 
 OfficialFreshnessBucket = Literal["24h", "72h", "7d", "stale", "unknown"]
 OfficialMatchQuality = Literal["strong", "weak", "none", "unknown"]
+OfficialCoverageLevel = Literal[
+    "none",
+    "single_source",
+    "multi_source_duplicate",
+    "multi_source_independent",
+    "unknown",
+]
 
 
 class OfficialSupportConfig(BaseModel):
@@ -43,10 +50,16 @@ class OfficialSupportDetail(BaseModel):
     """Auditable summary of how the support status was assigned."""
 
     official_source_count: int = 0
+    official_item_count: int = 0
+    source_coverage_count: int = 0
+    unique_story_count: int = 0
+    official_coverage_level: OfficialCoverageLevel = "unknown"
     authority_sources: list[str] = Field(default_factory=list)
     freshness_bucket: OfficialFreshnessBucket = "unknown"
     match_quality: OfficialMatchQuality = "unknown"
     matched_item_ids: list[str] = Field(default_factory=list)
+    source_independence_flags: list[str] = Field(default_factory=list)
+    official_query: dict[str, Any] | None = None
     quality_flags: list[str] = Field(default_factory=list)
 
 

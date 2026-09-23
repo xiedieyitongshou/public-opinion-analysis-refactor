@@ -84,7 +84,15 @@ from app.schemas.normalized import (
     SourceStatus,
     SourceType,
 )
+from app.schemas.official_paths import (
+    OfficialAgendaRank,
+    OfficialPathResult,
+    OfficialPathStatus,
+    OfficialPathType,
+    OfficialQuery,
+)
 from app.schemas.official_support import (
+    OfficialCoverageLevel,
     OfficialFreshnessBucket,
     OfficialMatchQuality,
     OfficialReference,
@@ -173,9 +181,15 @@ __all__ = [
     "NormalizedItem",
     "NormalizeRawItemsInput",
     "NormalizeRawItemsOutput",
+    "OfficialAgendaRank",
+    "OfficialCoverageLevel",
     "OfficialSupportStatus",
     "OfficialFreshnessBucket",
     "OfficialMatchQuality",
+    "OfficialPathResult",
+    "OfficialPathStatus",
+    "OfficialPathType",
+    "OfficialQuery",
     "OfficialReference",
     "OfficialSupportConfig",
     "OfficialSupportDetail",
