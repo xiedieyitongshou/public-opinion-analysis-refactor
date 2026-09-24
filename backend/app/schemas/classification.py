@@ -8,6 +8,7 @@ from pydantic import BaseModel, Field, model_validator
 
 from app.schemas.display import (
     CrossPlatformMatchType,
+    EvidenceSummary,
     OfficialSupportStatus,
     PlatformPresence,
     PriorityCategory,
@@ -98,3 +99,19 @@ class HotspotClassification(BaseModel):
         if any(flag.startswith("total_priority_score") for flag in self.quality_flags):
             raise ValueError("MVP classification must not use total_priority_score")
         return self
+
+
+HotspotClassificationResult = HotspotClassification
+
+
+class HotspotClassificationAssembly(BaseModel):
+    """Day 46 assembled classification payload persisted onto Event detail JSON."""
+
+    run_id: str
+    event_id: str
+    window_start: str
+    window_end: str
+    classification: HotspotClassification
+    classification_input: HotspotClassificationInput
+    evidence_summary: EvidenceSummary
+    classification_detail_json: dict

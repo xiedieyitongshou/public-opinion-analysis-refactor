@@ -2,14 +2,14 @@
 
 ## 文档目标
 
-本文定义 Day 45 的跨平台覆盖形态判断与热点分类组装逻辑。
+本文定义 Day 46 的跨平台覆盖形态判断与热点分类组装逻辑。
 
-Day 45 不重新计算平台热度，也不重新执行事件融合。它读取：
+Day 46 不重新计算平台热度，也不重新执行事件融合。它读取：
 
 ```text
 第 6 周 Event / EventResolution
-Day 43 OfficialSupportResult
 Day 44 platform_scores
+Day 45 增强后的 OfficialSupportResult
 ```
 
 然后生成展示层需要的分类和解释字段：
@@ -26,29 +26,31 @@ classification_detail_json
 
 ## 与其他阶段的边界
 
-| 阶段 | 负责内容 | Day 45 是否重做 |
+| 阶段 | 负责内容 | Day 46 是否重做 |
 |---|---|---|
 | 第 6 周 | 事件抽取、事件融合、稳定 `event_id` | 不重做 |
-| Day 43 | 官媒支撑识别、`official_support_status`、官媒引用 | 不重做 |
+| Day 43 | 官媒支撑识别、`official_support_status`、官媒引用 | 不重做，只读取结果 |
 | Day 44 | 知乎 / 微博平台内热度分、分桶、状态 | 不重算 |
-| Day 45 | 平台覆盖形态、热点分类、展示依据 | 本日实现 |
-| Day 46 | 类内排序和走势状态 | 不在本日完整实现 |
+| Day 45 | 官媒定向检索、官媒内部议程聚合、增强 `OfficialSupportResult` | 不重做，只读取结果 |
+| Day 46 | 平台覆盖形态、热点分类、展示依据 | 本日实现 |
+| Day 47 | 类内排序和走势状态 | 不在本日完整实现 |
 
 一句话：
 
 ```text
 Day 44 计算“这个事件在各平台内有多强”。
-Day 45 判断“这个事件属于哪种热点类型，展示时应该如何解释”。
+Day 46 判断“这个事件属于哪种热点类型，展示时应该如何解释”。
 ```
 
 ## 输入
 
-Day 45 的输入应来自已经存在的结构化结果。
+Day 46 的输入应来自已经存在的结构化结果。
 
 ```text
 Event
 EventResolution / match_features_json
 PlatformScore[]
+accepted source signals
 OfficialSupportResult
 SourceCitation[]
 quality_flags
@@ -60,15 +62,37 @@ quality_flags
 assemble_hotspot_classification(
     event,
     platform_scores,
+    source_signals,
     official_support_result,
     event_resolution,
     source_citations,
+    window_start,
+    window_end,
 ) -> HotspotClassificationAssembly
 ```
 
+## 数据窗口
+
+Day 46 默认只读取当前 run 对应的滚动 24 小时窗口：
+
+```text
+window_end = 当前 run 分类时间
+window_start = window_end - 24h
+```
+
+窗口内读取：
+
+```text
+PlatformScore
+accepted source signals
+OfficialSupportResult
+```
+
+超出窗口的历史数据只作为 Day 47 趋势和类内排序输入，不改变当前轮 `platform_presence`。
+
 ## 输出
 
-Day 45 输出包括：
+Day 46 输出包括：
 
 ```text
 HotspotClassification
@@ -83,11 +107,15 @@ backend/app/schemas/classification.py
 backend/app/services/event_classification.py
 ```
 
-Day 45 需要补的是从上游结果组装 `HotspotClassificationInput` 的逻辑，以及生成 `EvidenceSummary` 和 `classification_detail_json`。
+Day 46 需要补的是从上游结果组装 `HotspotClassificationInput` 的逻辑，以及生成 `EvidenceSummary` 和 `classification_detail_json`。
+
+如对外接口需要强调输出语义，可以导出 `HotspotClassificationResult` 作为 `HotspotClassification` 的别名；不要在 MVP 中维护两套结果 schema。
 
 ## platform_presence
 
 `platform_presence` 表示事件在当前样本中出现在哪些平台和证据通道中。
+
+`platform_presence` 必须基于同一稳定 `Event.event_id` 下的来源证据派生。Day 46 不重新用标题或关键词匹配微博 TopN 与知乎 TopN。
 
 字段：
 
@@ -127,6 +155,7 @@ mock:
 - `zhihu_search = true` 不等于知乎 TopN。
 - `weibo_cli = true` 不等于微博 TopN。
 - `official_source = true` 不等于公众热度高。
+- 官媒支撑只进入分类输入、证据摘要和 `classification_detail_json`，不得反向改变 `PlatformScore` 或平台热度。
 
 ## cross_platform_match_type
 
@@ -150,11 +179,13 @@ unknown
 natural_topn_overlap:
   zhihu_topn = true
   and weibo_topn = true
+  and both are evidence under the same stable event_id
 
 search_supported:
   单平台 TopN = true
   and 另一社区平台存在高相关 search / CLI 补强
   and search_hit_quality in same_id_or_title / entity_action_match
+  and the enrichment signal has already been accepted into the same event_id or linked through 第 6 周 match_features_json
 
 weak_search_supported:
   单平台 TopN = true
@@ -181,13 +212,14 @@ none:
 
 ## 匹配证据记录
 
-Day 45 应保留跨平台覆盖形态的匹配来源。
+Day 46 应保留跨平台覆盖形态的匹配来源。
 
 建议记录：
 
 ```text
 matched_by
 match_features_json
+event_id_aggregation_basis
 embedding_similarity
 hard_constraints_passed
 review_status
@@ -210,10 +242,11 @@ embedding_rerank
 - 规则强匹配可直接进入分类证据链。
 - embedding 辅助匹配必须保留 `embedding_similarity`、硬约束命中情况和复核状态。
 - 只有 embedding 高相似但缺少硬约束支撑时，不能直接标记为强跨平台覆盖。
+- `natural_topn_overlap` 和 `search_supported` 的依据来自第 6 周事件聚合结果，不在 Day 46 重新执行 `match_and_resolve_events`。
 
 ## priority_category
 
-Day 45 使用 `classify_hotspot()` 生成 `priority_category`。
+Day 46 使用 `classify_hotspot()` 生成 `priority_category`。
 
 分类规则：
 
@@ -294,7 +327,7 @@ F: 该事件来自官媒报道，当前社区热点样本中未捕捉到明显�
 
 ### official_evidence
 
-来自 Day 43 `official_references`。
+来自 Day 45 增强后的 `official_references`。
 
 示例：
 
@@ -351,10 +384,16 @@ priority_category = E_single_platform_only
 
 ```json
 {
+  "run_id": null,
+  "window_start": null,
+  "window_end": null,
   "platform_scores": {},
+  "source_signals": [],
   "official_support_detail": {},
   "platform_presence_reason": {},
   "cross_platform_match_reason": {},
+  "event_id_aggregation_basis": {},
+  "evidence_summary": {},
   "match_features_json": {},
   "matched_by": [],
   "embedding_similarity": null,
@@ -363,7 +402,8 @@ priority_category = E_single_platform_only
   "missing_fields": [],
   "rejected_reasons": [],
   "source_statuses": [],
-  "quality_flags": []
+  "quality_flags": [],
+  "updated_at": null
 }
 ```
 
@@ -378,12 +418,20 @@ quality_flags
 guardrail_flags
 ```
 
-## Day45 需要实现的组装步骤
+持久化位置：
+
+```text
+events.event_detail_json.classification_detail
+```
+
+重复运行同一 run / 同一窗口时覆盖本轮 `classification_detail` 对象，保留 `event_detail_json` 其他 key；不得 append 历史数组，也不得把旧轮次 JSON 合并进当前结果。
+
+## Day46 需要实现的组装步骤
 
 推荐实现顺序：
 
 ```text
-1. load event-level inputs
+1. load event-level inputs in rolling 24h window
 2. derive platform_presence
 3. derive search_hit_quality
 4. derive cross_platform_match_type
@@ -391,14 +439,14 @@ guardrail_flags
 6. call classify_hotspot()
 7. build evidence_summary
 8. build classification_detail_json
-9. persist into Event.event_detail_json / EventCard.classification_detail
+9. persist by overwriting events.event_detail_json.classification_detail
 ```
 
-## 和 Day46 的关系
+## 和 Day47 的关系
 
-Day45 只生成分类和依据，不负责最终类内排序与走势。
+Day46 只生成分类和依据，不负责最终类内排序与走势。
 
-Day46 再读取：
+Day47 再读取：
 
 ```text
 category_rank
@@ -425,6 +473,8 @@ noise_rank
 - 只有官媒支撑 -> F。
 - `zhihu_search` only 不标记 `zhihu_topn`。
 - `weibo_cli` only 不标记 `weibo_topn`。
+- 官媒支撑和 `official_coverage_level` 只影响分类、证据摘要和详情，不影响平台热度。
+- 重复运行不会在 `events.event_detail_json.classification_detail` 中累加旧 JSON。
 - embedding-only 匹配不能直接生成强跨平台覆盖。
 - `evidence_summary` 对 `not_found` 官媒支撑启用保守表述。
 - `classification_detail_json` 保留匹配证据、缺失字段和 source_status。
