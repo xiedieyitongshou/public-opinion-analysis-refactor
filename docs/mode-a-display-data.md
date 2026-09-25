@@ -2,7 +2,7 @@
 
 ## 文档目标
 
-本文说明模式 A 一图流热点简报 / 首页展示需要哪些数据，这些数据从哪条链路产生，以及当前阶段哪些数据已经可提供、哪些需要 Day 43-46 补齐。
+本文说明模式 A 一图流热点简报 / 首页展示需要哪些数据，这些数据从哪条链路产生，以及当前阶段哪些数据已经可提供、哪些需要 Day 43-47 补齐。
 
 模式 A 的展示核心不是“全网热度总分”，而是以稳定 `event_id` 为中心，解释一个事件：
 
@@ -111,8 +111,9 @@ classification_detail
 | 第 6 周 Event Resolver | `event_id`、`EventResolution`、`match_features_json` | 确认哪些来源属于同一事件 |
 | Day 43 官媒支撑识别 | `official_support_status`、`official_references`、`official_support_detail` | 判断是否有事实 / 权威支撑 |
 | Day 44 平台内排序 | `platform_scores`、`platform_bucket`、`platform_strength`、`rank_delta` | 展示知乎 / 微博平台内强度 |
-| Day 45 热点分类 | `priority_category`、`platform_presence`、`cross_platform_match_type`、`confidence_level` | 决定事件属于哪类热点 |
-| Day 46 走势判断 | `trend_status`、类内排序 key | 展示正在升温 / 稳定 / 降温 |
+| Day 45 官媒补证 | 增强后的 `OfficialSupportResult` | 补充事实 / 权威依据 |
+| Day 46 热点分类 | `priority_category`、`platform_presence`、`cross_platform_match_type`、`confidence_level` | 决定事件属于哪类热点 |
+| Day 47 平台内热度分析 | `EventHeatAnalysis`、分平台连续观测时长与趋势 | 展示 24 小时窗口内知乎 / 微博各自的热度、升温 / 稳定 / 降温 / 未知 |
 | Day 51 Briefing Agent | `EventCard`、`DailyBriefing` | 生成结构化简报草稿 |
 
 ## 当前已具备的数据
@@ -207,7 +208,7 @@ Event(event_id)
 输出写入：
 
 ```text
-platform_scores(event_id, platform, snapshot_time)
+platform_scores(event_id, platform, calculated_at)，另存来源 observed_at / observation_id
 ```
 
 推荐字段：
@@ -261,9 +262,9 @@ engagement_score        来自 vote_count / comment_count 等可用互动字段
 
 ```text
 weibo_platform_score
-= topic_presence_score * 0.25
+= topic_presence_score * 0.40
 + content_activity_score * 0.35
-+ interaction_sample_score * 0.40
++ interaction_sample_score * 0.25
 ```
 
 字段说明：
@@ -306,9 +307,9 @@ presence_bonus        代表多条相关信号或多快照出现
 cap                   防止重复采集导致虚高
 ```
 
-## Day 45 需要补的数据
+## Day 46 需要补的数据
 
-Day 45 不重新计算平台热度，而是读取 Day 44 的 `platform_scores` 和 Day 43 的 `OfficialSupportResult`。
+Day 46 不重新计算平台热度，而是读取 Day 44 的 `platform_scores` 和 Day 45 增强后的 `OfficialSupportResult`。与 Day 47 共用当前 run 固定的 UTC `(window_start, window_end]`，其中 `window_start = window_end - 24h`；来源按真实观测时间入窗，窗口外历史只供审计。
 
 输出：
 
@@ -344,42 +345,41 @@ official_only              只有官媒支撑，无社区 TopN / search support
 none                       无足够平台证据
 ```
 
-## Day 46 需要补的数据
+## Day 47 需要补的数据
 
-Day 46 负责类内排序和走势判断。
-
-类内排序不使用跨平台原始总分，使用字典序 sort keys：
+Day 47 在同一滚动 24 小时窗口内按 `event_id + platform` 分析，输出 `EventHeatAnalysis.platforms.zhihu / weibo`。Schema 与算法以实施计划 Day 47 为准，展示所需最小字段：
 
 ```text
-category_rank
-official_support_rank
-match_strength_rank
-primary_rank_bucket
+run_id / window_start / window_end
+current_topn_present
+first_topn_seen_at / last_topn_seen_at
 snapshot_presence_count
-rank_delta_direction
-search_hit_quality_rank
-freshness_bucket
-source_health_rank
-noise_rank
+continuous_topn_minutes / duration_status
+latest_platform_heat
+trend_status / trend_basis
+rank_delta / score_delta
+comparison_observation_ids
+quality_flags / limitations
 ```
 
-走势状态建议：
+`continuous_topn_minutes` 是当前连续 true 观测段的末次与首次时间差，不能用出现次数乘间隔，也不能直接取所有上榜记录的首末跨度。失败、未知、明确缺席或超过配置 `max_gap_minutes` 的间隔切断连续段；时间不向窗口边界外推。展示“24h 窗口内连续观测上榜约 X 分钟”；微博写“话题样本连续出现约 X 分钟”，不声称微博官方榜单持续时间。
 
-```text
-new
-rising
-stable_high
-cooling
-unknown
-```
+趋势仅使用 `rising / stable / cooling / unknown`。知乎优先比较最近相邻观测的真实 rank；微博只有同口径可比平台分才判断升降温，RSSHub 顺序不作为 rank。stable 表示相对稳定，不代表高热度；爆发、二次波动、长尾不在本期范围。
 
-后续如样本足够，再扩展：
+热度沿用 Day 44 最新有效 `PlatformHeatScore`，两个平台分别展示，不累计 24 小时分数。榜单以 Day 46 分类分组，同平台、同分类内按可用状态、真实 rank 或同口径平台分、持续时长、稳定事件 ID 排序；官媒只提供证据解释。
 
-```text
-exploding
-second_wave
-long_tail
-```
+| 情况 | 展示 fallback |
+|---|---|
+| 只有一个 true 观测 | 保留静态热度；时长下界 0、partial，显示“仅一次观测，持续时间待确认”；趋势 unknown |
+| 来源失败 / 不完整 / 超长间隔 | 不把未知解释为下榜或降温；连续段中断；新 true 从新段开始，当前未知时长为 null |
+| 无窗口内主榜单证据、观测过期、search / CLI-only、官媒-only | 持续时长 null、趋势 unknown，说明原因；不能把旧窗口热度当当前值 |
+| 完整同口径榜单明确未命中 | 当前时长 0；无可比指标时趋势仍 unknown，缺失分数不补 0 |
+| RSSHub-only / 分数不可比 | 连续话题观测时长可展示，趋势 unknown；不根据顺序、时间衰减或采样变化推断降温 |
+| 单平台故障 | 保留另一平台结果；失效平台 unknown，整体 partial |
+
+当前分析持久化于 `events.event_detail_json.platform_heat_analysis`，分类仍位于 `classification_detail`；双方覆盖各自对象并保留其他 key。原始观测写入 `event_snapshots.metrics_json.platform_observations`，时间列为 `snapshot_at`，按观测去重。展示前校验分类与分析的 run / 窗口相同，否则分析按 unknown 处理。
+
+`EventCard` 计划新增可选 `platform_heat_analysis: EventHeatAnalysis`。兼容顶层 `trend_status` 只取明确指定 `primary_platform` 的趋势，无法映射则 unknown；知乎升温、微博降温可同时显示。升温栏目必须注明平台和窗口，不生成一个综合趋势。
 
 ## EventCard 组装规则
 
@@ -390,19 +390,20 @@ long_tail
 | `event_id` | 第 6 周 Event Resolver |
 | `title` | Event.title 或主信号标题 |
 | `summary` | Briefing Agent 基于证据生成 |
-| `priority_category` | Day 45 classification |
-| `category_rank` | Day 45 classification |
-| `platform_presence` | Day 45 classification |
-| `cross_platform_match_type` | Day 45 classification |
-| `official_support_status` | Day 43 official support |
-| `confidence_level` | Day 45 classification |
+| `priority_category` | Day 46 classification |
+| `category_rank` | Day 46 classification |
+| `platform_presence` | Day 46 classification |
+| `cross_platform_match_type` | Day 46 classification |
+| `official_support_status` | Day 43 / Day 45 official support |
+| `confidence_level` | Day 46 classification |
 | `primary_platform` | Day 44 platform_scores |
 | `primary_platform_rank` | Day 44 platform_scores |
 | `platform_bucket` | Day 44 platform_scores |
 | `platform_strength` | Day 44 platform_scores |
-| `rank_delta` | Day 44 platform_scores |
-| `trend_status` | Day 46 trend |
-| `evidence_summary` | Day 45 / Day 51 |
+| `rank_delta` | Day 47 主平台真实排名变化，无可比 rank 时 null |
+| `trend_status` | Day 47 明确指定主平台的趋势，否则 unknown |
+| `platform_heat_analysis` | Day 47 EventHeatAnalysis，包含两平台各自时长、热度和趋势 |
+| `evidence_summary` | Day 46 / Day 51 |
 | `source_citations` | NormalizedItem.source_citation + official_references |
 | `risk_notes` | Guardrails / Critic / classification limitations |
 | `classification_detail` | Day 43-46 detail JSON |
@@ -489,7 +490,7 @@ source_citations
 publish_eligibility
 ```
 
-如果 Day 44 或 Day 46 数据不足，可以降级：
+如果 Day 44、Day 46 或 Day 47 数据不足，对缺失字段分别降级，保留其他可用字段：
 
 ```text
 platform_bucket = unknown

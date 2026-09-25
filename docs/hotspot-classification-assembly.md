@@ -76,7 +76,7 @@ assemble_hotspot_classification(
 Day 46 默认只读取当前 run 对应的滚动 24 小时窗口：
 
 ```text
-window_end = 当前 run 分类时间
+window_end = 当前 run 固定的分类时间（重试复用）
 window_start = window_end - 24h
 ```
 
@@ -88,7 +88,7 @@ accepted source signals
 OfficialSupportResult
 ```
 
-超出窗口的历史数据只作为 Day 47 趋势和类内排序输入，不改变当前轮 `platform_presence`。
+Day 46 / Day 47 共用 UTC `(window_start, window_end]`，平台分按关联来源 `observed_at`、signal 按 `fetched_at` 入窗；不能用重新评分的 `calculated_at` 引入旧信号。窗口外历史只供审计，不参与本轮 presence、连续上榜时间、趋势或平台内排序。
 
 ## 输出
 
@@ -446,22 +446,11 @@ events.event_detail_json.classification_detail
 
 Day46 只生成分类和依据，不负责最终类内排序与走势。
 
-Day47 再读取：
+Day47 读取同一 24 小时窗口内逐轮 `PlatformScore`、真实来源观测及 Day46 分类，分别生成知乎 / 微博的 `PlatformTrendResult`，组成 `EventHeatAnalysis`。当前连续段只连接相邻 true 观测；缺席、未知或超长间隔切断，单点仅有 0 分钟下界。趋势仅使用 `rising / stable / cooling / unknown`；知乎优先比较真实 rank，微博仅在平台分可比时比较，RSSHub 顺序不作为 rank。
 
-```text
-category_rank
-official_support_rank
-match_strength_rank
-primary_rank_bucket
-snapshot_presence_count
-rank_delta_direction
-search_hit_quality_rank
-freshness_bucket
-source_health_rank
-noise_rank
-```
+同平台、同分类内按可用状态、真实 rank 或同口径平台分、连续观测时长排序；官媒只保留证据解释，不参与平台热度排序。详细 schema、比较阈值和 fallback 以实施计划 Day47 为准。
 
-输出每日候选列表、类内排序和趋势状态。
+Day47 覆盖写入 `events.event_detail_json.platform_heat_analysis`，Day46 覆盖写入 `classification_detail`，双方保留对方 key；展示只读取同 run / 同窗口结果，过期分析回退 unknown。原始观测保存在 `event_snapshots.metrics_json.platform_observations`，不从分类结果重建观测。
 
 ## 最小测试用例
 

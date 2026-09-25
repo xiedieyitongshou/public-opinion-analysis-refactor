@@ -178,7 +178,7 @@ normalize_log(vote_count + comment_count, zhihu_engagement_cap)
 
 - 只有 rank：使用 `rank_score`，`score_status = partial`。
 - rank 缺失但有多快照出现：使用 `snapshot_presence_score`，`score_status = partial`。
-- 只有 `zhihu_search`：不标记 `zhihu_topn`，但可以标记 `zhihu_search = true`，并进入 Day 45 的搜索补强判断。
+- 只有 `zhihu_search`：不标记 `zhihu_topn`，但可以标记 `zhihu_search = true`，并进入 Day 46 的搜索补强判断。
 - 核心字段全部缺失：`score_status = unknown`。
 
 ## 微博平台分
@@ -322,7 +322,7 @@ unknown:
 
 Day 44 的平台分不直接生成 A/B/C/D/E/F 分类。
 
-Day 45 读取 Day 44 输出，并结合 Day 43 官媒支撑结果生成：
+Day 46 读取 Day 44 输出，并结合 Day 45 增强后的官媒支撑结果生成：
 
 ```text
 platform_presence
@@ -341,6 +341,14 @@ zhihu_search = 存在高相关 zhihu_search 补强
 weibo_cli = 存在高相关 weibo CLI 补强
 official_source = official_support_status in supported / weak_supported
 ```
+
+## 与 Day 47 的接口
+
+Day 44 生成单轮平台内观察强度，Day 47 使用同 run 固定的 UTC `(window_end - 24h, window_end]` 分别分析知乎 / 微博。实施时在 `score_detail_json` 保存 `observation_id`、`observed_at`、`run_id`、评分配置版本和采样口径；评分必须关联真实当轮观测，重算旧 Item 不算新上榜。
+
+Day 47 复用 `PlatformHeatScore` 作为静态热度，不累加各轮分数。连续观测时长来自主榜单逐轮 presence；搜索 / CLI-only 不产生时长。趋势为 `rising / stable / cooling / unknown`：知乎优先真实排名，微博可比较同评分配置、同子分权重与采样口径的平台分。RSSHub-only 仅给话题连续出现时间；RSS 顺序、freshness 自然衰减、重复观测 bonus 或采样规模变化不能单独触发升降温。
+
+缺历史、来源中断、窗口外数据或不可比指标按 Day 47 fallback 输出 unknown，保留可用静态字段和原因。结果写入 `events.event_detail_json.platform_heat_analysis`，原始观测写入 `event_snapshots.metrics_json.platform_observations`；不修改 Day 46 分类，不写跨平台总分。
 
 ## 与展示的关系
 
