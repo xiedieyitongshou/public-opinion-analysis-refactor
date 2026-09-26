@@ -8,6 +8,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, Field, model_validator
 
 from app.schemas.normalized import Platform, SourceOrigin, SourceStatus, SourceType
+from app.schemas.platform_trend import EventHeatAnalysis
 from app.schemas.signals import ConfidenceLevel
 
 PriorityCategory = Literal[
@@ -118,6 +119,7 @@ class EventCard(BaseModel):
     platform_strength: str | None = None
     rank_delta: int | float | None = None
     trend_status: str = "unknown"
+    platform_heat_analysis: EventHeatAnalysis | None = None
     evidence_summary: EvidenceSummary
     source_citations: list[SourceCitation]
     quality_flags: list[str] = Field(default_factory=list)
@@ -127,6 +129,38 @@ class EventCard(BaseModel):
 
     @model_validator(mode="after")
     def enforce_display_guardrails(self) -> EventCard:
+        if self.platform_heat_analysis is not None:
+            analysis = self.platform_heat_analysis
+            def same_time(key: str) -> bool:
+                value = self.classification_detail.get(key)
+                if not value:
+                    return False
+                try:
+                    parsed = (
+                        datetime.fromisoformat(value.replace("Z", "+00:00"))
+                        if isinstance(value, str) else value
+                    )
+                    return parsed == getattr(analysis, key)
+                except (TypeError, ValueError):
+                    return False
+
+            if (
+                self.classification_detail.get("run_id") != analysis.run_id
+                or not same_time("window_start")
+                or not same_time("window_end")
+            ):
+                self.platform_heat_analysis = None
+                self.trend_status = "unknown"
+                self.rank_delta = None
+            elif self.primary_platform in {"zhihu", "weibo"}:
+                platform_trend = analysis.platforms[self.primary_platform]
+                self.trend_status = platform_trend.trend_status
+                self.rank_delta = (
+                    platform_trend.rank_delta if platform_trend.trend_basis == "rank" else None
+                )
+            else:
+                self.trend_status = "unknown"
+                self.rank_delta = None
         if not self.source_citations:
             raise ValueError("EventCard must include at least one SourceCitation")
         if self.official_support_status == "not_found":

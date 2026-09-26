@@ -13,6 +13,8 @@ from app.collectors import default_collector_registry
 from app.guardrails import default_guardrail_registry
 from app.models import Event, Item, PlatformScore
 from app.schemas import (
+    AnalyzeEventHeatInput,
+    AnalyzeEventHeatOutput,
     CalculateEventScoresInput,
     CalculateEventScoresOutput,
     CreateHumanReviewTaskInput,
@@ -242,6 +244,58 @@ def calculate_event_scores_handler(
     )
 
 
+def analyze_event_heat_handler(
+    input_data: AnalyzeEventHeatInput,
+    context: ToolContext,
+) -> AnalyzeEventHeatOutput:
+    """Run Day 47 after event resolution using genuine collector observations."""
+
+    from app.services.platform_trend_assembly import (
+        assemble_event_heat_analysis_from_db,
+        record_collection_round,
+    )
+
+    db = context.db_session
+    if db is None:
+        return AnalyzeEventHeatOutput(
+            status="failed", errors=["analyze_event_heat requires a database session."]
+        )
+    stmt = select(Event).where(Event.event_id.is_not(None))
+    if input_data.event_ids:
+        stmt = stmt.where(Event.event_id.in_(input_data.event_ids))
+    events = list(db.scalars(stmt).all())
+    if not events:
+        return AnalyzeEventHeatOutput(status="skipped")
+    saved_observations = 0
+    if input_data.collection is not None and not input_data.dry_run:
+        saved_observations = record_collection_round(
+            db,
+            collection=input_data.collection,
+            tracked_events=events,
+            event_ids_by_content_hash=input_data.event_ids_by_content_hash,
+        )
+    analyses = []
+    errors = []
+    for event in events:
+        try:
+            analyses.append(assemble_event_heat_analysis_from_db(
+                db,
+                event=event,
+                run_id=input_data.run_id,
+                window_end=input_data.window_end,
+                configs=input_data.configs,
+                persist=not input_data.dry_run,
+            ))
+        except ValueError as exc:
+            errors.append(f"{event.event_id}: {exc}")
+    return AnalyzeEventHeatOutput(
+        status="partial" if analyses and errors else "failed" if errors else "succeeded",
+        analyses=analyses,
+        saved_observation_count=saved_observations,
+        errors=errors,
+    )
+
+
 def _primary_raw_score(raw_metrics_used: dict[str, Any]) -> float | None:
     for key in (
         "rank",
@@ -334,6 +388,18 @@ def build_default_tool_registry() -> ToolRegistry:
             input_model=CalculateEventScoresInput,
             output_model=CalculateEventScoresOutput,
             handler=calculate_event_scores_handler,
+            has_side_effect=True,
+            retryable=False,
+            max_retries=0,
+        )
+    )
+    registry.register(
+        ToolDefinition(
+            name="analyze_event_heat",
+            description="Persist true source observations and analyze 24h platform-local trends.",
+            input_model=AnalyzeEventHeatInput,
+            output_model=AnalyzeEventHeatOutput,
+            handler=analyze_event_heat_handler,
             has_side_effect=True,
             retryable=False,
             max_retries=0,

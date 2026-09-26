@@ -3,7 +3,19 @@
 from datetime import date, datetime
 from typing import Any
 
-from sqlalchemy import JSON, Boolean, Date, DateTime, Float, ForeignKey, Integer, String, Text, func
+from sqlalchemy import (
+    JSON,
+    Boolean,
+    Date,
+    DateTime,
+    Float,
+    ForeignKey,
+    Integer,
+    String,
+    Text,
+    UniqueConstraint,
+    func,
+)
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.session import Base
@@ -107,10 +119,16 @@ class Event(TimestampMixin, Base):
 
 class PlatformScore(TimestampMixin, Base):
     __tablename__ = "platform_scores"
+    __table_args__ = (
+        UniqueConstraint(
+            "event_id", "platform", "observation_id", name="uq_platform_score_observation"
+        ),
+    )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
     event_id: Mapped[int] = mapped_column(ForeignKey("events.id"), nullable=False, index=True)
     platform: Mapped[str] = mapped_column(String(80), nullable=False, index=True)
+    observation_id: Mapped[str | None] = mapped_column(String(255), index=True)
     raw_score: Mapped[float | None] = mapped_column(Float)
     normalized_score: Mapped[float | None] = mapped_column(Float)
     score_detail_json: Mapped[dict[str, Any] | None] = mapped_column(JSON)
@@ -126,6 +144,7 @@ class PlatformScore(TimestampMixin, Base):
 
 class EventSnapshot(TimestampMixin, Base):
     __tablename__ = "event_snapshots"
+    __table_args__ = (UniqueConstraint("event_id", "snapshot_at", name="uq_event_snapshot_at"),)
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
     event_id: Mapped[int] = mapped_column(ForeignKey("events.id"), nullable=False, index=True)

@@ -113,6 +113,16 @@ from app.schemas.platform_heat import (
     PlatformHeatStatus,
     PlatformPresenceEvidence,
 )
+from app.schemas.platform_trend import (
+    AnalyzeEventHeatInput,
+    AnalyzeEventHeatOutput,
+    EventHeatAnalysis,
+    PlatformHeatObservation,
+    PlatformTrendConfig,
+    PlatformTrendInput,
+    PlatformTrendResult,
+    PlatformTrendStatus,
+)
 from app.schemas.signals import (
     ConfidenceLevel,
     EventCandidate,
@@ -128,6 +138,8 @@ from app.schemas.signals import (
 )
 
 __all__ = [
+    "AnalyzeEventHeatInput",
+    "AnalyzeEventHeatOutput",
     "BriefingSection",
     "BriefingSectionType",
     "CalculateEventScoresInput",
@@ -143,6 +155,7 @@ __all__ = [
     "DraftStatus",
     "EventCandidate",
     "EventCard",
+    "EventHeatAnalysis",
     "EventQuery",
     "EventSearchResult",
     "EventSignal",
@@ -202,12 +215,17 @@ __all__ = [
     "PlatformHeatBucket",
     "PlatformHeatConfig",
     "PlatformHeatScore",
+    "PlatformHeatObservation",
     "PlatformHeatSignalInput",
     "PlatformHeatSignalScore",
     "PlatformHeatStatus",
     "PlatformBucket",
     "PlatformPresence",
     "PlatformPresenceEvidence",
+    "PlatformTrendConfig",
+    "PlatformTrendInput",
+    "PlatformTrendResult",
+    "PlatformTrendStatus",
     "PriorityCategory",
     "PublishEligibility",
     "PublishStatus",

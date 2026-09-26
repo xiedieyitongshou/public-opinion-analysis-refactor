@@ -104,6 +104,10 @@ class ZhihuHotListCollector(BaseCollector):
                         **effective_config.params,
                         "total": result.total,
                         "fetched_at": result.fetched_at,
+                        "list_complete": (
+                            result.total is not None
+                            and len(raw_items) >= min(result.total, requested_limit)
+                        ),
                     }
                 }
             )

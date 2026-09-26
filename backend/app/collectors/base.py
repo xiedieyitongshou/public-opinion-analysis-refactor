@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import json
 from abc import ABC, abstractmethod
 from collections.abc import Sequence
-from datetime import datetime
+from datetime import UTC, datetime
 from time import perf_counter
 from typing import Any
+from uuid import uuid4
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -163,8 +165,25 @@ class BaseCollector(ABC):
         duration_ms: int | None = None,
     ) -> CrawlValidationResult:
         items = normalized_items or []
+        observed_at = _as_datetime(items[0].get("fetched_at")) if items else None
+        observed_at = observed_at or datetime.now(UTC)
+        run_id = config.params.get("run_id")
+        scope = f"top{config.limit}:skip={config.params.get('skip_top', 0)}"
+        sampling = json.dumps(
+            {
+                "source_id": self.metadata.source_id,
+                "limit": config.limit,
+                "skip_top": config.params.get("skip_top", 0),
+                "with_cli": config.params.get("with_cli", False),
+                "cli_topic_limit": config.params.get("cli_topic_limit"),
+                "query": config.params.get("query"),
+            },
+            sort_keys=True,
+            ensure_ascii=False,
+        )
         return CrawlValidationResult(
             source_id=self.metadata.source_id,
+            run_id=run_id,
             source_name=self.metadata.source_name,
             source_status=self.metadata.source_status,
             source_type=self.metadata.source_type,
@@ -183,6 +202,19 @@ class BaseCollector(ABC):
             error_message=error_message,
             duration_ms=duration_ms,
             normalized_items=items,
+            observation_id=(
+                f"{run_id}:{self.metadata.source_id}:{observed_at.isoformat()}"
+                if run_id else str(uuid4())
+            ),
+            observed_at=observed_at,
+            list_complete=(
+                status == "succeeded"
+                and self.metadata.source_id in {"zhihu_hot_list", "weibo_rsshub_hot_search"}
+                and (bool(config.params.get("list_complete")) or returned_count >= config.limit)
+                and not config.params.get("skip_top")
+            ),
+            topn_scope=scope,
+            sampling_signature=sampling,
         )
 
 

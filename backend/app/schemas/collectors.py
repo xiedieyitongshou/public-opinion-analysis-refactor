@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Any, Literal
 
 from pydantic import BaseModel, Field, model_validator
@@ -64,6 +65,7 @@ class CrawlValidationResult(BaseModel):
     """Observable result for one collector execution."""
 
     source_id: str
+    run_id: str | None = None
     source_name: str | None = None
     source_status: SourceStatus | Literal["unknown"] = "unknown"
     source_type: SourceType | Literal["unknown"] = "unknown"
@@ -85,12 +87,18 @@ class CrawlValidationResult(BaseModel):
     raw_sample_path: str | None = None
     duration_ms: int | None = None
     normalized_items: list[dict[str, Any]] = Field(default_factory=list)
+    observation_id: str | None = None
+    observed_at: datetime | None = None
+    list_complete: bool = False
+    topn_scope: str | None = None
+    sampling_signature: str | None = None
 
 
 class FetchSourceItemsInput(BaseModel):
     """Input schema for the `fetch_source_items` tool."""
 
     source_ids: list[str] | None = None
+    run_id: str | None = None
     limit: int = Field(default=20, ge=1, le=100)
     per_source_limits: dict[str, int] = Field(default_factory=dict)
     validate_only: bool = True
@@ -114,6 +122,7 @@ class FetchSourceItemsOutput(BaseModel):
     """Output schema for the `fetch_source_items` tool."""
 
     status: CollectorRunStatus
+    run_id: str | None = None
     validate_only: bool
     dry_run: bool
     promote_to_event_pool: bool = False

@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
+from uuid import uuid4
+
 from sqlalchemy.orm import Session
 
 from app.collectors.base import BaseCollector
@@ -72,6 +75,7 @@ class CollectorRegistry:
         if not requested_source_ids:
             return FetchSourceItemsOutput(
                 status="skipped",
+                run_id=input_data.run_id,
                 validate_only=input_data.validate_only,
                 dry_run=input_data.dry_run,
                 promote_to_event_pool=input_data.promote_to_event_pool,
@@ -83,11 +87,18 @@ class CollectorRegistry:
         for source_id in requested_source_ids:
             if source_id in postponed_source_ids:
                 skipped_source_ids.append(source_id)
+                observed_at = datetime.now(UTC)
                 results.append(
                     CrawlValidationResult(
                         source_id=source_id,
+                        run_id=input_data.run_id,
                         source_status="postpone",
                         status="skipped",
+                        validate_only=input_data.validate_only,
+                        dry_run=input_data.dry_run,
+                        observation_id=_observation_id(input_data.run_id, source_id, observed_at),
+                        observed_at=observed_at,
+                        topn_scope=f"top{_source_limit(input_data, source_id)}:skip=0",
                         requested_limit=_source_limit(input_data, source_id),
                         error_message=f"Postponed source skipped by scheduler: {source_id}",
                     )
@@ -97,10 +108,17 @@ class CollectorRegistry:
             collector = self._collectors.get(source_id)
             if collector is None:
                 unavailable_source_ids.append(source_id)
+                observed_at = datetime.now(UTC)
                 results.append(
                     CrawlValidationResult(
                         source_id=source_id,
+                        run_id=input_data.run_id,
                         status="failed",
+                        validate_only=input_data.validate_only,
+                        dry_run=input_data.dry_run,
+                        observation_id=_observation_id(input_data.run_id, source_id, observed_at),
+                        observed_at=observed_at,
+                        topn_scope=f"top{_source_limit(input_data, source_id)}:skip=0",
                         requested_limit=_source_limit(input_data, source_id),
                         error_message=f"Collector not found: {source_id}",
                     )
@@ -117,6 +135,8 @@ class CollectorRegistry:
                 max_quota_cost=input_data.max_quota_cost,
                 params=input_data.per_source_params.get(source_id, {}),
             )
+            if input_data.run_id:
+                config.params = {**config.params, "run_id": input_data.run_id}
             result = collector.collect(config, db=db)
             results.append(result)
             if result.status == "failed":
@@ -133,6 +153,7 @@ class CollectorRegistry:
         ]
         return FetchSourceItemsOutput(
             status=status,
+            run_id=input_data.run_id,
             validate_only=input_data.validate_only,
             dry_run=input_data.dry_run,
             promote_to_event_pool=input_data.promote_to_event_pool,
@@ -168,6 +189,12 @@ def _aggregate_status(results: list[CrawlValidationResult]) -> str:
 
 def _source_limit(input_data: FetchSourceItemsInput, source_id: str) -> int:
     return input_data.per_source_limits.get(source_id, input_data.limit)
+
+
+def _observation_id(run_id: str | None, source_id: str, observed_at: datetime) -> str:
+    if run_id:
+        return f"{run_id}:{source_id}:{observed_at.isoformat()}"
+    return str(uuid4())
 
 
 def _source_status_summary(results: list[CrawlValidationResult]) -> dict[str, int]:

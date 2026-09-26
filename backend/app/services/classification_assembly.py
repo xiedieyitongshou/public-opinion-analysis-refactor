@@ -34,6 +34,7 @@ def assemble_hotspot_classification(
     event_resolution: EventResolution | None = None,
     window_end: datetime | None = None,
     persist: bool = True,
+    require_observation_metadata: bool = False,
 ) -> HotspotClassificationAssembly:
     """Assemble and optionally persist the Day 46 classification for one event."""
 
@@ -42,7 +43,11 @@ def assemble_hotspot_classification(
     current_scores = [
         score
         for score in platform_scores
-        if _in_window(_datetime_value(score.calculated_at), window_start, effective_window_end)
+        if _in_window(
+            _score_observed_at(score, allow_legacy=not require_observation_metadata),
+            window_start,
+            effective_window_end,
+        )
     ]
     accepted_signals = _accepted_source_signals(
         source_signals or [],
@@ -134,13 +139,8 @@ def assemble_hotspot_classification_from_db(
     """Read the current rolling 24h PlatformScore rows and assemble classification."""
 
     effective_window_end = window_end or datetime.now(UTC)
-    window_start = effective_window_end - timedelta(hours=WINDOW_HOURS)
     platform_scores = db.scalars(
-        select(PlatformScore).where(
-            PlatformScore.event_id == event.id,
-            PlatformScore.calculated_at >= window_start,
-            PlatformScore.calculated_at <= effective_window_end,
-        )
+        select(PlatformScore).where(PlatformScore.event_id == event.id)
     ).all()
     result = assemble_hotspot_classification(
         run_id=run_id,
@@ -151,6 +151,7 @@ def assemble_hotspot_classification_from_db(
         event_resolution=event_resolution,
         window_end=effective_window_end,
         persist=persist,
+        require_observation_metadata=True,
     )
     if persist:
         db.add(event)
@@ -366,7 +367,7 @@ def _accepted_source_signals(
 ) -> list[SourceSignal]:
     accepted = []
     for signal in source_signals:
-        signal_time = _datetime_value(signal.published_at) or _datetime_value(signal.fetched_at)
+        signal_time = _datetime_value(signal.fetched_at)
         if signal.audit_only or not signal.contributes_to_classification:
             continue
         if (
@@ -374,7 +375,7 @@ def _accepted_source_signals(
             and signal.relation_to_parent.decision != "accepted"
         ):
             continue
-        if signal_time and not _in_window(signal_time, window_start, window_end):
+        if signal_time is None or not _in_window(signal_time, window_start, window_end):
             continue
         accepted.append(signal)
     return accepted
@@ -554,10 +555,17 @@ def _datetime_value(value: Any) -> datetime | None:
     return None
 
 
+def _score_observed_at(score: PlatformScore, *, allow_legacy: bool) -> datetime | None:
+    detail = score.score_detail_json or {}
+    if detail.get("observation_id"):
+        return _datetime_value(detail.get("observed_at"))
+    return _datetime_value(score.calculated_at) if allow_legacy else None
+
+
 def _in_window(value: datetime | None, window_start: datetime, window_end: datetime) -> bool:
     if value is None:
         return False
-    return window_start <= value <= window_end
+    return window_start < value <= window_end
 
 
 def _unique(values: list[str]) -> list[str]:

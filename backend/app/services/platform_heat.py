@@ -144,6 +144,8 @@ def score_zhihu_platform(
 def score_weibo_platform(
     signal: PlatformHeatSignalInput,
     config: PlatformHeatConfig | None = None,
+    *,
+    observed_at: datetime | None = None,
 ) -> PlatformHeatSignalScore:
     """Score one Weibo signal with RSSHub as TopN seed and CLI as enrichment."""
 
@@ -164,7 +166,7 @@ def score_weibo_platform(
         if is_rsshub_seed
         else None
     )
-    content_component = _weibo_content_activity_score(signal, config)
+    content_component = _weibo_content_activity_score(signal, config, observed_at=observed_at)
     interaction_component = _weibo_interaction_score(signal, config)
     score = weighted_available(
         [
@@ -268,6 +270,8 @@ def aggregate_platform_scores(
 def score_platform_signals(
     signals: Iterable[PlatformHeatSignalInput],
     config: PlatformHeatConfig | None = None,
+    *,
+    observed_at: datetime | None = None,
 ) -> list[PlatformHeatScore]:
     """Score all supported signals and aggregate by platform."""
 
@@ -277,7 +281,7 @@ def score_platform_signals(
         if signal.platform == "zhihu":
             signal_scores.append(score_zhihu_platform(signal, config))
         elif signal.platform == "weibo":
-            signal_scores.append(score_weibo_platform(signal, config))
+            signal_scores.append(score_weibo_platform(signal, config, observed_at=observed_at))
     return aggregate_platform_scores(signal_scores)
 
 
@@ -354,6 +358,8 @@ def _topic_presence_score(
 def _weibo_content_activity_score(
     signal: PlatformHeatSignalInput,
     config: PlatformHeatConfig,
+    *,
+    observed_at: datetime | None = None,
 ) -> float | None:
     return weighted_available(
         [
@@ -365,7 +371,13 @@ def _weibo_content_activity_score(
                 0.50,
             ),
             (normalize_log(signal.matched_status_count, config.weibo_status_count_cap), 0.30),
-            (freshness_score(signal.latest_status_created_at or signal.published_at), 0.20),
+            (
+                freshness_score(
+                    signal.latest_status_created_at or signal.published_at,
+                    now=observed_at,
+                ),
+                0.20,
+            ),
         ]
     )
 
