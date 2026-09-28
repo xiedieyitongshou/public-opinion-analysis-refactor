@@ -7,7 +7,8 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from app.schemas.signals import EventSignal
+from app.schemas.normalized import NormalizedItem
+from app.schemas.signals import EventSignal, SourceSignal
 
 EventResolutionAction = Literal["merge", "create", "candidate_review", "reject", "skip"]
 MatchMethod = Literal[
@@ -133,6 +134,10 @@ class MatchAndResolveEventsInput(BaseModel):
     existing_events: list[RetrievedEventMatchCandidate] = Field(default_factory=list)
     source_refs_by_signal_id: dict[str, SourceSignalMatchRef] = Field(default_factory=dict)
     match_config: EventMatchConfig = Field(default_factory=EventMatchConfig)
+    persist: bool = False
+    window_end: datetime | None = None
+    source_signals: list[SourceSignal] = Field(default_factory=list)
+    normalized_items: list[NormalizedItem] = Field(default_factory=list)
 
 
 class MatchAndResolveEventsOutput(BaseModel):
@@ -147,6 +152,9 @@ class MatchAndResolveEventsOutput(BaseModel):
     rejected_event_count: int = 0
     quality_flags: list[str] = Field(default_factory=list)
     errors: list[str] = Field(default_factory=list)
+    event_ids: list[str] = Field(default_factory=list)
+    event_ids_by_content_hash: dict[str, str] = Field(default_factory=dict)
+    review_payload: dict = Field(default_factory=dict)
 
 
 class EventMatchRetrievalInput(BaseModel):

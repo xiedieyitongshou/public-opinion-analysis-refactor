@@ -6,6 +6,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
+from app.schemas.collectors import FetchSourceItemsOutput
 from app.schemas.normalized import Platform, SignalRole, SourceOrigin
 
 PlatformHeatStatus = Literal["ok", "partial", "unknown"]
@@ -101,6 +102,9 @@ class CalculateEventScoresInput(BaseModel):
     event_ids: list[str] = Field(default_factory=list)
     platforms: list[Literal["zhihu", "weibo"]] = Field(default_factory=lambda: ["zhihu", "weibo"])
     dry_run: bool = False
+    collection: FetchSourceItemsOutput | None = None
+    event_ids_by_content_hash: dict[str, str] = Field(default_factory=dict)
+    scoped: bool = False
 
 
 class CalculateEventScoresOutput(BaseModel):
@@ -111,3 +115,4 @@ class CalculateEventScoresOutput(BaseModel):
     saved_count: int = 0
     errors: list[str] = Field(default_factory=list)
     quality_flags: list[str] = Field(default_factory=list)
+    saved_observation_count: int = 0

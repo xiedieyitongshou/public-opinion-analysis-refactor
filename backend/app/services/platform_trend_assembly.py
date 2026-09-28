@@ -105,7 +105,8 @@ def record_collection_round(
                 present = None
             rank = None
             if platform == "zhihu" and present is True:
-                ranks = [item.get("rank") for item in hit_items]
+                ranks = [item_to_platform_heat_signal(item, event_id=event_id).rank
+                         for item in hit_items]
                 ranks = [
                     int(value) for value in ranks
                     if isinstance(value, int | float) and value > 0

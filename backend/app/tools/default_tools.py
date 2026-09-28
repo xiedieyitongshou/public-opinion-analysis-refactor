@@ -30,6 +30,12 @@ from app.schemas import (
     NormalizeRawItemsInput,
     NormalizeRawItemsOutput,
 )
+from app.schemas.analysis import (
+    ClassifyEventsInput,
+    ClassifyEventsOutput,
+    PrepareSourceSignalsInput,
+    PrepareSourceSignalsOutput,
+)
 from app.tools.runtime import ToolContext, ToolDefinition, ToolRegistry
 
 
@@ -111,6 +117,15 @@ def match_and_resolve_events_handler(
 ) -> MatchAndResolveEventsOutput:
     from app.agents.event_resolver import EventResolverAgent
 
+    if input_data.persist:
+        from app.services.analysis_interfaces import resolve_and_persist_events
+
+        if context.db_session is None:
+            raise ValueError("Persistent event resolution requires a database session")
+        return resolve_and_persist_events(
+            context.db_session, input_data,
+            task_id=context.task_id, tool_call_id=context.tool_call_id,
+        )
     return EventResolverAgent().resolve(
         input_data,
         db=context.db_session,
@@ -172,6 +187,12 @@ def calculate_event_scores_handler(
             status="failed",
             errors=["calculate_event_scores requires a database session."],
         )
+    if input_data.collection is not None:
+        from app.services.analysis_interfaces import score_collection
+
+        return score_collection(db, input_data)
+    if input_data.scoped and not input_data.event_ids:
+        return CalculateEventScoresOutput(status="skipped")
 
     event_stmt = select(Event)
     if input_data.event_ids:
@@ -260,6 +281,8 @@ def analyze_event_heat_handler(
         return AnalyzeEventHeatOutput(
             status="failed", errors=["analyze_event_heat requires a database session."]
         )
+    if input_data.scoped and not input_data.event_ids:
+        return AnalyzeEventHeatOutput(status="skipped")
     stmt = select(Event).where(Event.event_id.is_not(None))
     if input_data.event_ids:
         stmt = stmt.where(Event.event_id.in_(input_data.event_ids))
@@ -296,6 +319,26 @@ def analyze_event_heat_handler(
     )
 
 
+def prepare_source_signals_handler(
+    input_data: PrepareSourceSignalsInput, context: ToolContext,
+) -> PrepareSourceSignalsOutput:
+    from app.services.analysis_interfaces import prepare_source_signals
+
+    if context.db_session is None:
+        raise ValueError("Source preparation requires a database session")
+    return prepare_source_signals(context.db_session, input_data)
+
+
+def classify_events_handler(
+    input_data: ClassifyEventsInput, context: ToolContext,
+) -> ClassifyEventsOutput:
+    from app.services.analysis_interfaces import classify_events
+
+    if context.db_session is None:
+        raise ValueError("Classification requires a database session")
+    return classify_events(context.db_session, input_data)
+
+
 def _primary_raw_score(raw_metrics_used: dict[str, Any]) -> float | None:
     for key in (
         "rank",
@@ -324,6 +367,19 @@ def search_existing_evidence_handler(
 
 def build_default_tool_registry() -> ToolRegistry:
     registry = ToolRegistry()
+
+    registry.register(ToolDefinition(
+        name="prepare_source_signals",
+        description="Upsert normalized items and produce traceable source signals.",
+        input_model=PrepareSourceSignalsInput, output_model=PrepareSourceSignalsOutput,
+        handler=prepare_source_signals_handler, has_side_effect=True,
+    ))
+    registry.register(ToolDefinition(
+        name="classify_events",
+        description="Assemble official support and classification in the analysis window.",
+        input_model=ClassifyEventsInput, output_model=ClassifyEventsOutput,
+        handler=classify_events_handler, has_side_effect=True,
+    ))
 
     registry.register(
         ToolDefinition(
@@ -429,7 +485,7 @@ def build_default_tool_registry() -> ToolRegistry:
             input_model=MatchAndResolveEventsInput,
             output_model=MatchAndResolveEventsOutput,
             handler=match_and_resolve_events_handler,
-            has_side_effect=False,
+            has_side_effect=True,
             retryable=True,
             max_retries=1,
         )

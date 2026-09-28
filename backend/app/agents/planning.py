@@ -12,6 +12,8 @@ class PlanStep(BaseModel):
     tool_name: str
     input_json: dict[str, Any] = Field(default_factory=dict)
     depends_on: list[str] = Field(default_factory=list)
+    input_bindings: dict[str, str] = Field(default_factory=dict)
+    continue_on_business_failure: bool = False
 
 
 class Plan(BaseModel):
@@ -22,6 +24,7 @@ class Plan(BaseModel):
         "event_search",
         "daily_hotspot_collection",
         "crawl_validation",
+        "hotspot_analysis",
     ]
     steps: list[PlanStep]
     metadata: dict[str, Any] = Field(default_factory=dict)
@@ -38,6 +41,10 @@ class Plan(BaseModel):
                 raise ValueError(
                     f"Step {step.step_id} depends on unknown or later steps: {missing}"
                 )
+            for binding in step.input_bindings.values():
+                dependency = binding.split(".", 1)[0]
+                if dependency not in step.depends_on:
+                    raise ValueError(f"Binding {binding} must reference a declared dependency")
             seen.add(step.step_id)
         return self
 
@@ -87,6 +94,12 @@ class Planner:
         "people_politics_rss": 10,
         "xinhua_politics_rss": 10,
     }
+
+    def create_hotspot_analysis_plan(self, payload: dict[str, Any] | None = None) -> Plan:
+        from app.agents.analysis import build_hotspot_analysis_plan
+        from app.schemas.analysis import HotspotAnalysisInput
+
+        return build_hotspot_analysis_plan(HotspotAnalysisInput.model_validate(payload or {}))
 
     def create_daily_briefing_plan(self, payload: dict[str, Any] | None = None) -> Plan:
         payload = payload or {}
@@ -159,6 +172,7 @@ class Planner:
         )
         fetch_input = {
             "source_ids": source_ids,
+            "run_id": payload.get("run_id"),
             "limit": int(payload.get("limit", 20)),
             "per_source_limits": payload.get("per_source_limits", {}),
             "validate_only": False,
@@ -213,6 +227,7 @@ class Planner:
 
         fetch_input = {
             "source_ids": source_ids,
+            "run_id": payload.get("run_id"),
             "limit": int(payload.get("limit", 10)),
             "per_source_limits": {
                 **self.validation_limits,

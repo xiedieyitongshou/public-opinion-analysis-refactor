@@ -81,6 +81,8 @@ def normalize_item(
     raw_payload = _as_dict(item.get("raw_payload"))
     raw_metrics = _as_dict(item.get("raw_metrics"))
     normalized = _as_dict(item.get("normalized"))
+    if item.get("content_hash"):
+        normalized.setdefault("collector_content_hash", item["content_hash"])
 
     original_title = item.get("title")
     title = _clean_title(original_title)

@@ -1,0 +1,342 @@
+{
+  "schema_version": 1,
+  "validation_date": "2026-09-28",
+  "report": "live-analysis-validation-2026-09-28.md",
+  "scope": {
+    "main_rounds": 1,
+    "live_sources": true,
+    "mock_responses": false,
+    "isolated_database": true,
+    "use_llm": false,
+    "use_embedding": false,
+    "extra_zhihu_search_in_main_pipeline": false,
+    "cli_recheck_reran_full_pipeline": false
+  },
+  "main_round": {
+    "started_at": "2026-09-28T11:26:05.137062+00:00",
+    "finished_at": "2026-09-28T11:26:38.058836+00:00",
+    "status": "partial",
+    "entrypoint_exit_code": 0,
+    "sources": [
+      {
+        "source_id": "zhihu_hot_list",
+        "status": "succeeded",
+        "returned_count": 5,
+        "normalized_count": 5,
+        "field_completeness": {
+          "source_id": 1.0,
+          "source_name": 1.0,
+          "source_type": 1.0,
+          "source_status": 1.0,
+          "source_origin": 1.0,
+          "platform": 1.0,
+          "signal_role": 1.0,
+          "title": 1.0,
+          "url": 1.0,
+          "fetched_at": 1.0
+        },
+        "quality_flags": [
+          "missing_summary"
+        ],
+        "list_complete": true,
+        "topn_scope": "top5:skip=0",
+        "metric_presence": {
+          "rank": 5,
+          "total": 5
+        }
+      },
+      {
+        "source_id": "weibo_rsshub_hot_search",
+        "status": "succeeded",
+        "returned_count": 4,
+        "normalized_count": 4,
+        "field_completeness": {
+          "source_id": 1.0,
+          "source_name": 1.0,
+          "source_type": 1.0,
+          "source_status": 1.0,
+          "source_origin": 1.0,
+          "platform": 1.0,
+          "signal_role": 1.0,
+          "title": 1.0,
+          "url": 1.0,
+          "fetched_at": 1.0
+        },
+        "quality_flags": [
+          "list_position_derived_from_rss_order",
+          "not_heat_metric",
+          "missing_pub_date",
+          "missing_hot_value",
+          "weibo_cli_command_failed"
+        ],
+        "list_complete": true,
+        "topn_scope": "top5:skip=1",
+        "metric_presence": {
+          "list_position": 4
+        }
+      },
+      {
+        "source_id": "people_politics_rss",
+        "status": "succeeded",
+        "returned_count": 5,
+        "normalized_count": 5,
+        "field_completeness": {
+          "source_id": 1.0,
+          "source_name": 1.0,
+          "source_type": 1.0,
+          "source_status": 1.0,
+          "source_origin": 1.0,
+          "platform": 1.0,
+          "signal_role": 1.0,
+          "title": 1.0,
+          "url": 1.0,
+          "fetched_at": 1.0
+        },
+        "quality_flags": [
+          "no_raw_metrics",
+          "html_summary",
+          "stale_feed_candidate"
+        ],
+        "list_complete": false,
+        "topn_scope": "top5:skip=0",
+        "metric_presence": {
+          "news_list_position": 5,
+          "source_authority_weight": 5
+        }
+      },
+      {
+        "source_id": "chinanews_scroll_rss",
+        "status": "succeeded",
+        "returned_count": 5,
+        "normalized_count": 5,
+        "field_completeness": {
+          "source_id": 1.0,
+          "source_name": 1.0,
+          "source_type": 1.0,
+          "source_status": 1.0,
+          "source_origin": 1.0,
+          "platform": 1.0,
+          "signal_role": 1.0,
+          "title": 1.0,
+          "url": 1.0,
+          "fetched_at": 1.0
+        },
+        "quality_flags": [
+          "no_raw_metrics",
+          "missing_author"
+        ],
+        "list_complete": false,
+        "topn_scope": "top5:skip=0",
+        "metric_presence": {
+          "news_list_position": 5,
+          "source_authority_weight": 5
+        }
+      },
+      {
+        "source_id": "xinhua_politics_rss",
+        "status": "succeeded",
+        "returned_count": 5,
+        "normalized_count": 5,
+        "field_completeness": {
+          "source_id": 1.0,
+          "source_name": 1.0,
+          "source_type": 1.0,
+          "source_status": 1.0,
+          "source_origin": 1.0,
+          "platform": 1.0,
+          "signal_role": 1.0,
+          "title": 1.0,
+          "url": 1.0,
+          "fetched_at": 1.0
+        },
+        "quality_flags": [
+          "no_raw_metrics",
+          "missing_published_at",
+          "html_summary",
+          "fallback_source"
+        ],
+        "list_complete": false,
+        "topn_scope": "top5:skip=0",
+        "metric_presence": {
+          "news_list_position": 5,
+          "source_authority_weight": 5
+        }
+      }
+    ],
+    "stages": {
+      "fetch_source_items": {
+        "status": "succeeded"
+      },
+      "normalize_raw_items": {
+        "status": "succeeded",
+        "normalized_count": 24,
+        "errors": []
+      },
+      "prepare_source_signals": {
+        "status": "succeeded",
+        "saved_count": 24,
+        "errors": []
+      },
+      "extract_event_signals": {
+        "status": "succeeded",
+        "errors": []
+      },
+      "match_and_resolve_events": {
+        "status": "partial",
+        "created_event_count": 20,
+        "merged_event_count": 0,
+        "review_required_count": 4,
+        "rejected_event_count": 0,
+        "errors": []
+      },
+      "create_human_review_task": {
+        "status": "succeeded"
+      },
+      "calculate_event_scores": {
+        "status": "succeeded",
+        "saved_count": 5,
+        "errors": [],
+        "saved_observation_count": 40
+      },
+      "classify_events": {
+        "status": "succeeded"
+      },
+      "analyze_event_heat": {
+        "status": "succeeded",
+        "saved_observation_count": 0,
+        "errors": []
+      }
+    },
+    "task_statuses": [
+      {
+        "tool": "fetch_source_items",
+        "status": "succeeded"
+      },
+      {
+        "tool": "normalize_raw_items",
+        "status": "succeeded"
+      },
+      {
+        "tool": "prepare_source_signals",
+        "status": "succeeded"
+      },
+      {
+        "tool": "extract_event_signals",
+        "status": "succeeded"
+      },
+      {
+        "tool": "match_and_resolve_events",
+        "status": "partial"
+      },
+      {
+        "tool": "create_human_review_task",
+        "status": "succeeded"
+      },
+      {
+        "tool": "calculate_event_scores",
+        "status": "succeeded"
+      },
+      {
+        "tool": "classify_events",
+        "status": "succeeded"
+      },
+      {
+        "tool": "analyze_event_heat",
+        "status": "succeeded"
+      }
+    ],
+    "db_counts": {
+      "Item": 24,
+      "Event": 20,
+      "PlatformScore": 5,
+      "EventSnapshot": 40,
+      "HumanReviewTask": 4,
+      "AgentTask": 9,
+      "AgentToolCall": 9
+    },
+    "classification_categories": {
+      "F_official_only": 15,
+      "D_single_platform_with_official": 5
+    },
+    "event_analysis_statuses": {
+      "unknown": 15,
+      "partial": 5
+    },
+    "business_results_accepted": false
+  },
+  "extra_zhihu_search": {
+    "status": "succeeded",
+    "returned_count": 3,
+    "normalized_count": 3,
+    "field_completeness": {
+      "source_id": 1.0,
+      "source_name": 1.0,
+      "source_type": 1.0,
+      "source_status": 1.0,
+      "source_origin": 1.0,
+      "platform": 1.0,
+      "signal_role": 1.0,
+      "title": 1.0,
+      "url": 1.0,
+      "fetched_at": 1.0
+    },
+    "audit_only_count": 0,
+    "metric_presence": {
+      "comment_count": 3,
+      "vote_count": 3,
+      "ranking_score": 3,
+      "edit_time": 3,
+      "authority_level": 3
+    }
+  },
+  "weibo_cli": {
+    "version": "0.9.1",
+    "initial_search": {
+      "available": false,
+      "error_code": "SERVICE_REQUIRED",
+      "service_kind": "trial_expired"
+    },
+    "recheck": {
+      "checked_at": "2026-09-28T11:45:17.677496+00:00",
+      "ready": true,
+      "steps": {
+        "login": true,
+        "developer_verification": true,
+        "service": true
+      },
+      "service_kind": "formal_active",
+      "search": {
+        "requested_count": 10,
+        "retained_sample_limit": 3,
+        "available": true,
+        "returncode": 0,
+        "sample_count": 3,
+        "total_number_proxy": 62825,
+        "quality_flags": [],
+        "field_presence": {
+          "external_id": 3,
+          "mid": 3,
+          "text": 3,
+          "created_at": 3,
+          "repost_count": 3,
+          "comment_count": 3,
+          "like_count": 3
+        }
+      }
+    }
+  },
+  "known_limitations": [
+    "Old People and Xinhua feed items entered the current event pool.",
+    "Official support matching produced false positives; classification categories are unvalidated outputs.",
+    "The four Weibo topic-only items were queued for review and had no platform interaction scores.",
+    "One live round cannot validate rising or falling trends.",
+    "The CLI error classifier reports SERVICE_REQUIRED as a generic command failure."
+  ],
+  "publication_policy": {
+    "raw_content_included": false,
+    "credentials_included": false,
+    "account_identifiers_included": false,
+    "account_balance_included": false,
+    "raw_data_local_only": true
+  }
+}

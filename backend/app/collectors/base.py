@@ -10,7 +10,7 @@ from time import perf_counter
 from typing import Any
 from uuid import uuid4
 
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
 from app.models import Item, Source
@@ -97,12 +97,18 @@ class BaseCollector(ABC):
         if db is None:
             return 0
 
+        from app.agents.normalizer import normalize_item
+
         source = self._get_or_create_source(db)
         saved_count = 0
         for item in normalized_items:
             if not item.get("title") or not item.get("content_hash"):
                 continue
-            exists = db.scalar(select(Item).where(Item.content_hash == item["content_hash"]))
+            canonical_hash = normalize_item(dict(item))["content_hash"]
+            exists = db.scalar(select(Item).where(or_(
+                Item.content_hash.in_([item["content_hash"], canonical_hash]),
+                Item.normalized_json["collector_content_hash"].as_string() == item["content_hash"],
+            )))
             if exists is not None:
                 continue
             db.add(
@@ -210,8 +216,9 @@ class BaseCollector(ABC):
             list_complete=(
                 status == "succeeded"
                 and self.metadata.source_id in {"zhihu_hot_list", "weibo_rsshub_hot_search"}
-                and (bool(config.params.get("list_complete")) or returned_count >= config.limit)
-                and not config.params.get("skip_top")
+                and (bool(config.params.get("list_complete")) or returned_count >= max(
+                    1, config.limit - int(config.params.get("skip_top") or 0)
+                ))
             ),
             topn_scope=scope,
             sampling_signature=sampling,

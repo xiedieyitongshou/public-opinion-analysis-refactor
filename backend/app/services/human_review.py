@@ -9,7 +9,7 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.models import Event, GuardrailViolation, HumanReviewTask
+from app.models import Event, GuardrailViolation, HumanReviewTask, Item
 from app.schemas import (
     CreateHumanReviewTaskInput,
     CreateHumanReviewTaskOutput,
@@ -83,7 +83,15 @@ def decide_human_review_task(
 
     payload = dict(task.payload_json or {})
     now = datetime.now(UTC)
-    event_id = _apply_decision_side_effect(db, payload, input_data, now=now)
+    try:
+        event_id = _apply_decision_side_effect(db, payload, input_data, now=now)
+        if event_id:
+            _associate_review_items(db, event_id, payload)
+    except ValueError as exc:
+        db.rollback()
+        return HumanReviewDecisionOutput(
+            status="failed", human_review_task=task_record(task), message=str(exc),
+        )
     task.status = "ignored" if input_data.decision == "ignore" else "resolved"
     task.reviewer = input_data.reviewer
     task.decision = input_data.decision
@@ -145,6 +153,21 @@ def _review_payload(
     candidate_review: dict[str, Any],
 ) -> dict[str, Any]:
     payload = dict(input_data.payload)
+    sources = payload.pop("source_signals_by_id", {})
+    signals = payload.pop("event_signals_by_id", {})
+    signal = signals.get(candidate_review.get("event_signal_id"))
+    if signal:
+        payload["event_signal"] = signal
+        payload["title"] = signal.get("title")
+    if sources:
+        related = [sources[key] for key in candidate_review.get("source_signal_ids", [])
+                   if key in sources]
+        payload["item_ids"] = [source["item_id"] for source in related if source.get("item_id")]
+        payload["source_citations"] = [
+            source.get("classification_features", {}).get("source_citation", {})
+            for source in related
+        ]
+    payload.pop("event_resolutions", None)
     payload.pop("candidate_review", None)
     payload.pop("candidate_reviews", None)
     payload.update(candidate_review)
@@ -194,9 +217,12 @@ def _apply_decision_side_effect(
 ) -> str | None:
     candidate_event_id = payload.get("candidate_event_id")
     if input_data.decision == "merge_to_existing":
-        if candidate_event_id:
-            _append_event_review_detail(db, str(candidate_event_id), payload, input_data, now=now)
-        return str(candidate_event_id) if candidate_event_id else None
+        if not candidate_event_id or db.scalar(
+            select(Event).where(Event.event_id == str(candidate_event_id))
+        ) is None:
+            raise ValueError("The target event for this review does not exist")
+        _append_event_review_detail(db, str(candidate_event_id), payload, input_data, now=now)
+        return str(candidate_event_id)
     if input_data.decision == "create_new_event":
         event_id = _new_event_id(payload, now)
         event = Event(
@@ -221,6 +247,30 @@ def _apply_decision_side_effect(
         db.flush()
         return event_id
     return None
+
+
+def _associate_review_items(db: Session, event_id: str, payload: dict[str, Any]) -> None:
+    """Make a confirmed create/merge visible to the next scoring round."""
+    item_ids = payload.get("item_ids") or []
+    if not item_ids:
+        return
+    event = db.scalar(select(Event).where(Event.event_id == event_id))
+    rows = list(db.scalars(select(Item).where(Item.id.in_([int(value) for value in item_ids]))))
+    if len(rows) != len(set(item_ids)):
+        raise ValueError("A reviewed source item no longer exists")
+    citations = {str(value.get("item_id")): value for value in event.source_citations_json or []}
+    for row in rows:
+        if row.event_id not in {None, event.id}:
+            raise ValueError("A reviewed item already belongs to a different event")
+        row.event_id = event.id
+        if row.source_citation_json:
+            citations[str(row.id)] = row.source_citation_json
+    event.source_citations_json = list(citations.values())
+    detail = dict(event.event_detail_json or {})
+    detail["source_signal_ids"] = list(dict.fromkeys(
+        [*detail.get("source_signal_ids", []), *payload.get("source_signal_ids", [])]
+    ))
+    event.event_detail_json = detail
 
 
 def _append_event_review_detail(

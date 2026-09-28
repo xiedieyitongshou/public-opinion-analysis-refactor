@@ -161,6 +161,7 @@ class AnalyzeEventHeatInput(BaseModel):
     collection: FetchSourceItemsOutput | None = None
     event_ids_by_content_hash: dict[str, str] = Field(default_factory=dict)
     dry_run: bool = False
+    scoped: bool = False
 
 
 class AnalyzeEventHeatOutput(BaseModel):

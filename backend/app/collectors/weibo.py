@@ -36,6 +36,24 @@ class WeiboHeatCollector(BaseCollector):
         super().__init__(weibo_heat_metadata())
         self.client = client or WeiboHeatClient()
 
+    def collect(self, config: CollectorRunConfig, *, db=None):
+        # Persist effective settings, including client defaults, in the observation signature.
+        client_config = getattr(self.client, "config", None)
+        limit = min(config.limit, self.metadata.max_limit)
+        params = dict(config.params)
+        for key, attribute, fallback in (
+            ("skip_top", "rsshub_skip_top", 0),
+            ("with_cli", "cli_enabled", False),
+            ("cli_topic_limit", "cli_topic_limit", 0),
+        ):
+            if params.get(key) is None:
+                params[key] = getattr(client_config, attribute, fallback)
+        params["skip_top"] = max(0, min(int(params["skip_top"]), limit - 1))
+        params["cli_topic_limit"] = max(
+            0, min(int(params["cli_topic_limit"]), limit - params["skip_top"])
+        )
+        return super().collect(config.model_copy(update={"limit": limit, "params": params}), db=db)
+
     def fetch(self, config: CollectorRunConfig) -> WeiboHeatResult:
         return self.client.fetch_heat(
             limit=config.limit,

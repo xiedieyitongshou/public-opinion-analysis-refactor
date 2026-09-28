@@ -108,7 +108,7 @@ def test_runner_executes_linear_plan_and_logs_tool_calls() -> None:
     persisted_tasks = session.scalars(select(AgentTask)).all()
     tool_calls = session.scalars(select(AgentToolCall)).all()
     assert len(tasks) == 1
-    assert persisted_tasks[0].status == "succeeded"
+    assert persisted_tasks[0].status == "blocked"
     assert persisted_tasks[0].plan_id == plan.plan_id
     assert persisted_tasks[0].output_json is not None
     assert len(tool_calls) == 1

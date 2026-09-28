@@ -116,6 +116,8 @@ class ToolRegistry:
                 parsed_output = self._validate_output(definition, raw_output)
                 output_json = parsed_output.model_dump(mode="json")
             except Exception as exc:  # noqa: BLE001 - failures must be logged uniformly.
+                if db is not None:
+                    db.rollback()
                 last_error = str(exc)
                 self._finish_log(db, tool_call, "failed", None, last_error, started)
                 if attempt == attempts_allowed:

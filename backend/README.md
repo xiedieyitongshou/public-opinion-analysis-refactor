@@ -1,6 +1,35 @@
-# Backend Skeleton
+# Public Opinion Analysis Backend
 
-Day 8 backend skeleton for the public opinion analysis refactor.
+The backend provides a tool-driven workflow for collection, event construction,
+and platform-local heat and trend analysis. The HTTP application remains at
+`app/main.py`; running the API does not automatically trigger collection.
+
+## Hotspot Analysis Workflow
+
+Run from `backend` with the project's Python environment:
+
+```powershell
+python -m app.analysis_cli --sources zhihu_hot_list --limit 5 --interval-minutes 120
+```
+
+This performs a real collection and writes analysis data. Configure source access
+locally first. `--interval-minutes` declares the actual intended collection cadence;
+the command itself runs once. Without sampling configuration, duration and trend
+remain unknown. Use a new `--run-id` for each observation round; reusing an ID
+replays its recorded collection and updates the same observations.
+
+The workflow keeps Planning, Tool Calling, Structured Output, Guardrails and
+Human Review. Its nine steps reuse existing business tools and add two adapters:
+`prepare_source_signals` and `classify_events`. Daily briefing, image rendering,
+evaluation and Mode B placeholder tools remain registered for later work.
+
+For contracts, replay, persistence and failure behavior, see
+[the workflow interface guide](../docs/hotspot-analysis-workflow.md).
+
+The [2026-09-28 live validation](../reports/live-analysis-validation-2026-09-28.md)
+reached all nine steps with real source responses, and a later Weibo CLI search
+succeeded. Stale official feeds and false official-support matches remain open;
+the current classification results have not passed business validation.
 
 ## Stack
 
@@ -92,4 +121,7 @@ For CI or unattended Docker runs, inject `WEIBO_CLI_TOKEN` or
 
 ## Scope
 
-This skeleton only initializes project structure, configuration, API routing, database session setup, and test entry points. Agent task tables, business models, tool registry, planning, and state machine are implemented in later days.
+The analysis CLI initializes its database and runs the three implemented stages.
+API routes currently provide health and Ops capabilities. Briefing publication,
+frontend display APIs, scheduled execution and Evaluation Runner remain separate
+work. Offline integration tests do not establish live source availability.

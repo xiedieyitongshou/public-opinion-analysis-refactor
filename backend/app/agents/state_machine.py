@@ -10,6 +10,8 @@ class TaskStatus(StrEnum):
     PENDING = "pending"
     RUNNING = "running"
     SUCCEEDED = "succeeded"
+    PARTIAL = "partial"
+    SKIPPED = "skipped"
     FAILED = "failed"
     RETRYING = "retrying"
     BLOCKED = "blocked"
@@ -26,10 +28,15 @@ class DraftStatus(StrEnum):
 
 TASK_TRANSITIONS: dict[TaskStatus, set[TaskStatus]] = {
     TaskStatus.PENDING: {TaskStatus.RUNNING, TaskStatus.BLOCKED},
-    TaskStatus.RUNNING: {TaskStatus.SUCCEEDED, TaskStatus.FAILED, TaskStatus.BLOCKED},
+    TaskStatus.RUNNING: {
+        TaskStatus.SUCCEEDED, TaskStatus.PARTIAL, TaskStatus.SKIPPED,
+        TaskStatus.FAILED, TaskStatus.BLOCKED,
+    },
     TaskStatus.FAILED: {TaskStatus.RETRYING, TaskStatus.BLOCKED},
     TaskStatus.RETRYING: {TaskStatus.RUNNING, TaskStatus.BLOCKED},
     TaskStatus.SUCCEEDED: set(),
+    TaskStatus.PARTIAL: set(),
+    TaskStatus.SKIPPED: set(),
     TaskStatus.BLOCKED: set(),
 }
 
@@ -75,7 +82,10 @@ def transition_task(task: AgentTask, target: TaskStatus | str) -> AgentTask:
     task.status = target_status.value
     if target_status is TaskStatus.RUNNING:
         task.started_at = datetime.now(UTC)
-    if target_status in {TaskStatus.SUCCEEDED, TaskStatus.FAILED, TaskStatus.BLOCKED}:
+    if target_status in {
+        TaskStatus.SUCCEEDED, TaskStatus.PARTIAL, TaskStatus.SKIPPED,
+        TaskStatus.FAILED, TaskStatus.BLOCKED,
+    }:
         task.finished_at = datetime.now(UTC)
     if target_status is TaskStatus.RETRYING:
         task.retry_count += 1

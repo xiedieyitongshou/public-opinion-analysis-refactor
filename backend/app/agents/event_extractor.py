@@ -403,9 +403,12 @@ def _terms_from_mapping(value: dict[str, Any]) -> list[str]:
         if not any(token in lowered for token in ("topic", "query", "keyword", "tag")):
             continue
         if isinstance(item, list | tuple | set):
-            terms.extend(str(part).strip("# ") for part in item if str(part).strip("# "))
-        elif item:
-            terms.append(str(item).strip("# "))
+            terms.extend(part.strip("# ") for part in item
+                         if isinstance(part, str) and part.strip("# "))
+        elif isinstance(item, str) and item.strip("# "):
+            terms.append(item.strip("# "))
+        elif isinstance(item, dict) and isinstance(item.get("query_text"), str):
+            terms.append(item["query_text"].strip("# "))
     return terms
 
 
@@ -435,8 +438,7 @@ def _extract_entities(title: str, phrases: list[str], signal: SourceSignal) -> l
     for segment in CHINESE_RE.findall(title):
         if any(marker in segment for marker in ENTITY_MARKERS):
             entities.append(_trim_entity_segment(segment))
-    if signal.platform in {"weibo", "zhihu", "bilibili"}:
-        entities.append(signal.platform)
+    # Platform identifies where a signal was observed, not who the event concerns.
     return _limit_terms(entities, limit=8)
 
 
