@@ -4,7 +4,9 @@
 
 本轮执行 **134 条用例**：118 条通过、16 条预期不符、0 条执行错误。不同类型用例不合成为系统总准确率。
 
-这是当前实现的离线基线。所有新增语义标签由助手整理，**待人工复核**，不是已经完成双人标注的 gold set。未修改采集、匹配、分类或趋势业务规则。
+这是 2026-09-29 改进前实现的离线基线。所有新增语义标签由助手整理，**待人工复核**，不是已经完成双人标注的 gold set。本轮未修改采集、匹配、分类或趋势业务规则。以下指标和失败清单保留评估当时的结果。
+
+**后续进展（2026-09-30）：**[评估报告 v0.2](evaluation-v0.2.md#同集对照与真实模型执行)在原有 134 条用例中修复了 14 条，包含本报告的 5 条官媒误匹配；原有 13 条官媒用例的 FP 从 5 降为 0。扩充到 46 条官媒用例后，完整配置为 TP=10、FP=0、FN=4、TN=32。官媒误匹配的改善主要来自[字段读取和证据判定规则的修复](../docs/matching-upgrade.md#官媒误匹配的字段与判定规则改动)；仅用修复后的规则，扩充集的官媒 FP 也为 0，不能把这一改善单独归因于 rerank。此处的旧结果不回填为新结果。
 
 ## 评估范围与证据
 
@@ -77,7 +79,7 @@
 
 ## 本轮问题定位
 
-- **官媒误匹配优先处理。** 养老金事件与安哥拉讲座的关键词和 n-gram 重叠均为 0，实际却得到 action_overlap=1 和 supported。[持久化接口](../backend/app/services/analysis_interfaces.py)把实体和行动放在 `event_detail_json.match_features`，[官媒匹配器](../backend/app/services/official_support.py)读取顶层；行动词为空时又从候选报道自身提取并与自身比较，造成假阳性。九步链路复现了 E → D 的错误升级。
+- **官媒误匹配优先处理（本轮发现，后续已改善）。** 养老金事件与安哥拉讲座的关键词和 n-gram 重叠均为 0，实际却得到 action_overlap=1 和 supported。[持久化接口](../backend/app/services/analysis_interfaces.py)把实体和行动放在 `event_detail_json.match_features`，[官媒匹配器](../backend/app/services/official_support.py)当时读取顶层；行动词为空时又从候选报道自身提取并与自身比较，造成假阳性。九步链路复现了 E → D 的错误升级。后续修复及对照结果见[评估报告 v0.2](evaluation-v0.2.md#同集对照与真实模型执行)和[字段／判定规则改动说明](../docs/matching-upgrade.md#官媒误匹配的字段与判定规则改动)。
 - **同问题搜索增强未归并。** 搜索相关性层已经识别 same_zhihu_question_id，事件合并层未复用这个父问题身份；问题 URL 与答案 URL 不相等，当前 platform_id 又包含不同 source_id。两条实际摘录在模块中均判 create，完整链路也产生了 2 个事件。先补齐身份传递，再讨论降低语义合并阈值。
 - **榜单完整性标记丢失。** [知乎采集器](../backend/app/collectors/zhihu.py)把已知 total 推导出的 list_complete 写入 normalize_config，返回时调用 `_result(effective_config, ...)`；因此已知短榜和已知空榜仍返回 false。这会影响后续‘明确离榜’与‘未知’的区分。
 - **未知搜索质量被当作置信度支持。** [分类规则](../backend/app/services/event_classification.py)使用 `search_hit_quality != 'none'`，默认 unknown 也满足此条件；CLI 失败且没有有效搜索证据的输入得到 medium，验收预期为 low。
