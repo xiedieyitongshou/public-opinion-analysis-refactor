@@ -37,8 +37,8 @@ def build_official_query(event: Any) -> OfficialQuery:
     )
     primary_entity = _string_value(event, "primary_entity")
     title = _string_value(event, "title") or ""
-    query_parts = [primary_entity, *keywords[:3]]
-    query_text = " ".join(part for part in query_parts if part).strip() or title
+    query_parts = list(dict.fromkeys(part for part in [primary_entity, *keywords[:3]] if part))
+    query_text = " ".join(query_parts).strip() or title
     return OfficialQuery(
         query_text=query_text,
         event_id=event_id,
@@ -298,11 +298,7 @@ def enrich_support_detail(
 
 def official_agenda_rank_from_items(items: Iterable[Any]) -> OfficialAgendaRank:
     item_list = list(items)
-    source_names = {
-        _source_name(item)
-        for item in item_list
-        if _source_name(item)
-    }
+    source_names = {_source_name(item) for item in item_list if _source_name(item)}
     story_keys = {_story_key(_item_reference_payload(item)) for item in item_list}
     statuses = {_string_value(item, "source_status") or "unknown" for item in item_list}
     source_status_rank = 0 if "use" in statuses else 1 if "fallback" in statuses else 2

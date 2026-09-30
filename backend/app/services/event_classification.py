@@ -137,7 +137,11 @@ def _confidence_level(
     if category in {"C_cross_platform_without_official", "D_single_platform_with_official"}:
         return "medium"
     if category == "E_single_platform_only":
-        if input_data.snapshot_presence_count >= 2 or input_data.search_hit_quality != "none":
+        if input_data.snapshot_presence_count >= 2 or input_data.search_hit_quality in {
+            "same_id_or_title",
+            "entity_action_match",
+            "keyword_overlap",
+        }:
             return "medium"
         return "low"
     if category == "F_official_only":

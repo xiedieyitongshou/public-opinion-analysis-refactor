@@ -66,7 +66,7 @@ HTTP 应用入口仍为 `backend/app/main.py`；一轮分析的命令行入口�
 
 `classify_events` 查询窗口内官媒证据池，复用官媒匹配、覆盖统计和分类组装 service。
 官媒条目也走统一事件构建链路，独立官媒事件保留官媒议程排序信息。
-没有运行官媒来源且没有有效证据池时保留 `not_checked`。本链路没有新增官媒定向网络搜索客户端。
+对未获支持的社区事件，默认生成 query 并补查官媒搜索。搜索候选先落库，再通过相关性判定；不直接增加热度或自动成为引用。全部查询失败为 `not_checked`，部分失败、模型缺失或预算耗尽会保留质量标记并返回 `partial`。范围与实测结果见 [匹配更新说明](matching-upgrade.md)。
 
 搜索增强沿用已实现 Collector 的目标和相关性约束，可通过
 `collection.per_source_params` 提供候选或 query；未提供目标时按原规则跳过。
@@ -78,7 +78,7 @@ HTTP 应用入口仍为 `backend/app/main.py`；一轮分析的命令行入口�
 - 来源失败若仍有结构化采集结果，继续为已跟踪事件保存失败观测，避免沿用旧热度作为当前热度。工具异常或数据接口校验失败会中止后续依赖步骤。
 - 待复核条目保存在 Item 中，但不自动关联候选事件；复核任务包含具体 Item ID 与来源引用。人工确认 create/merge 后才保存关联。
 - 无数据可完成流程并返回 `skipped`；某平台失败、历史不足或采样间隔未配置时，结果保留 `partial/unknown`。
-- 汇总返回 `HotspotAnalysisOutput`：来源状态、逐工具任务状态、事件 ID、分类、分平台趋势与错误信息。结果尚不是日报或最终首页展示响应。
+- 汇总返回 `HotspotAnalysisOutput`：来源状态、逐工具任务状态、事件 ID、分类、分平台趋势、质量标记与错误信息。结果尚不是日报或最终首页展示响应。
 
 ## 运行与离线验证
 
@@ -94,10 +94,11 @@ python -m app.analysis_cli --sources zhihu_hot_list --limit 5 --interval-minutes
 已有一轮 `FetchSourceItemsOutput` JSON 时，可在显式指定的独立数据库回放：
 
 ```powershell
-python -m app.analysis_cli --replay sample-round.json --database sqlite:///./data/replay.db --interval-minutes 120
+python -m app.analysis_cli --replay sample-round.json --database sqlite:///./data/replay.db --interval-minutes 120 --matching-profile rules
 ```
 
 回放文件须包含完整轮次和来源观测信息，使用分析模式标志；不要将不完整历史采样伪装成完整观测。
+回放默认关闭官媒联网补查。准备好本地模型后可改为 `--matching-profile hybrid_rerank`；需要在回放时补查网络，必须显式加 `--official-search`。真实轮次也可用 `--no-official-search` 关闭补查。
 
 离线验收使用真实 Collector、Normalizer、抽取、匹配、Guardrails、评分、分类、趋势及 SQLite，仅替换来源响应：
 
@@ -117,3 +118,15 @@ python -m pytest tests/test_hotspot_analysis.py -q
 
 同日 19:45（北京时间）单独复测微博 CLI：服务已恢复为 `formal_active`，真实搜索成功，项目客户端保留的 3 条样本均有正文、发布时间和转评赞字段。
 该复测只更新 CLI 可用性结论，首次整轮分析的记录和其余待修复问题仍见上述报告。
+
+## 2026-09-29 用例评估
+
+Day48–49 的第一版离线评估已运行：134 条带预期用例，覆盖模块规则与现有九步编排；另外回放了上一轮完整真实采集响应。入口为 `python -m app.evaluation`，原有 `run_evaluation_suite` Tool 已接入同一执行器。
+
+数据来源、待人工复核的标签、复现命令和指标边界见 [用例说明](evaluation-cases-v0.2.md)，当前问题与逐项结果见 [评估报告](../reports/evaluation-v0.1.md)。本轮没有再次请求知乎 API 或微博 CLI，没有调整业务规则。报告中的自动合并漏召回、官媒误匹配及采集完整性标记丢失，需与“接口可以运行”分开看待。
+
+## 2026-09-30 匹配改进与复评
+
+已统一事件／证据比较字段，修复空动作自匹配、知乎父问题身份、榜单完整性与未知搜索质量；接入真实 BM25、BGE embedding、BGE cross-encoder 及官媒定向查询。九步编排和原有 Tool 继续复用，具体实现与运行参数见 [匹配更新说明](matching-upgrade.md)。
+
+237 项回归测试通过。扩充到 208 条用例后进行三组真实模型对照，完整配置 193 条通过、15 条预期不符、0 条执行错误；原 134 条由 118 条通过提高到 132 条，未出现原通过用例回退。样本内无错误自动合并或官媒假阳性，但仍有漏匹配和待确定的旧新闻入池策略。见 [复评报告](../reports/evaluation-v0.2.md)、[用例 v0.3](evaluation-cases-v0.3.md)。

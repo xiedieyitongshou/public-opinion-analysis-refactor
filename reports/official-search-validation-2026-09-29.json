@@ -1,0 +1,253 @@
+{
+  "scope": "Read-only official-site probes, not long-term availability or semantic accuracy",
+  "captures": [
+    {
+      "captured_at": "2026-09-29T12:08:29.320614+00:00",
+      "input_sha256": "638197c68f3d91fba5687b5dc5716f332805cda109a1d7521820a5cb1cffa75a"
+    },
+    {
+      "captured_at": "2026-09-29T12:12:11.992827+00:00",
+      "input_sha256": "d3ad5619e3782fbf74d002efe145ea5bfd04bbb08b4c7bc712bf9412f2d390da"
+    }
+  ],
+  "results": [
+    {
+      "source": "people",
+      "query": "常德 养老金 拾荒",
+      "status": "failed",
+      "quality_flags": [
+        "official_query_failed"
+      ],
+      "error": "HTTPStatusError",
+      "http_status": 405,
+      "candidates": [],
+      "item_count": 0
+    },
+    {
+      "source": "chinanews",
+      "query": "常德 养老金 拾荒",
+      "status": "succeeded",
+      "quality_flags": [],
+      "error": null,
+      "http_status": 200,
+      "candidates": [],
+      "item_count": 0
+    },
+    {
+      "source": "people",
+      "query": "张雪 机车 被盗",
+      "status": "failed",
+      "quality_flags": [
+        "official_query_failed"
+      ],
+      "error": "HTTPStatusError",
+      "http_status": 405,
+      "candidates": [],
+      "item_count": 0
+    },
+    {
+      "source": "chinanews",
+      "query": "张雪 机车 被盗",
+      "status": "succeeded",
+      "quality_flags": [],
+      "error": null,
+      "http_status": 200,
+      "candidates": [],
+      "item_count": 0
+    },
+    {
+      "source": "people",
+      "query": "王楚钦 阿拉米扬",
+      "status": "failed",
+      "quality_flags": [
+        "official_query_failed"
+      ],
+      "error": "HTTPStatusError",
+      "http_status": 405,
+      "candidates": [],
+      "item_count": 0
+    },
+    {
+      "source": "chinanews",
+      "query": "王楚钦 阿拉米扬",
+      "status": "succeeded",
+      "quality_flags": [],
+      "error": null,
+      "http_status": 200,
+      "candidates": [
+        {
+          "title": "（爱知·名古屋亚运会）综合消息：中国代表团破“百金” 中国男足时隔28年再进亚运四强",
+          "url": "http://www.chinanews.com.cn/ty/2026/09-27/10704305.shtml",
+          "published_at": "2026-09-26T17:17:50Z"
+        },
+        {
+          "title": "乒乓球团体亚锦赛：中国男团女团晋级四强",
+          "url": "http://www.chinanews.com.cn/ty/2025/10-14/10497860.shtml",
+          "published_at": "2025-10-14T06:47:03Z"
+        },
+        {
+          "title": " 王 楚 钦 为何有了“冠军相”？",
+          "url": "http://www.chinanews.com.cn/ty/2025/02-25/10373875.shtml",
+          "published_at": "2025-02-25T06:35:39Z"
+        },
+        {
+          "title": "密集赛程下两位世界第一均有失手 国乒亚锦赛男女团双双晋级四强",
+          "url": "http://www.chinanews.com.cn/ty/2024/10-09/10298656.shtml",
+          "published_at": "2024-10-09T09:00:51Z"
+        },
+        {
+          "title": "3比1逆转战胜伊朗队 亚锦赛国乒男团晋级半决赛",
+          "url": "http://www.chinanews.com.cn/ty/shipin/cns-d/2024/10-08/news1001924.shtml",
+          "published_at": "2024-10-08T13:10:00Z"
+        }
+      ],
+      "item_count": 5
+    },
+    {
+      "source": "people",
+      "query": "王曼昱 蒯曼 11比0",
+      "status": "failed",
+      "quality_flags": [
+        "official_query_failed"
+      ],
+      "error": "HTTPStatusError",
+      "http_status": 405,
+      "candidates": [],
+      "item_count": 0
+    },
+    {
+      "source": "chinanews",
+      "query": "王曼昱 蒯曼 11比0",
+      "status": "succeeded",
+      "quality_flags": [],
+      "error": null,
+      "http_status": 200,
+      "candidates": [],
+      "item_count": 0
+    },
+    {
+      "source": "chinanews",
+      "query": "王曼昱 亚运会",
+      "status": "succeeded",
+      "quality_flags": [],
+      "error": null,
+      "http_status": 200,
+      "candidates": [
+        {
+          "title": "（爱知·名古屋 亚 运 会 ）综合消息：中国乒乓球队6金收官 中国队卫冕田径男、女4X100米接力",
+          "url": "http://www.chinanews.com.cn/ty/2026/09-28/10705183.shtml",
+          "published_at": "2026-09-28T15:57:06Z"
+        },
+        {
+          "title": "（爱知·名古屋 亚 运 会 ） 亚 运 会 乒乓球：蒯曼/ 王 曼 昱 女双摘金 林诗栋男单夺冠",
+          "url": "http://www.chinanews.com.cn/ty/2026/09-28/10705182.shtml",
+          "published_at": "2026-09-28T15:56:53Z"
+        },
+        {
+          "title": "成 亚 运 会 “三冠王” 王 曼 昱 ：结果很圆满 值得总结、值得肯定",
+          "url": "http://www.chinanews.com.cn/ty/shipin/cns-d/2026/09-28/news1070466.shtml",
+          "published_at": "2026-09-28T14:23:13Z"
+        },
+        {
+          "title": "（爱知·名古屋 亚 运 会 ）中国组合 王 曼 昱 /蒯曼 亚 运 会 乒乓球女子双打夺金",
+          "url": "http://www.chinanews.com.cn/tp/hd2011/2026/09-28/1206308.shtml",
+          "published_at": "2026-09-28T12:51:55Z"
+        },
+        {
+          "title": " 王 曼 昱 ：这次 亚 运 会 很圆满",
+          "url": "http://www.chinanews.com.cn/ty/shipin/2026/09-28/news1070457.shtml",
+          "published_at": "2026-09-28T12:15:45Z"
+        }
+      ],
+      "item_count": 5
+    },
+    {
+      "source": "chinanews",
+      "query": "王楚钦 阿拉米扬 亚运会",
+      "status": "succeeded",
+      "quality_flags": [],
+      "error": null,
+      "http_status": 200,
+      "candidates": [
+        {
+          "title": "（爱知·名古屋 亚 运 会 ）综合消息：中国代表团破“百金” 中国男足时隔28年再进亚运四强",
+          "url": "http://www.chinanews.com.cn/ty/2026/09-27/10704305.shtml",
+          "published_at": "2026-09-26T17:17:50Z"
+        }
+      ],
+      "item_count": 1
+    },
+    {
+      "source": "chinanews",
+      "query": "张雪",
+      "status": "succeeded",
+      "quality_flags": [],
+      "error": null,
+      "http_status": 200,
+      "candidates": [
+        {
+          "title": "外交部：只有真正恪守中日四个政治文件精神 两国关系才能不偏航、不脱轨",
+          "url": "http://www.chinanews.com.cn/gn/2026/09-29/10705560.shtml",
+          "published_at": "2026-09-29T07:29:19Z"
+        },
+        {
+          "title": "赏秋地图上线 解锁宝藏小城里的“追秋密码”",
+          "url": "http://www.chinanews.com.cn/cul/2026/09-27/10704430.shtml",
+          "published_at": "2026-09-27T06:28:10Z"
+        },
+        {
+          "title": "“ 张 雪 机车”车手获世界超级摩托车锦标赛意大利站首回合第4名",
+          "url": "http://www.chinanews.com.cn/ty/2026/09-26/10704298.shtml",
+          "published_at": "2026-09-26T15:09:10Z"
+        },
+        {
+          "title": "直击世界技能博览会",
+          "url": "http://www.chinanews.com.cn/tp/hd2011/2026/09-24/1205679.shtml",
+          "published_at": "2026-09-24T09:24:12Z"
+        },
+        {
+          "title": "外交部：中方敦促新西兰有关机构停止散布谎言、制造矛盾",
+          "url": "http://www.chinanews.com.cn/gn/2026/09-24/10703007.shtml",
+          "published_at": "2026-09-24T07:26:26Z"
+        }
+      ],
+      "item_count": 5
+    },
+    {
+      "source": "chinanews",
+      "query": "养老金 拾荒",
+      "status": "succeeded",
+      "quality_flags": [],
+      "error": null,
+      "http_status": 200,
+      "candidates": [
+        {
+          "title": "善心无价！浙江九旬老人 拾 荒 助学十几载",
+          "url": "http://www.chinanews.com.cn/shipin/cns/2022/12-17/news945996.shtml",
+          "published_at": "2022-12-17T05:58:07Z"
+        },
+        {
+          "title": "山东烟台确保抗疫捐赠透明到位 全城涌动爱心潮",
+          "url": "https://www.chinanews.com.cn/cj/2020/02-12/9088579.shtml",
+          "published_at": "2020-02-12T08:06:54Z"
+        },
+        {
+          "title": "专访陶斯亮：我是靠社保养老的“草根”",
+          "url": "https://www.chinanews.com.cn/sh/2019/08-04/8916315.shtml",
+          "published_at": "2019-08-03T18:46:15Z"
+        },
+        {
+          "title": "青海耄耋老人“ 拾 荒 行善”捐款几十载",
+          "url": "https://www.chinanews.com.cn/sh/2019/05-22/8844130.shtml",
+          "published_at": "2019-05-22T08:02:06Z"
+        },
+        {
+          "title": "河北一位无腿老兵荒山爬行18年 种下1.7万棵树",
+          "url": "https://www.chinanews.com.cn/sh/2019/03-28/8793511.shtml",
+          "published_at": "2019-03-28T09:47:42Z"
+        }
+      ],
+      "item_count": 5
+    }
+  ]
+}

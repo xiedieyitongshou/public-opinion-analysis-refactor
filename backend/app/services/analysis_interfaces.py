@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 
 from app.agents.event_matcher import EventMatcher, parse_datetime
 from app.agents.event_resolver import EventResolverAgent
+from app.core.config import settings
 from app.models import Event, Item, Source
 from app.schemas.analysis import (
     ClassifyEventsInput,
@@ -30,7 +31,10 @@ from app.schemas.signals import (
     SourceSignal,
 )
 from app.services.classification_assembly import assemble_hotspot_classification_from_db
+from app.services.match_documents import canonical_ids, event_document, event_features
+from app.services.matching_profiles import official_config
 from app.services.official_paths import enrich_support_detail, official_agenda_rank_from_items
+from app.services.official_search import enrich_event_support
 from app.services.official_support import match_official_support
 from app.services.platform_trend_assembly import load_platform_observations, record_collection_round
 
@@ -115,6 +119,7 @@ def prepare_source_signals(
             source_signal_id=signal.source_signal_id,
             url=signal.url,
             platform_id=f"{item.source_id}:{item.external_id or row.id}",
+            canonical_ids=canonical_ids([signal.url] if signal.url else []),
         )
         output.saved_count += 1
     db.commit()
@@ -164,14 +169,15 @@ def item_to_source_signal(item, item_id: str) -> SourceSignal:
 
 def _candidate(event: Event) -> RetrievedEventMatchCandidate:
     detail = event.event_detail_json or {}
-    features = detail.get("match_features") or {}
+    features = event_features(event)
+    document = event_document(event)
     return RetrievedEventMatchCandidate(
         event_id=event.event_id,
         title=event.title,
         event_fingerprint=event.event_fingerprint,
         keywords=event.keywords_json or [],
-        entities=features.get("entities", []),
-        action_terms=features.get("action_terms", []),
+        entities=document.entities,
+        action_terms=document.action_terms,
         event_type=event.event_type,
         event_time_hint=features.get("event_time_hint"),
         first_seen_at=event.first_seen_at,
@@ -181,6 +187,8 @@ def _candidate(event: Event) -> RetrievedEventMatchCandidate:
         source_signal_ids=detail.get("source_signal_ids", []),
         source_urls=[item.url for item in event.items if item.url],
         platform_ids=detail.get("platform_ids", []),
+        canonical_ids=detail.get("canonical_ids", []),
+        representative_documents=detail.get("representative_documents", []),
     )
 
 
@@ -221,22 +229,8 @@ def resolve_and_persist_events(
                 ),
             )
         ).all()
-        candidates = []
+        candidates = [_candidate(event) for event in candidate_rows]
         refs = [data.source_refs_by_signal_id[key] for key in signal.source_signal_ids]
-        for event in candidate_rows:
-            candidate = _candidate(event)
-            ranked = matcher.rerank_candidate(
-                signal=signal,
-                candidate=candidate,
-                config=data.match_config,
-                source_refs=refs,
-            )
-            if (
-                ranked.features.id_match
-                or ranked.features.url_match
-                or ranked.confidence >= data.match_config.bm25_candidate_min_score
-            ):
-                candidates.append(candidate)
         resolved = resolver.resolve(
             data.model_copy(
                 update={
@@ -248,6 +242,20 @@ def resolve_and_persist_events(
             agent_task_id=task_id,
             tool_call_id=tool_call_id,
         )
+        result.quality_flags.extend(resolved.quality_flags)
+        if resolved.event_resolutions:
+            rejected = resolved.event_resolutions[0]
+            if rejected.action == "reject" and not (
+                rejected.match_features_json.id_match or rejected.match_features_json.url_match
+            ):
+                # A conflicting existing event rejects that association, not the new observation.
+                # Keep the guardrail audit produced above, then create a separate event.
+                resolved = resolver.resolve(
+                    data.model_copy(update={"event_signals": [signal], "existing_events": []}),
+                    db=db,
+                    agent_task_id=task_id,
+                    tool_call_id=tool_call_id,
+                )
         result.errors.extend(resolved.errors)
         result.event_resolutions.extend(resolved.event_resolutions)
         if not resolved.event_resolutions:
@@ -282,16 +290,38 @@ def resolve_and_persist_events(
         observed_at = max(parse_datetime(source.fetched_at) for source in source_signals)
         event.last_seen_at = max(parse_datetime(event.last_seen_at) or observed_at, observed_at)
         detail = dict(event.event_detail_json or {})
-        detail["match_features"] = {
+        incoming_features = {
             "entities": signal.entities,
             "action_terms": signal.action_terms,
             "event_time_hint": signal.model_dump(mode="json")["event_time_hint"],
             "event_text_for_match": signal.event_text_for_match,
         }
+        # Preserve the event anchor; a new member must not redefine the whole cluster.
+        previous = detail.get("match_features") or {}
+        detail["match_features"] = {
+            key: previous.get(key) or val for key, val in incoming_features.items()
+        }
+        representative = event_document(signal).model_dump(mode="json")
+        representatives = detail.get("representative_documents", [])
+        if representative not in representatives:
+            representatives.append(representative)
+        detail["representative_documents"] = (
+            [representatives[0], *representatives[-2:]]
+            if len(representatives) > 3
+            else representatives
+        )
         for key, values in (
             ("event_signal_ids", [signal.event_signal_id]),
             ("source_signal_ids", signal.source_signal_ids),
             ("platform_ids", [ref.platform_id for ref in refs if ref.platform_id]),
+            (
+                "canonical_ids",
+                [
+                    key
+                    for ref in refs
+                    for key in (ref.canonical_ids + canonical_ids([ref.url] if ref.url else []))
+                ],
+            ),
         ):
             detail[key] = list(dict.fromkeys([*detail.get(key, []), *values]))
         detail["latest_resolution"] = resolution.model_dump(mode="json")
@@ -331,7 +361,9 @@ def resolve_and_persist_events(
             value.event_signal_id: value.model_dump(mode="json") for value in data.event_signals
         },
     }
-    if result.errors or result.review_required_count or result.rejected_event_count:
+    result.quality_flags = list(dict.fromkeys(result.quality_flags))
+    degraded = any(not flag.startswith("embedding_disabled_") for flag in result.quality_flags)
+    if result.errors or result.review_required_count or result.rejected_event_count or degraded:
         result.status = "partial"
     elif not data.event_signals:
         result.status = "skipped"
@@ -362,11 +394,29 @@ def classify_events(db: Session, data: ClassifyEventsInput) -> ClassifyEventsOut
         for value in data.event_resolutions
         if value.action in {"create", "merge"} and not value.review_required
     }
-    for event in db.scalars(select(Event).where(Event.event_id.in_(data.event_ids))).all():
-        support = match_official_support(
-            event, official_items if checked or official_items else None
-        )
-        support.official_support_detail = enrich_support_detail(support)
+    budget = [settings.official_search_max_events]
+    for event in db.scalars(
+        select(Event).where(Event.event_id.in_(data.event_ids)).order_by(Event.id)
+    ).all():
+        pool = official_items if checked or official_items else None
+        config = official_config(data.matching_profile)
+        community = any(item.source.platform in {"zhihu", "weibo"} for item in event.items)
+        if data.official_search_enabled and community:
+            support = enrich_event_support(
+                db, event, pool, run_id=data.run_id, config=config, budget=budget
+            )
+        else:
+            support = match_official_support(event, pool, config)
+        degraded = [
+            flag
+            for flag in support.quality_flags
+            if flag.startswith(("embedding_", "reranker_", "official_query_"))
+        ]
+        if degraded:
+            output.status = "partial"
+            output.quality_flags = sorted(set(output.quality_flags + degraded))
+        if support.official_support_detail.official_query is None:
+            support.official_support_detail = enrich_support_detail(support)
         signals = [
             SourceSignal.model_validate(item.normalized_json["source_signal"])
             for item in event.items

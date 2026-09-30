@@ -403,8 +403,9 @@ def _terms_from_mapping(value: dict[str, Any]) -> list[str]:
         if not any(token in lowered for token in ("topic", "query", "keyword", "tag")):
             continue
         if isinstance(item, list | tuple | set):
-            terms.extend(part.strip("# ") for part in item
-                         if isinstance(part, str) and part.strip("# "))
+            terms.extend(
+                part.strip("# ") for part in item if isinstance(part, str) and part.strip("# ")
+            )
         elif isinstance(item, str) and item.strip("# "):
             terms.append(item.strip("# "))
         elif isinstance(item, dict) and isinstance(item.get("query_text"), str):
@@ -437,19 +438,25 @@ def _extract_entities(title: str, phrases: list[str], signal: SourceSignal) -> l
     entities.extend(phrase for phrase in phrases if len(phrase) >= 2)
     for segment in CHINESE_RE.findall(title):
         if any(marker in segment for marker in ENTITY_MARKERS):
-            entities.append(_trim_entity_segment(segment))
+            entity = _trim_entity_segment(segment)
+            if entity:
+                entities.append(entity)
     # Platform identifies where a signal was observed, not who the event concerns.
     return _limit_terms(entities, limit=8)
 
 
 def _trim_entity_segment(segment: str) -> str:
-    if len(segment) <= 12:
-        return segment
     for marker in ENTITY_MARKERS:
         index = segment.find(marker)
         if index >= 0:
+            if marker == "市" and (
+                index == 0
+                or segment[index - 1] in "上全"
+                or segment[index : index + 2] in {"市场", "市民"}
+            ):
+                continue
             return segment[max(0, index - 8) : index + len(marker)]
-    return segment[:12]
+    return ""
 
 
 def _extract_actions(title: str) -> list[str]:

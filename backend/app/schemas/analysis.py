@@ -28,6 +28,8 @@ class HotspotAnalysisInput(BaseModel):
         default_factory=dict
     )
     use_llm: bool = False
+    matching_profile: Literal["rules", "hybrid", "hybrid_rerank"] | None = None
+    official_search_enabled: bool | None = None
 
     @model_validator(mode="after")
     def require_analysis_collection(self):
@@ -61,11 +63,14 @@ class ClassifyEventsInput(BaseModel):
     event_ids: list[str]
     collection: FetchSourceItemsOutput
     event_resolutions: list[EventResolution] = Field(default_factory=list)
+    matching_profile: Literal["rules", "hybrid", "hybrid_rerank"] = "rules"
+    official_search_enabled: bool = False
 
 
 class ClassifyEventsOutput(BaseModel):
-    status: Literal["succeeded", "skipped"]
+    status: Literal["succeeded", "partial", "skipped"]
     classifications: list[HotspotClassificationAssembly] = Field(default_factory=list)
+    quality_flags: list[str] = Field(default_factory=list)
 
 
 class HotspotAnalysisOutput(BaseModel):
@@ -79,3 +84,4 @@ class HotspotAnalysisOutput(BaseModel):
     classifications: list[HotspotClassificationAssembly] = Field(default_factory=list)
     analyses: list[EventHeatAnalysis] = Field(default_factory=list)
     errors: list[str] = Field(default_factory=list)
+    quality_flags: list[str] = Field(default_factory=list)

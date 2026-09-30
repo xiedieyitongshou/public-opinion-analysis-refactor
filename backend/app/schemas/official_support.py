@@ -29,6 +29,9 @@ class OfficialSupportConfig(BaseModel):
     keyword_overlap_weak: float = Field(default=0.25, ge=0.0, le=1.0)
     ngram_overlap_supported: float = Field(default=0.45, ge=0.0, le=1.0)
     ngram_overlap_weak: float = Field(default=0.20, ge=0.0, le=1.0)
+    use_embedding: bool = False
+    use_reranker: bool = False
+    rerank_supported_min_score: float = Field(default=0.85, ge=0.0, le=1.0)
 
 
 class OfficialReference(BaseModel):
@@ -60,6 +63,7 @@ class OfficialSupportDetail(BaseModel):
     matched_item_ids: list[str] = Field(default_factory=list)
     source_independence_flags: list[str] = Field(default_factory=list)
     official_query: dict[str, Any] | None = None
+    candidate_comparisons: list[dict[str, Any]] = Field(default_factory=list)
     quality_flags: list[str] = Field(default_factory=list)
 
 

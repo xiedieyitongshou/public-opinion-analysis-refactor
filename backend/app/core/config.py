@@ -1,6 +1,7 @@
 """Application configuration."""
 
 from functools import lru_cache
+from typing import Literal
 
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -111,6 +112,15 @@ class Settings(BaseSettings):
         le=1.0,
     )
     llm_provider: str = Field(default="deepseek", alias="LLM_PROVIDER")
+    semantic_model_dir: str | None = None
+    semantic_device: str = "cpu"
+    semantic_cpu_threads: int = Field(default=4, ge=1, le=32)
+    matching_profile: Literal["rules", "hybrid", "hybrid_rerank"] = "hybrid_rerank"
+    official_search_enabled: bool = True
+    official_search_cache_minutes: int = Field(default=30, ge=0, le=1440)
+    official_search_limit: int = Field(default=5, ge=1, le=20)
+    official_search_max_events: int = Field(default=3, ge=0, le=20)
+    official_search_timeout_seconds: float = Field(default=10, gt=0, le=60)
     deepseek_api_key: str | None = Field(default=None, alias="DEEPSEEK_API_KEY")
     deepseek_base_url: str = Field(default="https://api.deepseek.com", alias="DEEPSEEK_BASE_URL")
     deepseek_model: str = Field(default="deepseek-chat", alias="DEEPSEEK_MODEL")

@@ -28,9 +28,7 @@ def event_signal(
         confidence=0.9,
         is_weak_signal=is_weak_signal,
         weak_signal_reason=(
-            "short_or_generic_topic_without_enough_event_constraints"
-            if is_weak_signal
-            else None
+            "short_or_generic_topic_without_enough_event_constraints" if is_weak_signal else None
         ),
         source_statuses=["use"],
         source_roles=["event_signal"],
@@ -68,13 +66,14 @@ def candidate(
     )
 
 
-def call_match(signal: EventSignal, candidates: list[RetrievedEventMatchCandidate]):
+def call_match(signal: EventSignal, candidates: list[RetrievedEventMatchCandidate], **config):
     return default_tool_registry.call(
         "match_and_resolve_events",
         {
             "run_id": "run-39",
             "event_signals": [signal.model_dump(mode="json")],
             "existing_events": [item.model_dump(mode="json") for item in candidates],
+            "match_config": config,
         },
     )
 
@@ -225,7 +224,9 @@ def test_match_and_resolve_events_candidate_review_for_medium_confidence() -> No
     assert resolution["review_required"] is True
 
 
-def test_embedding_only_high_similarity_without_hard_constraint_requires_review() -> None:
+def test_embedding_only_high_similarity_without_hard_constraint_requires_review(
+    high_semantic_similarity,
+) -> None:
     signal = event_signal(
         title="相似话题A",
         keywords=["相似", "话题", "讨论"],
@@ -246,11 +247,13 @@ def test_embedding_only_high_similarity_without_hard_constraint_requires_review(
                 event_time_hint=None,
             )
         ],
+        use_embedding=True,
     )
 
     resolution = result.output["event_resolutions"][0]
     assert resolution["action"] == "candidate_review"
-    assert "embedding_only_without_hard_constraint" in resolution["match_features_json"][
-        "guardrail_flags"
-    ]
+    assert (
+        "embedding_only_without_hard_constraint"
+        in resolution["match_features_json"]["guardrail_flags"]
+    )
     assert resolution["match_features_json"]["hard_constraints_passed"] is False

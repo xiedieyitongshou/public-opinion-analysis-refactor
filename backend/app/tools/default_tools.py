@@ -10,6 +10,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select
 
 from app.collectors import default_collector_registry
+from app.evaluation.contracts import RunEvaluationInput, RunEvaluationOutput
 from app.guardrails import default_guardrail_registry
 from app.models import Event, Item, PlatformScore
 from app.schemas import (
@@ -123,8 +124,10 @@ def match_and_resolve_events_handler(
         if context.db_session is None:
             raise ValueError("Persistent event resolution requires a database session")
         return resolve_and_persist_events(
-            context.db_session, input_data,
-            task_id=context.task_id, tool_call_id=context.tool_call_id,
+            context.db_session,
+            input_data,
+            task_id=context.task_id,
+            tool_call_id=context.tool_call_id,
         )
     return EventResolverAgent().resolve(
         input_data,
@@ -155,6 +158,15 @@ def run_briefing_guardrails_handler(
         checks=[check.model_dump(mode="json") for check in result.checks],
         violations=[violation.model_dump(mode="json") for violation in result.violations],
     )
+
+
+def run_evaluation_suite_handler(
+    input_data: RunEvaluationInput,
+    context: ToolContext,
+) -> RunEvaluationOutput:
+    from app.evaluation.runner import run_evaluation_tool
+
+    return run_evaluation_tool(input_data, context)
 
 
 def create_human_review_task_handler(
@@ -240,8 +252,7 @@ def calculate_event_scores_handler(
                     "sub_scores": score.sub_scores,
                     "platform_presence": score.platform_presence.model_dump(mode="json"),
                     "signal_scores": [
-                        signal_score.model_dump(mode="json")
-                        for signal_score in score.signal_scores
+                        signal_score.model_dump(mode="json") for signal_score in score.signal_scores
                     ],
                     "quality_flags": score.quality_flags,
                 },
@@ -301,14 +312,16 @@ def analyze_event_heat_handler(
     errors = []
     for event in events:
         try:
-            analyses.append(assemble_event_heat_analysis_from_db(
-                db,
-                event=event,
-                run_id=input_data.run_id,
-                window_end=input_data.window_end,
-                configs=input_data.configs,
-                persist=not input_data.dry_run,
-            ))
+            analyses.append(
+                assemble_event_heat_analysis_from_db(
+                    db,
+                    event=event,
+                    run_id=input_data.run_id,
+                    window_end=input_data.window_end,
+                    configs=input_data.configs,
+                    persist=not input_data.dry_run,
+                )
+            )
         except ValueError as exc:
             errors.append(f"{event.event_id}: {exc}")
     return AnalyzeEventHeatOutput(
@@ -320,7 +333,8 @@ def analyze_event_heat_handler(
 
 
 def prepare_source_signals_handler(
-    input_data: PrepareSourceSignalsInput, context: ToolContext,
+    input_data: PrepareSourceSignalsInput,
+    context: ToolContext,
 ) -> PrepareSourceSignalsOutput:
     from app.services.analysis_interfaces import prepare_source_signals
 
@@ -330,7 +344,8 @@ def prepare_source_signals_handler(
 
 
 def classify_events_handler(
-    input_data: ClassifyEventsInput, context: ToolContext,
+    input_data: ClassifyEventsInput,
+    context: ToolContext,
 ) -> ClassifyEventsOutput:
     from app.services.analysis_interfaces import classify_events
 
@@ -368,18 +383,26 @@ def search_existing_evidence_handler(
 def build_default_tool_registry() -> ToolRegistry:
     registry = ToolRegistry()
 
-    registry.register(ToolDefinition(
-        name="prepare_source_signals",
-        description="Upsert normalized items and produce traceable source signals.",
-        input_model=PrepareSourceSignalsInput, output_model=PrepareSourceSignalsOutput,
-        handler=prepare_source_signals_handler, has_side_effect=True,
-    ))
-    registry.register(ToolDefinition(
-        name="classify_events",
-        description="Assemble official support and classification in the analysis window.",
-        input_model=ClassifyEventsInput, output_model=ClassifyEventsOutput,
-        handler=classify_events_handler, has_side_effect=True,
-    ))
+    registry.register(
+        ToolDefinition(
+            name="prepare_source_signals",
+            description="Upsert normalized items and produce traceable source signals.",
+            input_model=PrepareSourceSignalsInput,
+            output_model=PrepareSourceSignalsOutput,
+            handler=prepare_source_signals_handler,
+            has_side_effect=True,
+        )
+    )
+    registry.register(
+        ToolDefinition(
+            name="classify_events",
+            description="Assemble official support and classification in the analysis window.",
+            input_model=ClassifyEventsInput,
+            output_model=ClassifyEventsOutput,
+            handler=classify_events_handler,
+            has_side_effect=True,
+        )
+    )
 
     registry.register(
         ToolDefinition(
@@ -407,12 +430,22 @@ def build_default_tool_registry() -> ToolRegistry:
         )
     )
 
+    registry.register(
+        ToolDefinition(
+            name="run_evaluation_suite",
+            description="Run labeled offline cases against the implemented three-module workflow.",
+            input_model=RunEvaluationInput,
+            output_model=RunEvaluationOutput,
+            handler=run_evaluation_suite_handler,
+            has_side_effect=True,
+        )
+    )
+
     placeholder_tools = [
         "generate_daily_briefing",
         "review_briefing_quality",
         "save_daily_report",
         "render_briefing_image",
-        "run_evaluation_suite",
     ]
 
     for name in placeholder_tools:

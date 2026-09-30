@@ -28,6 +28,13 @@ def main() -> int:
     parser.add_argument("--limit", type=int, default=20)
     parser.add_argument("--window-end", help="ISO 8601 timestamp including timezone")
     parser.add_argument("--interval-minutes", type=int, help="Actual intended sampling interval")
+    parser.add_argument("--matching-profile", choices=("rules", "hybrid", "hybrid_rerank"))
+    parser.add_argument(
+        "--official-search",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help="Read-only official-site queries; replay defaults to disabled",
+    )
     parser.add_argument(
         "--replay", type=Path, help="FetchSourceItemsOutput JSON; requires --database"
     )
@@ -57,6 +64,10 @@ def main() -> int:
         run_id=args.run_id or (replay.run_id if replay else str(uuid4())),
         window_end=datetime.fromisoformat(args.window_end) if args.window_end else None,
         trend_configs=configs,
+        matching_profile=args.matching_profile,
+        official_search_enabled=(
+            False if replay and args.official_search is None else args.official_search
+        ),
         collection=FetchSourceItemsInput(
             source_ids=replay.requested_source_ids if replay else args.sources,
             limit=args.limit,

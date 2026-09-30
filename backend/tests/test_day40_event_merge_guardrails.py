@@ -122,9 +122,7 @@ def test_entity_conflict_blocks_and_persists_full_violation_context() -> None:
     )
 
     resolution = result.output["event_resolutions"][0]
-    rows = session.scalars(
-        select(GuardrailViolation).order_by(GuardrailViolation.id)
-    ).all()
+    rows = session.scalars(select(GuardrailViolation).order_by(GuardrailViolation.id)).all()
 
     assert resolution["action"] == "reject"
     assert resolution["guardrail_status"] == "block"
@@ -151,7 +149,9 @@ def test_time_conflict_blocks_merge() -> None:
     assert "time_conflict" in resolution["match_features_json"]["guardrail_flags"]
 
 
-def test_embedding_conflict_blocks_and_marks_semantic_false_positive_risk() -> None:
+def test_embedding_conflict_blocks_and_marks_semantic_false_positive_risk(
+    high_semantic_similarity,
+) -> None:
     result = resolve(
         signal(
             title="Same viral topic",
@@ -168,6 +168,7 @@ def test_embedding_conflict_blocks_and_marks_semantic_false_positive_risk() -> N
                 event_time_hint=None,
             )
         ],
+        extra={"match_config": {"use_embedding": True}},
     )
 
     flags = result.output["event_resolutions"][0]["match_features_json"]["guardrail_flags"]
@@ -176,7 +177,7 @@ def test_embedding_conflict_blocks_and_marks_semantic_false_positive_risk() -> N
     assert "semantic_false_positive_risk" in flags
 
 
-def test_embedding_only_match_requires_candidate_review() -> None:
+def test_embedding_only_match_requires_candidate_review(high_semantic_similarity) -> None:
     result = resolve(
         signal(
             title="Generic viral topic",
@@ -194,15 +195,17 @@ def test_embedding_only_match_requires_candidate_review() -> None:
                 event_time_hint=None,
             )
         ],
+        extra={"match_config": {"use_embedding": True}},
     )
 
     resolution = result.output["event_resolutions"][0]
     assert resolution["action"] == "candidate_review"
     assert resolution["guardrail_status"] == "warn"
     assert resolution["candidate_review"]["review_type"] == "event_merge_candidate"
-    assert "embedding_only_without_hard_constraint" in resolution["candidate_review"][
-        "guardrail_flags"
-    ]
+    assert (
+        "embedding_only_without_hard_constraint"
+        in resolution["candidate_review"]["guardrail_flags"]
+    )
 
 
 def test_weak_signal_without_hard_support_warns_for_review() -> None:

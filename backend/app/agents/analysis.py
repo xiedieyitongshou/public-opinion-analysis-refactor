@@ -10,9 +10,11 @@ from sqlalchemy.orm import Session
 
 from app.agents.planning import Plan, Planner, PlanStep
 from app.agents.runner import AgentTaskRunner
+from app.core.config import settings
 from app.models import AgentTask
 from app.schemas.analysis import HotspotAnalysisInput, HotspotAnalysisOutput
 from app.schemas.collectors import FetchSourceItemsOutput
+from app.services.matching_profiles import event_config
 from app.tools import ToolRegistry, default_tool_registry
 
 
@@ -77,7 +79,9 @@ def build_hotspot_analysis_plan(data: HotspotAnalysisInput) -> Plan:
         {
             "run_id": data.run_id,
             "persist": True,
-            "match_config": {"use_embedding": False},
+            "match_config": event_config(
+                data.matching_profile or settings.matching_profile
+            ).model_dump(mode="json"),
         },
         {
             "event_signals": "extract.event_signals",
@@ -108,7 +112,15 @@ def build_hotspot_analysis_plan(data: HotspotAnalysisInput) -> Plan:
     step(
         "classify",
         "classify_events",
-        {"run_id": data.run_id},
+        {
+            "run_id": data.run_id,
+            "matching_profile": data.matching_profile or settings.matching_profile,
+            "official_search_enabled": (
+                settings.official_search_enabled
+                if data.official_search_enabled is None
+                else data.official_search_enabled
+            ),
+        },
         {
             "event_ids": "resolve.event_ids",
             "collection": "collect",
@@ -178,6 +190,9 @@ class HotspotAnalysisAgent:
             classifications=classified.get("classifications", []),
             analyses=analyzed.get("analyses", []),
             errors=list(dict.fromkeys(errors)),
+            quality_flags=sorted(
+                {flag for output in outputs.values() for flag in output.get("quality_flags", [])}
+            ),
             tasks=[
                 {
                     "id": task.id,

@@ -17,6 +17,7 @@ SourceStatus = Literal[
 ]
 
 SourceOrigin = Literal[
+    "official_search",
     "official_rss",
     "official_api",
     "rsshub",

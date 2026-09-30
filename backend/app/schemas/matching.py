@@ -19,6 +19,8 @@ MatchMethod = Literal[
     "keyword_overlap",
     "bm25_ngram",
     "embedding_rerank",
+    "canonical_id",
+    "cross_encoder",
 ]
 
 
@@ -28,13 +30,17 @@ class SourceSignalMatchRef(BaseModel):
     source_signal_id: str
     url: str | None = None
     platform_id: str | None = None
+    canonical_ids: list[str] = Field(default_factory=list)
 
 
 class EventMatchConfig(BaseModel):
     """Tunable Day 39 matching thresholds."""
 
     use_bm25_ngram: bool = True
-    use_embedding: bool = True
+    use_embedding: bool = False
+    use_reranker: bool = False
+    retrieval_limit: int = Field(default=20, ge=1, le=100)
+    rerank_auto_merge_min_score: float = Field(default=0.85, ge=0.0, le=1.0)
     keyword_overlap_high: float = Field(default=0.55, ge=0.0, le=1.0)
     ngram_overlap_high: float = Field(default=0.50, ge=0.0, le=1.0)
     bm25_candidate_min_score: float = Field(default=0.45, ge=0.0, le=1.0)
@@ -54,7 +60,11 @@ class MatchFeatures(BaseModel):
     keyword_overlap: float = Field(default=0.0, ge=0.0, le=1.0)
     ngram_overlap: float = Field(default=0.0, ge=0.0, le=1.0)
     bm25_score: float = Field(default=0.0, ge=0.0, le=1.0)
-    embedding_similarity: float | None = Field(default=None, ge=0.0, le=1.0)
+    embedding_similarity: float | None = Field(default=None, ge=-1.0, le=1.0)
+    rerank_score: float | None = Field(default=None, ge=0.0, le=1.0)
+    semantic_quality_flags: list[str] = Field(default_factory=list)
+    missing_features: list[str] = Field(default_factory=list)
+    bm25_raw_score: float = Field(default=0.0, ge=0.0)
     entity_overlap: float = Field(default=0.0, ge=0.0, le=1.0)
     action_overlap: float = Field(default=0.0, ge=0.0, le=1.0)
     object_overlap: float | None = None
@@ -85,6 +95,8 @@ class RetrievedEventMatchCandidate(BaseModel):
     source_signal_ids: list[str] = Field(default_factory=list)
     source_urls: list[str] = Field(default_factory=list)
     platform_ids: list[str] = Field(default_factory=list)
+    canonical_ids: list[str] = Field(default_factory=list)
+    representative_documents: list[dict] = Field(default_factory=list)
 
 
 class RerankEventMatchResult(BaseModel):

@@ -222,6 +222,7 @@ backend/data/*.db
 backend/data/*.sqlite
 backend/data/*.sqlite3
 backend/data/weibo-cli-live-samples/
+backend/data/models/
 notes/source-probe-raw/
 
 # IDE project files

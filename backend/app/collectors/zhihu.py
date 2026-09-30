@@ -81,10 +81,7 @@ class ZhihuHotListCollector(BaseCollector):
             items=raw_items,
             raw_payload={"Items": list(raw_items)},
         )
-        return [
-            NormalizedItem.model_validate(item)
-            for item in normalize_hot_list_items(result)
-        ]
+        return [NormalizedItem.model_validate(item) for item in normalize_hot_list_items(result)]
 
     def collect(
         self,
@@ -118,7 +115,7 @@ class ZhihuHotListCollector(BaseCollector):
             if not effective_config.dry_run and effective_config.promote_to_event_pool:
                 saved_count = self.save(normalized_items, db=db)
             return self._result(
-                effective_config,
+                normalize_config,
                 status="succeeded",
                 returned_count=len(raw_items),
                 normalized_items=normalized_items,

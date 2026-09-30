@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import hashlib
-import math
 import re
 from datetime import UTC, date, datetime
 from typing import Any
@@ -22,6 +21,8 @@ from app.schemas import (
     RetrievedEventMatchCandidate,
     SourceSignalMatchRef,
 )
+from app.services.match_documents import MatchDocument, canonical_ids, event_document
+from app.services.matching_engine import Comparison, bm25_scores, compare_many, retrieve
 
 TOKEN_RE = re.compile(r"[\w\u4e00-\u9fff]+", re.UNICODE)
 
@@ -55,7 +56,12 @@ class EventMatcher:
                 errors.append(f"{signal.event_signal_id}: {exc}")
 
         if resolutions:
-            status = "partial" if errors else "succeeded"
+            quality_flags.extend(
+                flag
+                for resolution in resolutions
+                for flag in resolution.match_features_json.semantic_quality_flags
+            )
+            status = "partial" if errors or quality_flags else "succeeded"
         else:
             status = "failed"
 
@@ -72,7 +78,7 @@ class EventMatcher:
                 1 for item in resolutions if item.action == "candidate_review"
             ),
             rejected_event_count=sum(1 for item in resolutions if item.action == "reject"),
-            quality_flags=quality_flags,
+            quality_flags=dedupe(quality_flags),
             errors=errors,
         )
 
@@ -86,16 +92,53 @@ class EventMatcher:
     ) -> EventResolution:
         source_refs = source_refs_for_signal(signal, source_refs_by_signal_id or {})
         fingerprint = build_event_fingerprint(signal, source_refs=source_refs)
+        target = event_document(signal)
+        target.urls = [ref.url for ref in source_refs if ref.url]
+        target.canonical_ids = canonical_ids(target.urls)
+        target.canonical_ids += [key for ref in source_refs for key in ref.canonical_ids]
+        exact = [
+            i
+            for i, candidate in enumerate(candidates)
+            if signal.event_signal_id in candidate.event_signal_ids
+            or set(signal.source_signal_ids) & set(candidate.source_signal_ids)
+            or hard_platform_id_match(source_refs, candidate.platform_ids)
+            or hard_url_match(source_refs, candidate.source_urls)
+            or set(target.canonical_ids)
+            & set(candidate.canonical_ids + canonical_ids(candidate.source_urls))
+        ]
+        # Established identity bypasses neural inference, but still checks contradictions.
+        selected, retrieval = retrieve(
+            target,
+            [event_document(candidate) for candidate in candidates],
+            limit=config.retrieval_limit,
+            use_embedding=config.use_embedding and not exact,
+        )
+        # Source IDs remain an exact route even when titles share no lexical tokens.
+        selected = exact or selected
+        candidates = [candidates[i] for i in selected]
+        comparisons = compare_many(
+            target,
+            [event_document(candidate) for candidate in candidates],
+            use_embedding=config.use_embedding and not exact,
+            use_reranker=config.use_reranker and not exact,
+            time_window_hours=config.time_window_same_event_hours,
+        )
+        for comparison in comparisons:
+            comparison.quality_flags = dedupe(comparison.quality_flags + retrieval["quality_flags"])
         ranked = [
             self.rerank_candidate(
                 signal=signal,
                 candidate=candidate,
                 config=config,
                 source_refs=source_refs,
+                comparison=comparison,
+                bm25_raw_score=retrieval["bm25_scores"][index],
             )
-            for candidate in candidates
+            for index, candidate, comparison in zip(selected, candidates, comparisons, strict=True)
         ]
-        ranked.sort(key=lambda item: item.confidence, reverse=True)
+        ranked.sort(
+            key=lambda item: (item.confidence, item.features.rerank_score or 0.0), reverse=True
+        )
 
         if ranked:
             best = ranked[0]
@@ -126,7 +169,7 @@ class EventMatcher:
             confidence=0.75 if not signal.is_weak_signal else 0.55,
             reason="no acceptable existing event candidate; create stable event_id",
             matched_by=[],
-            match_features_json=MatchFeatures(),
+            match_features_json=MatchFeatures(semantic_quality_flags=retrieval["quality_flags"]),
             review_required=signal.is_weak_signal,
         )
 
@@ -137,12 +180,16 @@ class EventMatcher:
         candidate: RetrievedEventMatchCandidate,
         config: EventMatchConfig,
         source_refs: list[SourceSignalMatchRef] | None = None,
+        comparison: Comparison | None = None,
+        bm25_raw_score: float | None = None,
     ) -> RerankEventMatchResult:
         features = build_match_features(
             signal=signal,
             candidate=candidate,
             config=config,
             source_refs=source_refs or [],
+            comparison=comparison,
+            bm25_raw_score=bm25_raw_score,
         )
         confidence = score_match_confidence(features, signal=signal, config=config)
         reason = build_match_reason(features)
@@ -161,12 +208,18 @@ class EventMatcher:
         config: EventMatchConfig,
     ) -> tuple[str, str, bool]:
         features = result.features
+        if "cluster_conflict" in features.guardrail_flags:
+            return "candidate_review", "representative event records conflict", True
         if "entity_conflict" in features.guardrail_flags:
             return "reject", "entity conflict blocks merge", False
         if "time_conflict" in features.guardrail_flags:
             return "reject", "time window conflict blocks merge", False
+        if any(flag.endswith("_conflict") for flag in features.guardrail_flags):
+            return "reject", "explicit event facts conflict", False
         if features.id_match or features.url_match:
             return "merge", "hard ID or URL match reuses existing event_id", False
+        if features.title_containment and signal.is_weak_signal:
+            return "candidate_review", "weak title match needs event-specific evidence", True
         if result.confidence >= config.auto_merge_confidence_threshold:
             if signal.is_weak_signal and not _has_entity_or_time_support(features):
                 return "candidate_review", "weak signal requires human review", True
@@ -182,38 +235,57 @@ def build_match_features(
     candidate: RetrievedEventMatchCandidate,
     config: EventMatchConfig,
     source_refs: list[SourceSignalMatchRef] | None = None,
+    comparison: Comparison | None = None,
+    bm25_raw_score: float | None = None,
 ) -> MatchFeatures:
-    signal_title = normalize_text(signal.title)
-    candidate_title = normalize_text(candidate.title)
     keyword_overlap = overlap_ratio(signal.keywords, candidate.keywords)
     entity_overlap = overlap_ratio(signal.entities, candidate.entities)
     action_overlap = overlap_ratio(signal.action_terms, candidate.action_terms)
     ngram_overlap = char_ngram_overlap(signal.event_text_for_match, candidate_match_text(candidate))
-    bm25_score = bm25_like_score(signal.event_text_for_match, candidate_match_text(candidate))
-    embedding_similarity = None
-    if config.use_embedding:
-        embedding_similarity = cosine_text_similarity(
-            signal.semantic_fingerprint.event_text_for_embedding or signal.event_text_for_match,
-            candidate.event_text_for_embedding or candidate_match_text(candidate),
-        )
-    time_distance = time_distance_hours(signal.event_time_hint, candidate_time(candidate))
+    target = event_document(signal)
+    comparison = (
+        comparison
+        or compare_many(
+            target,
+            [event_document(candidate)],
+            use_embedding=config.use_embedding,
+            use_reranker=config.use_reranker,
+            time_window_hours=config.time_window_same_event_hours,
+        )[0]
+    )
+    raw_score = (
+        bm25_raw_score
+        if bm25_raw_score is not None
+        else bm25_scores(target.text, [event_document(candidate).text])[0]
+    )
+    bm25_score = raw_score / (raw_score + 1) if config.use_bm25_ngram else 0.0
+    embedding_similarity = comparison.embedding_similarity
+    # Observation time is not the time at which an event happened.
+    time_distance = time_distance_hours(signal.event_time_hint, candidate.event_time_hint)
+    ref_ids = canonical_ids([ref.url for ref in source_refs or [] if ref.url])
+    ref_ids += [key for ref in source_refs or [] for key in ref.canonical_ids]
+    canonical_match = bool(
+        set(ref_ids) & set(candidate.canonical_ids + canonical_ids(candidate.source_urls))
+    )
     id_match = bool(
         signal.event_signal_id in candidate.event_signal_ids
         or set(signal.source_signal_ids).intersection(candidate.source_signal_ids)
         or hard_platform_id_match(source_refs or [], candidate.platform_ids)
+        or canonical_match
     )
     url_match = hard_url_match(source_refs or [], candidate.source_urls)
     id_match = bool(id_match)
     url_match = bool(url_match)
-    title_containment = bool(
-        signal_title
-        and candidate_title
-        and (signal_title in candidate_title or candidate_title in signal_title)
+    title_containment = comparison.title_containment or bool(
+        normalize_text(signal.title)
+        and normalize_text(signal.title) == normalize_text(candidate.title)
     )
 
     matched_by: list[MatchMethod] = []
     if id_match:
         matched_by.append("id_match")
+    if canonical_match:
+        matched_by.append("canonical_id")
     if url_match:
         matched_by.append("url_match")
     if title_containment:
@@ -229,12 +301,25 @@ def build_match_features(
         and embedding_similarity >= config.embedding_candidate_min_similarity
     ):
         matched_by.append("embedding_rerank")
+    if comparison.rerank_score is not None:
+        matched_by.append("cross_encoder")
 
-    flags: list[str] = []
+    flags: list[str] = list(comparison.conflicts)
     if signal.entities and candidate.entities and entity_overlap == 0:
         flags.append("entity_conflict")
     if time_distance is not None and time_distance > config.time_window_same_event_hours:
         flags.append("time_conflict")
+    if "explicit_date_conflict" in flags:
+        flags.append("time_conflict")
+    if candidate.representative_documents and not (id_match or url_match):
+        representatives = [
+            MatchDocument.model_validate(doc) for doc in candidate.representative_documents
+        ]
+        checks = compare_many(
+            target, representatives, time_window_hours=config.time_window_same_event_hours
+        )
+        if any(check.conflicts for check in checks):
+            flags.append("cluster_conflict")
     if (
         embedding_similarity is not None
         and embedding_similarity >= config.embedding_auto_merge_min_similarity
@@ -244,15 +329,20 @@ def build_match_features(
     if (
         embedding_similarity is not None
         and embedding_similarity >= config.embedding_auto_merge_min_similarity
+        and not (id_match or url_match)
         and not _has_any_hard_constraint(entity_overlap, action_overlap, time_distance, config)
     ):
         flags.append("embedding_only_without_hard_constraint")
 
-    hard_constraints_passed = _has_any_hard_constraint(
-        entity_overlap,
-        action_overlap,
-        time_distance,
-        config,
+    hard_constraints_passed = (
+        id_match
+        or url_match
+        or _has_any_hard_constraint(
+            entity_overlap,
+            action_overlap,
+            time_distance,
+            config,
+        )
     )
 
     return MatchFeatures(
@@ -262,7 +352,11 @@ def build_match_features(
         keyword_overlap=keyword_overlap,
         ngram_overlap=ngram_overlap,
         bm25_score=bm25_score,
+        bm25_raw_score=raw_score,
         embedding_similarity=embedding_similarity,
+        rerank_score=comparison.rerank_score,
+        semantic_quality_flags=comparison.quality_flags,
+        missing_features=comparison.missing,
         entity_overlap=entity_overlap,
         action_overlap=action_overlap,
         time_distance_hours=time_distance,
@@ -278,10 +372,10 @@ def score_match_confidence(
     signal: EventSignal,
     config: EventMatchConfig,
 ) -> float:
+    if any(flag.endswith("_conflict") for flag in features.guardrail_flags):
+        return 0.0
     if features.id_match or features.url_match:
         return 0.98
-    if "entity_conflict" in features.guardrail_flags or "time_conflict" in features.guardrail_flags:
-        return 0.0
     score = 0.0
     if features.title_containment:
         score += 0.35
@@ -295,6 +389,20 @@ def score_match_confidence(
         score += 0.10
     if features.embedding_similarity is not None:
         score += 0.15 * features.embedding_similarity
+    if features.rerank_score is not None:
+        # Cross-encoder relevance still needs event-specific lexical/entity agreement.
+        anchored = (
+            features.entity_overlap > 0
+            and features.action_overlap > 0
+            or features.title_containment
+        )
+        if anchored and features.rerank_score >= config.rerank_auto_merge_min_score:
+            score = max(score, features.rerank_score)
+        elif features.rerank_score >= config.rerank_auto_merge_min_score:
+            # Relevance without specific event anchors is a review candidate, not proof.
+            score = max(score, config.candidate_review_confidence_threshold)
+        elif features.rerank_score < 0.20 and not features.title_containment:
+            score = min(score, config.candidate_review_confidence_threshold - 0.01)
     if signal.is_weak_signal:
         score -= 0.10
     if "embedding_only_without_hard_constraint" in features.guardrail_flags:
@@ -412,33 +520,19 @@ def char_ngrams(value: str, *, min_n: int, max_n: int) -> set[str]:
 
 
 def bm25_like_score(query: str, document: str) -> float:
-    query_tokens = tokenize(query)
-    doc_tokens = tokenize(document)
-    if not query_tokens or not doc_tokens:
-        return 0.0
-    doc_counts = {token: doc_tokens.count(token) for token in set(doc_tokens)}
-    score = 0.0
-    for token in set(query_tokens):
-        tf = doc_counts.get(token, 0)
-        if tf:
-            score += (tf * 2.2) / (tf + 1.2)
-    return clip(score / max(1.0, len(set(query_tokens))))
+    """Compatibility helper; retrieval uses the full candidate corpus instead."""
+    score = bm25_scores(query, [document])[0]
+    return score / (score + 1)
 
 
 def cosine_text_similarity(left: str, right: str) -> float:
-    left_tokens = tokenize(left)
-    right_tokens = tokenize(right)
-    if not left_tokens or not right_tokens:
-        return 0.0
-    vocab = sorted(set(left_tokens) | set(right_tokens))
-    left_vec = [left_tokens.count(token) for token in vocab]
-    right_vec = [right_tokens.count(token) for token in vocab]
-    dot = sum(left * right for left, right in zip(left_vec, right_vec, strict=True))
-    left_norm = math.sqrt(sum(value * value for value in left_vec))
-    right_norm = math.sqrt(sum(value * value for value in right_vec))
-    if not left_norm or not right_norm:
-        return 0.0
-    return clip(dot / (left_norm * right_norm))
+    """Real neural similarity; unavailable weights are never replaced with word counts."""
+    result = compare_many(
+        MatchDocument(title=left), [MatchDocument(title=right)], use_embedding=True
+    )[0]
+    if result.embedding_similarity is None:
+        raise RuntimeError(";".join(result.quality_flags))
+    return result.embedding_similarity
 
 
 def time_distance_hours(left: datetime | str | None, right: datetime | str | None) -> float | None:

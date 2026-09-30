@@ -14,6 +14,8 @@ from app.schemas import (
     OfficialSupportDetail,
     OfficialSupportResult,
 )
+from app.services.match_documents import event_document, item_document
+from app.services.matching_engine import Comparison, compare_many, retrieve
 
 OFFICIAL_SIGNAL_ROLES = {"evidence_signal", "event_signal", "mixed_signal"}
 OFFICIAL_SOURCE_STATUSES = {"use", "fallback"}
@@ -139,12 +141,58 @@ def match_official_support(
             return citation_result
         return _not_checked_result(event_data, "official_pool_empty")
 
+    target = event_document(event)
+    documents = [item_document(item) for item in evidence_items]
+    if len(documents) > config.recall_limit:
+        indices, retrieval = retrieve(
+            target, documents, limit=config.recall_limit, use_embedding=config.use_embedding
+        )
+    else:
+        indices = list(range(len(documents)))
+        retrieval = {"quality_flags": []}
+    comparisons = compare_many(
+        target,
+        [documents[i] for i in indices],
+        use_embedding=config.use_embedding,
+        use_reranker=config.use_reranker,
+        time_window_hours=config.time_window_days * 24,
+    )
+    degraded = sorted(
+        set(
+            retrieval["quality_flags"]
+            + [flag for comp in comparisons for flag in comp.quality_flags]
+        )
+    )
+    audits = [
+        {
+            "item_id": evidence_items[i].item_id,
+            "url": evidence_items[i].url,
+            "embedding_similarity": comp.embedding_similarity,
+            "rerank_score": comp.rerank_score,
+            "ngram_overlap": comp.ngram_overlap,
+            "title_containment": comp.title_containment,
+            "entity_overlap": comp.entity_overlap,
+            "action_overlap": comp.action_overlap,
+            "conflicts": comp.conflicts,
+            "missing_features": comp.missing,
+            "quality_flags": comp.quality_flags,
+        }
+        for i, comp in zip(indices, comparisons, strict=True)
+    ]
     candidates = [
         candidate
-        for item in evidence_items[: config.recall_limit]
-        if (candidate := _match_candidate(event_data, item, config)) is not None
+        for index, comparison in zip(indices, comparisons, strict=True)
+        if (candidate := _match_candidate(event_data, evidence_items[index], config, comparison))
+        is not None
     ]
-    candidates.sort(key=lambda candidate: candidate.score, reverse=True)
+    candidates.sort(
+        key=lambda candidate: (
+            candidate.status == "supported",
+            candidate.features.get("rerank_score") or 0.0,
+            candidate.score,
+        ),
+        reverse=True,
+    )
 
     if not candidates:
         return OfficialSupportResult(
@@ -154,16 +202,19 @@ def match_official_support(
                 official_source_count=len(evidence_items),
                 authority_sources=sorted({item.source_name for item in evidence_items}),
                 match_quality="none",
-                quality_flags=["official_support_not_found"],
+                quality_flags=["official_support_not_found", *degraded],
+                candidate_comparisons=audits,
             ),
-            quality_flags=["official_support_not_found"],
+            quality_flags=["official_support_not_found", *degraded],
         )
 
     selected = candidates[: config.recall_limit]
     supported = any(candidate.status == "supported" for candidate in selected)
     status = "supported" if supported else "weak_supported"
     freshness_bucket = _best_freshness_bucket(candidate.features for candidate in selected)
-    quality_flags = sorted({flag for candidate in selected for flag in candidate.quality_flags})
+    quality_flags = sorted(
+        {*degraded, *[flag for candidate in selected for flag in candidate.quality_flags]}
+    )
     if status == "weak_supported" and "official_support_weak" not in quality_flags:
         quality_flags.append("official_support_weak")
 
@@ -182,6 +233,7 @@ def match_official_support(
                 if candidate.item.item_id is not None
             ],
             quality_flags=quality_flags,
+            candidate_comparisons=audits,
         ),
         quality_flags=quality_flags,
     )
@@ -217,19 +269,26 @@ def _match_candidate(
     event: EventForOfficialSupport,
     item: OfficialEvidenceItem,
     config: OfficialSupportConfig,
+    comparison: Comparison | None = None,
 ) -> MatchCandidate | None:
     event_text = _normalize_text(event.match_text)
     item_text = _normalize_text(item.match_text)
     event_title = _normalize_text(event.title)
     item_title = _normalize_text(item.title or "")
     quality_flags = list(item.quality_flags)
+    if comparison:
+        quality_flags.extend(comparison.quality_flags)
+        if comparison.conflicts:
+            return None
 
     entity_overlap = _entity_overlap(event, item, item_text)
-    if entity_overlap == 0.0 and (event.entities or event.primary_entity):
+    if entity_overlap == 0.0 and event.entities and item.entities:
         return None
 
     action_overlap = _overlap_ratio(event.action_terms, item.action_terms, item_text)
-    title_containment = _title_containment(event_title, item_title)
+    title_containment = (
+        comparison.title_containment if comparison else _title_containment(event_title, item_title)
+    )
     keyword_overlap = _keyword_overlap(event.keywords, item_text, event_text, item_text)
     ngram_overlap = _ngram_overlap(event_text, item_text)
     time_distance_days = _time_distance_days(event, item)
@@ -253,17 +312,25 @@ def _match_candidate(
 
     strong_text_match = (
         title_containment
-        or keyword_overlap >= config.keyword_overlap_supported
+        or (keyword_overlap >= config.keyword_overlap_supported and len(event.keywords) >= 2)
         or ngram_overlap >= config.ngram_overlap_supported
-        or action_overlap >= 0.50
     )
-    weak_text_match = (
-        strong_text_match
-        or keyword_overlap >= config.keyword_overlap_weak
-        or ngram_overlap >= config.ngram_overlap_weak
-        or action_overlap > 0
+    if comparison and comparison.rerank_score is not None:
+        anchored = entity_overlap > 0 and action_overlap > 0
+        strong_text_match = strong_text_match or (
+            comparison.rerank_score >= config.rerank_supported_min_score and anchored
+        )
+        if comparison.rerank_score < 0.20 and not title_containment:
+            strong_text_match = False
+    # Weak support means proven relevance with incomplete provenance, not doubtful relevance.
+    specific_anchor = (
+        title_containment
+        or entity_overlap > 0
+        or bool(comparison and comparison.specific_anchors)
+        or keyword_overlap == 1.0
+        and len(event.keywords) >= 2
     )
-    if not weak_text_match:
+    if not strong_text_match or not specific_anchor:
         return None
 
     features = {
@@ -276,6 +343,9 @@ def _match_candidate(
         "within_time_window": within_time_window,
         "source_status": item.source_status,
         "has_url": has_url,
+        "embedding_similarity": comparison.embedding_similarity if comparison else None,
+        "rerank_score": comparison.rerank_score if comparison else None,
+        "missing_features": comparison.missing if comparison else [],
     }
     strong_source = item.source_status == "use"
     complete_fields = has_url and item.title and item.published_at is not None
@@ -301,27 +371,26 @@ def _match_candidate(
 
 def _event_data(event: Any) -> EventForOfficialSupport:
     detail = _dict_value(event, "event_detail_json", "event_detail", default={}) or {}
-    source_citations = _dict_value(event, "source_citations_json", "source_citations", default=[])
+    source_citations = (
+        _dict_value(event, "source_citations_json", "source_citations", default=[]) or []
+    )
     primary_entity = _string_value(event, "primary_entity")
-    entities = _list_value(detail, "entities", "entity_terms")
-    if primary_entity:
-        entities.insert(0, primary_entity)
+    document = event_document(event)
+    entities = document.entities
     return EventForOfficialSupport(
         event_id=_string_value(event, "event_id") or _string_value(event, "id"),
         title=_string_value(event, "title") or "",
         summary=_string_value(event, "summary"),
         primary_entity=primary_entity,
         entities=_dedupe([entity for entity in entities if entity]),
-        action_terms=_dedupe(_list_value(detail, "action_terms", "actions")),
+        action_terms=document.action_terms,
         keywords=_dedupe(
             _list_value(event, "keywords_json", "keywords")
             + _list_value(detail, "keywords", "topic_terms")
         ),
         first_seen_at=_datetime_value(event, "first_seen_at"),
         last_seen_at=_datetime_value(event, "last_seen_at"),
-        source_citations=[
-            citation for citation in source_citations if isinstance(citation, dict)
-        ],
+        source_citations=[citation for citation in source_citations if isinstance(citation, dict)],
         event_detail=detail if isinstance(detail, dict) else {},
     )
 
@@ -449,7 +518,7 @@ def _entity_overlap(
 ) -> float:
     event_entities = _dedupe(event.entities)
     if not event_entities:
-        return 1.0
+        return 0.0
     matched = [entity for entity in event_entities if _normalize_text(entity) in item_text]
     if item.entities:
         item_entities = {_normalize_text(entity) for entity in item.entities}
@@ -460,8 +529,6 @@ def _entity_overlap(
 
 
 def _overlap_ratio(terms: list[str], candidate_terms: list[str], candidate_text: str) -> float:
-    if not terms:
-        terms = [term for term in ACTION_TERMS if term in candidate_text]
     if not terms:
         return 0.0
     candidate_set = {_normalize_text(term) for term in candidate_terms}

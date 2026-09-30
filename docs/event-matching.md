@@ -12,9 +12,15 @@
 - MVP 阶段实体、动作和时间窗口是自动合并的硬约束；对象约束不进入第一版正式 `EventSignal`，留作后续扩展。
 - 中置信度结果进入异步人工复核队列，不阻断自动采集分析链路。
 
-## 当前基线
+## 当前实现（2026-09-30）
 
-当前已完成的采样脚本使用规则型相关性过滤：
+生产链路在 `match_and_resolve_events` 内执行共享 `MatchDocument` 适配、规范身份、BM25／dense 独立召回与 RRF、真实 BGE cross-encoder 及约束判定。官媒 query 后的候选比较复用同一服务，但使用独立的“能否作为报道依据”策略。模型分数不代表同一事件概率。
+
+安装、运行开关、源码位置与能力边界见 [匹配更新说明](matching-upgrade.md)，结果见 [同集对照评估](../reports/evaluation-v0.2.md)。下文保留早期设计背景；其细粒度能力名称不都对应当前独立注册的 Tool，实际编排以 [三模块链路](hotspot-analysis-workflow.md) 为准。
+
+## 早期采样基线
+
+早期采样脚本使用规则型相关性过滤：
 
 ```text
 same_question_id
