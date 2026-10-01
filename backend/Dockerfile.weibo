@@ -8,7 +8,7 @@ RUN apt-get update \
 
 RUN npm install -g @weibo-ai/weibo-cli@0.9.1
 
-COPY backend/pyproject.toml backend/README.md ./
+COPY backend/pyproject.toml ./
 COPY backend/app ./app
 COPY backend/scripts ./scripts
 
