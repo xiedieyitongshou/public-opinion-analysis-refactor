@@ -1,4 +1,5 @@
 import json
+from datetime import UTC, datetime
 
 import httpx
 
@@ -68,7 +69,8 @@ def test_weibo_heat_collector_enriches_selected_topics_with_cli() -> None:
     first_item = result.normalized_items[0]
     second_item = result.normalized_items[1]
     assert first_item["normalized"]["weibo_signal_status"] == "rsshub_plus_cli"
-    assert first_item["raw_metrics"]["weibo_search_total_number_proxy"] == 88
+    assert first_item["raw_metrics"]["weibo_search_total_number_proxy"] is None
+    assert first_item["normalized"]["cli_query_total_number_proxy"] == 88
     assert first_item["raw_metrics"]["matched_status_count"] == 1
     assert first_item["raw_metrics"]["top_status_like_count"] == 12
     assert second_item["normalized"]["weibo_signal_status"] == "rsshub_only"
@@ -194,7 +196,7 @@ def _successful_cli_runner(command: list[str], timeout_seconds: float) -> CLIPro
                         "id": 123,
                         "mid": "456",
                         "text": "话题一 相关微博",
-                        "created_at": "Wed Sep 09 10:00:00 +0800 2026",
+                        "created_at": datetime.now(UTC).strftime("%a %b %d %H:%M:%S +0000 %Y"),
                         "comments_count": 7,
                         "reposts_count": 3,
                         "attitudes_count": 12,

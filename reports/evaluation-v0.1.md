@@ -80,7 +80,22 @@
 ## 本轮问题定位
 
 - **官媒误匹配优先处理（本轮发现，后续已改善）。** 养老金事件与安哥拉讲座的关键词和 n-gram 重叠均为 0，实际却得到 action_overlap=1 和 supported。[持久化接口](../backend/app/services/analysis_interfaces.py)把实体和行动放在 `event_detail_json.match_features`，[官媒匹配器](../backend/app/services/official_support.py)当时读取顶层；行动词为空时又从候选报道自身提取并与自身比较，造成假阳性。九步链路复现了 E → D 的错误升级。后续修复及对照结果见[评估报告 v0.2](evaluation-v0.2.md#同集对照与真实模型执行)和[字段／判定规则改动说明](../docs/matching-upgrade.md#官媒误匹配的字段与判定规则改动)。
-- **同问题搜索增强未归并。** 搜索相关性层已经识别 same_zhihu_question_id，事件合并层未复用这个父问题身份；问题 URL 与答案 URL 不相等，当前 platform_id 又包含不同 source_id。两条实际摘录在模块中均判 create，完整链路也产生了 2 个事件。先补齐身份传递，再讨论降低语义合并阈值。
+- **同问题搜索增强未归并（原始故障已修正，2026-10-03 补强业务约束）。** v0.1 评估时，搜索相关性层已经识别 `same_zhihu_question_id`，事件合并层却未复用父问题身份；问题 URL 与答案 URL 不相等，`platform_id` 又包含不同 `source_id`。两条实际摘录在模块中均判 `create`，完整链路产生了 2 个事件。后续已通过[知乎问题 ID 的统一身份匹配](../backend/app/services/match_documents.py)修正这一窄问题；本次在此基础上补齐以下两处约束。
+
+  **改动范围：** 属于现有链路的局部业务规则调整，涉及 5 个业务代码文件、4 个测试文件及工作流文档，复用已有采集器、相关性过滤、事件匹配和人工复核机制。改动直接影响热度计算输入与事件是否自动创建，不只是 trace 展示字段调整。
+
+  **微博 CLI 先过滤、再汇总：** [微博热度采集归一化](../backend/app/services/weibo_heat_client.py)逐条记录帖子与 RSSHub 父话题的 `SearchEnrichmentRelation`，剔除低相关结果、可判定为超过 72 小时的历史帖和明确事实冲突。只有通过的样本参与数量、最高互动量和最新可解析时间的汇总；所有样本及判定仍可审计。查询级 `total_number` 包含未返回、未核验的命中，因此只保留在审计字段，不再参与热度评分。同时修正[相关性过滤器](../backend/app/services/search_enrichment_filter.py)，不再把搜索 query 本身当作结果正文来证明相关。效果是：无关的高互动帖子不会抬高父话题指标，搜索命中总数也不会被当成已确认的相关帖子数。
+
+  **父话题约束进入自动事件归并：** [热点分析 Plan](../backend/app/agents/analysis.py)启用 `discovery_mode=automatic`，[归并接口](../backend/app/services/analysis_interfaces.py)先处理热榜种子，再处理搜索增强。知乎回答须找到本轮已成功归并的同平台热榜父话题，支持以问题 ID 识别 URL 变体，并通过既有事件匹配及冲突检查才能进入父事件。父话题缺失、归属不确定或冲突时，条目进入复核，不再因匹配失败而自动另建热点。微博 CLI 样本继续嵌在 RSSHub 话题中，不单独建立事件信号。用户指定事件的 `targeted` 模式保留原有处理方式；分类仍按具体事件接纳的平台证据计算，同平台“热榜＋搜索”不会被算作跨平台。
+
+  **效果与验证（2026-10-03）：** 后端 243 个测试通过，Ruff 检查通过；新增回归覆盖无关高互动帖、旧帖、动作冲突、query 泄漏、缺少父种子时不建热点，以及有效回答归入父事件而冲突回答待复核。[微博用例](../backend/tests/test_weibo_heat_client.py)、[过滤用例](../backend/tests/test_day23_signals.py)和[完整链路用例](../backend/tests/test_hotspot_analysis.py)保留这些检查。扩充集中的 `match-answer-0`、`match-answer-1`、`workflow-search-same-question` 均通过，同题完整链路符合只生成 1 个事件的预期。规则配置共 190/208 条通过，18 条失败的用例名单与[已有规则基线](evaluation-v0.2-rules.json)一致，无新增失败；这次边界补强不能被计作上述同题案例的首次修复，也不代表整套评估全部通过。上方 v0.1 的 134 条历史结果保持不变。
+
+  **剩余问题与边界：** 相关性仍依赖标题、hashtag、关键词及有限的事实冲突规则，不能保证识别所有同名事件或蹭话题内容。CLI 时间缺失或无法解析时只记录质量标记，不会仅因此拒绝样本，72 小时规则无法覆盖这些情况，仍需真实样本验证误接纳与漏接纳。
+
+  自动归并当前要求本轮已有同平台父种子；仅有历史父话题、跨平台父候选或父种子尚待复核时，增强结果会转复核，可能增加人工处理量。本次没有增加自动生成知乎搜索候选或跨平台搜索编排，知乎搜索仍需调用方通过现有候选/query 参数触发。
+
+  历史已拆分的事件、旧 CLI 指标及采集缓存未批量回填；重放旧采集响应不会重新执行 CLI 逐条过滤，需要另行重采集或处理历史数据。本次验证为离线测试与评估，没有新增真实 API/CLI 采样；真实噪声比例、持续运行效果以及其余 18 个既有评估失败仍未在本次解决。执行细节见[当前热点分析工作流](../docs/hotspot-analysis-workflow.md)。
+
 - **榜单完整性标记丢失。** [知乎采集器](../backend/app/collectors/zhihu.py)把已知 total 推导出的 list_complete 写入 normalize_config，返回时调用 `_result(effective_config, ...)`；因此已知短榜和已知空榜仍返回 false。这会影响后续‘明确离榜’与‘未知’的区分。
 - **未知搜索质量被当作置信度支持。** [分类规则](../backend/app/services/event_classification.py)使用 `search_hit_quality != 'none'`，默认 unknown 也满足此条件；CLI 失败且没有有效搜索证据的输入得到 medium，验收预期为 low。
 - **时效策略待确定。** 2025 年发布的真实官媒条目仍生成当日 F 类事件。当前时间窗口主要使用 fetched_at，缺少发布时间入池策略；该条属于拟定产品要求与当前实现的差异，应在修复前确认允许的历史证据用途。

@@ -72,6 +72,21 @@ HTTP 应用入口仍为 `backend/app/main.py`；一轮分析的命令行入口�
 `collection.per_source_params` 提供候选或 query；未提供目标时按原规则跳过。
 本次没有增加自动生成知乎搜索候选的额外采集轮次。
 
+自动热点分析的归并步骤以 `discovery_mode=automatic` 运行。热榜信号先于搜索增强
+信号解析；通过初筛的知乎回答仍须找到本轮同平台、同来源的热榜父话题，并通过
+事件匹配及冲突 guardrail，才能关联父事件。父话题不存在、事件不匹配或需复核时，
+回答保留为未关联 Item 并生成复核任务，不会自动创建新热点。独立调用归并工具的
+`targeted` 模式保留用户指定事件的原有处理方式。
+
+微博 CLI 仍嵌在 RSSHub 热搜条目内，不另建事件信号。每条返回帖子记录与 RSSHub
+父话题的 `SearchEnrichmentRelation`；只有相关、没有明确事实冲突且未判定为超过
+72 小时的历史内容的帖子参与 `matched_status_count` 与最高互动量计算；最新帖子
+时间仅取可解析的时间戳。查询级 `total_number_proxy` 涵盖未返回的命中，无法逐条
+核验，因此仅保留在审计字段
+`normalized.cli_query_total_number_proxy`，不用于热度评分；逐条判定及通过数量
+保存在 `raw_payload.cli_enrichment.samples[].relation` 与
+`normalized.cli_relevance_counts`。
+
 ## 失败、复核和结果
 
 - Runner 区分业务 `failed/partial/skipped`；占位工具返回 `not_implemented` 时任务为 `blocked`。

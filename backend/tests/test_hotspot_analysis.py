@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session
 import app.collectors.base as collector_base
 import app.tools.default_tools as tool_module
 from app.agents.analysis import HotspotAnalysisAgent
-from app.collectors import CollectorRegistry, ZhihuHotListCollector
+from app.collectors import CollectorRegistry, ZhihuHotListCollector, ZhihuSearchCollector
 from app.collectors.official import OfficialRSSCollector, OfficialRSSSourceConfig
 from app.db.init_db import init_db
 from app.models import AgentTask, AgentToolCall, Event, EventSnapshot, HumanReviewTask, Item
@@ -20,7 +20,7 @@ from app.schemas.collectors import FetchSourceItemsInput
 from app.schemas.human_review import HumanReviewDecisionInput
 from app.schemas.platform_trend import PlatformTrendConfig
 from app.services.human_review import decide_human_review_task
-from app.services.zhihu_client import ZhihuHotListResult
+from app.services.zhihu_client import ZhihuHotListResult, ZhihuSearchItem, ZhihuSearchResult
 
 TITLE = "某品牌公司发布召回通知引发消费者关注"
 OTHER_TITLE = "某大学发布招生通知引发学生关注"
@@ -33,13 +33,19 @@ class LocalZhihuClient:
         self.titles = [OTHER_TITLE, TITLE]
         self.failed = False
         self.calls = 0
+        self.search_items = []
+        self.urls = {}
 
     def fetch_hot_list(self, limit):
         self.calls += 1
         if self.failed:
             raise RuntimeError("offline source outage")
         items = [
-            {"Title": title, "Url": f"https://www.zhihu.com/question/{title}", "Summary": title}
+            {
+                "Title": title,
+                "Url": self.urls.get(title, f"https://www.zhihu.com/question/{title}"),
+                "Summary": title,
+            }
             for title in self.titles[:limit]
         ]
         return ZhihuHotListResult(
@@ -47,6 +53,14 @@ class LocalZhihuClient:
             fetched_at=self.time,
             items=items,
             raw_payload={"Items": items},
+        )
+
+    def search(self, query, count=5):
+        return ZhihuSearchResult(
+            query=query,
+            fetched_at=self.time,
+            items=[ZhihuSearchItem.model_validate(item) for item in self.search_items[:count]],
+            raw_payload={"Items": self.search_items[:count]},
         )
 
 
@@ -172,6 +186,79 @@ def test_pending_review_keeps_item_unassociated_and_is_idempotent(environment):
     )
     assert decision.status == "succeeded"
     assert item.event_id == db.scalar(select(Event)).id
+
+
+def test_automatic_search_enrichment_without_hotlist_parent_never_creates_event(environment):
+    db, client, collectors = environment
+    collectors.register(ZhihuSearchCollector(client=client))
+    client.search_items = [{
+        "Title": TITLE,
+        "ContentID": "answer-1",
+        "ContentText": TITLE,
+        "Url": "https://www.zhihu.com/question/999/answer/1",
+    }]
+    result = HotspotAnalysisAgent().run(
+        db,
+        request(
+            "search-without-seed",
+            START,
+            sources=["zhihu_search"],
+            params={"zhihu_search": {"candidates": [{
+                "title": TITLE, "url": f"https://www.zhihu.com/question/{TITLE}"
+            }]}},
+        ),
+    )
+
+    assert result.status != "failed", result.model_dump()
+    assert count(db, Event) == 0
+    assert count(db, Item) == 1
+    assert db.scalar(select(Item)).event_id is None
+    assert count(db, HumanReviewTask) == 1
+
+
+def test_automatic_search_only_joins_its_resolved_hotlist_parent(environment):
+    db, client, collectors = environment
+    collectors.register(ZhihuSearchCollector(client=client))
+    client.titles = [TITLE]
+    client.urls[TITLE] = "https://www.zhihu.com/question/123?from=hot"
+    client.search_items = [
+        {
+            "Title": TITLE,
+            "ContentID": "answer-1",
+            "ContentText": TITLE,
+            "Url": "https://www.zhihu.com/question/123/answer/1",
+        },
+        {
+            "Title": "某品牌公司发布新品活动引发用户关注",
+            "ContentID": "answer-2",
+            "ContentText": TITLE,
+            "Url": "https://www.zhihu.com/question/888/answer/2",
+        },
+    ]
+    result = HotspotAnalysisAgent().run(
+        db,
+        request(
+            "search-with-seed",
+            START,
+            sources=["zhihu_search", "zhihu_hot_list"],
+            params={"zhihu_search": {"candidates": [{
+                "title": TITLE, "url": "https://www.zhihu.com/question/123/"
+            }]}},
+        ),
+    )
+
+    assert result.status != "failed", result.model_dump()
+    assert count(db, Event) == 1
+    event = db.scalar(select(Event))
+    assert len(event.items) == 2
+    assert {item.title for item in event.items} == {TITLE}
+    assert count(db, Item) == 3
+    conflicting = db.scalar(
+        select(Item).where(Item.title == "某品牌公司发布新品活动引发用户关注")
+    )
+    assert conflicting.event_id is None
+    assert count(db, HumanReviewTask) == 1
+    assert result.classifications[0].classification.priority_category == "E_single_platform_only"
 
 
 @pytest.mark.parametrize("with_community", [False, True])

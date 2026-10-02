@@ -147,6 +147,7 @@ class MatchAndResolveEventsInput(BaseModel):
     source_refs_by_signal_id: dict[str, SourceSignalMatchRef] = Field(default_factory=dict)
     match_config: EventMatchConfig = Field(default_factory=EventMatchConfig)
     persist: bool = False
+    discovery_mode: Literal["automatic", "targeted"] = "targeted"
     window_end: datetime | None = None
     source_signals: list[SourceSignal] = Field(default_factory=list)
     normalized_items: list[NormalizedItem] = Field(default_factory=list)

@@ -79,6 +79,7 @@ def build_hotspot_analysis_plan(data: HotspotAnalysisInput) -> Plan:
         {
             "run_id": data.run_id,
             "persist": True,
+            "discovery_mode": "automatic",
             "match_config": event_config(
                 data.matching_profile or settings.matching_profile
             ).model_dump(mode="json"),

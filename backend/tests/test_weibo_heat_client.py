@@ -1,12 +1,17 @@
 import json
+from datetime import UTC, datetime
 
 import httpx
 
 from app.schemas import NormalizedItem
 from app.services.weibo_heat_client import (
     CLIProcessResult,
+    WeiboCLIEnrichment,
     WeiboHeatClient,
     WeiboHeatClientConfig,
+    WeiboRSSHubItem,
+    normalize_cli_status,
+    normalize_heat_topic,
     parse_rsshub_items,
 )
 
@@ -96,7 +101,7 @@ def test_fetch_heat_enriches_top_topics_with_weibo_cli() -> None:
                             "id": 123,
                             "mid": "456",
                             "text": "太子奶创始人李途纯去世 相关微博",
-                            "created_at": "Wed Sep 09 10:00:00 +0800 2026",
+                            "created_at": datetime.now(UTC).strftime("%a %b %d %H:%M:%S +0000 %Y"),
                             "comments_count": 7,
                             "reposts_count": 3,
                             "attitudes_count": 12,
@@ -121,10 +126,136 @@ def test_fetch_heat_enriches_top_topics_with_weibo_cli() -> None:
     result = client.fetch_heat(with_cli=True)
 
     assert result.items[0].normalized["weibo_signal_status"] == "rsshub_plus_cli"
-    assert result.items[0].raw_metrics["weibo_search_total_number_proxy"] == 88
+    assert result.items[0].raw_metrics["weibo_search_total_number_proxy"] is None
+    assert result.items[0].normalized["cli_query_total_number_proxy"] == 88
     assert result.items[0].raw_metrics["matched_status_count"] == 1
     assert result.items[0].raw_metrics["top_status_comment_count"] == 7
     assert result.items[1].normalized["weibo_signal_status"] == "rsshub_only"
+
+
+def test_cli_metrics_only_use_relevant_recent_statuses() -> None:
+    topic = parse_rsshub_items(RSS_XML, limit=3)[1]
+    statuses = [
+        normalize_cli_status({
+            "id": 1,
+            "text": "#太子奶创始人李途纯去世# 后续消息",
+            "url": "https://m.weibo.cn/status/1",
+            "created_at": "2026-09-09T10:00:00+00:00",
+            "comments_count": 7,
+            "attitudes_count": 12,
+        }),
+        normalize_cli_status({
+            "id": 2,
+            "text": "今日抽奖送手机",
+            "url": "https://m.weibo.cn/status/2",
+            "created_at": "2026-09-09T10:00:00+00:00",
+            "comments_count": 9999,
+            "attitudes_count": 9999,
+        }),
+        normalize_cli_status({
+            "id": 3,
+            "text": "太子奶创始人李途纯去世 旧帖",
+            "url": "https://m.weibo.cn/status/3",
+            "created_at": "2026-09-01T10:00:00+00:00",
+            "comments_count": 8888,
+            "attitudes_count": 8888,
+        }),
+    ]
+    enrichment = WeiboCLIEnrichment(
+        enabled=True,
+        available=True,
+        command=["weibo-cli"],
+        returncode=0,
+        stderr=None,
+        total_number_proxy=200,
+        samples=statuses,
+        quality_flags=[],
+    )
+
+    result = normalize_heat_topic(
+        topic, fetched_at="2026-09-09T11:00:00+00:00", cli_enrichment=enrichment
+    )
+
+    assert result.normalized["cli_relevance_counts"] == {
+        "returned_count": 3, "accepted_count": 1, "audit_count": 2
+    }
+    assert result.raw_metrics["matched_status_count"] == 1
+    assert result.raw_metrics["top_status_comment_count"] == 7
+    assert result.raw_metrics["top_status_like_count"] == 12
+    assert result.raw_metrics["weibo_search_total_number_proxy"] is None
+    assert result.normalized["cli_query_total_number_proxy"] == 200
+    assert [sample.relation.decision for sample in result.cli_enrichment.samples] == [
+        "accepted", "audit_only", "rejected"
+    ]
+    assert "weibo_cli_search_noise_detected" in result.quality_flags
+
+
+def test_cli_only_unrelated_results_do_not_add_heat_metrics() -> None:
+    topic = parse_rsshub_items(RSS_XML, limit=3)[1]
+    result = normalize_heat_topic(
+        topic,
+        fetched_at="2026-09-09T11:00:00+00:00",
+        cli_enrichment=WeiboCLIEnrichment(
+            enabled=True,
+            available=True,
+            command=["weibo-cli"],
+            returncode=0,
+            stderr=None,
+            total_number_proxy=500,
+            samples=[normalize_cli_status({
+                "id": 4,
+                "text": "今日抽奖送手机",
+                "url": "https://m.weibo.cn/status/4",
+                "created_at": "2026-09-09T10:00:00+00:00",
+                "comments_count": 9000,
+            })],
+            quality_flags=[],
+        ),
+    )
+
+    assert result.normalized["weibo_signal_status"] == "rsshub_only"
+    assert result.raw_metrics["matched_status_count"] == 0
+    assert result.raw_metrics["top_status_comment_count"] is None
+    assert result.raw_metrics["weibo_search_total_number_proxy"] is None
+
+
+def test_cli_explicit_action_conflict_is_not_counted() -> None:
+    topic = WeiboRSSHubItem(
+        rank=1,
+        title="甲大学取消周末课程",
+        url="https://m.weibo.cn/search?q=school",
+        description="甲大学取消周末课程",
+        published_at=None,
+        guid="school-topic",
+        hot_value=None,
+        quality_flags=[],
+    )
+    result = normalize_heat_topic(
+        topic,
+        fetched_at="2026-09-09T11:00:00+00:00",
+        cli_enrichment=WeiboCLIEnrichment(
+            enabled=True,
+            available=True,
+            command=["weibo-cli"],
+            returncode=0,
+            stderr=None,
+            total_number_proxy=100,
+            samples=[normalize_cli_status({
+                "id": 5,
+                "text": "甲大学增设周末课程",
+                "url": "https://m.weibo.cn/status/5",
+                "created_at": "2026-09-09T10:00:00+00:00",
+                "attitudes_count": 9999,
+            })],
+            quality_flags=[],
+        ),
+    )
+
+    relation = result.cli_enrichment.samples[0].relation
+    assert relation.decision == "rejected"
+    assert "action_conflict" in relation.rejected_by
+    assert result.raw_metrics["matched_status_count"] == 0
+    assert result.raw_metrics["top_status_like_count"] is None
 
 
 def test_fetch_heat_marks_cli_failure_without_dropping_rsshub_topic() -> None:

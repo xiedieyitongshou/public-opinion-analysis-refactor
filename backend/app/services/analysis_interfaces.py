@@ -19,6 +19,8 @@ from app.schemas.analysis import (
     PrepareSourceSignalsOutput,
 )
 from app.schemas.matching import (
+    EventMergeCandidateReview,
+    EventResolution,
     MatchAndResolveEventsInput,
     MatchAndResolveEventsOutput,
     RetrievedEventMatchCandidate,
@@ -207,13 +209,25 @@ def resolve_and_persist_events(
     matcher = EventMatcher()
     resolver = EventResolverAgent(matcher)
     touched: set[str] = set()
-    for signal in data.event_signals:
+    accepted_discovery_sources: set[str] = set()
+    # Resolve discovery seeds before their search results, regardless of source order.
+    ordered_signals = sorted(
+        data.event_signals,
+        key=lambda signal: all(
+            sources[key].signal_role == "search_enrichment_signal"
+            for key in signal.source_signal_ids
+        ),
+    )
+    for signal in ordered_signals:
         EventSignalTraceabilityCheck(
             event_signal=signal,
             source_signals=data.source_signals,
             normalized_items=data.normalized_items,
         )
         source_signals = [sources[key] for key in signal.source_signal_ids]
+        automatic_enrichment = data.discovery_mode == "automatic" and all(
+            source.signal_role == "search_enrichment_signal" for source in source_signals
+        )
         rows = [db.get(Item, int(source.item_id)) for source in source_signals]
         if any(row is None for row in rows):
             raise ValueError("Event source item is missing from the database")
@@ -230,6 +244,14 @@ def resolve_and_persist_events(
             )
         ).all()
         candidates = [_candidate(event) for event in candidate_rows]
+        parent_event_id = None
+        if automatic_enrichment:
+            parent_event_id = _resolved_discovery_parent(
+                db, source_signals, sources, accepted_discovery_sources
+            )
+            candidates = [
+                candidate for candidate in candidates if candidate.event_id == parent_event_id
+            ]
         refs = [data.source_refs_by_signal_id[key] for key in signal.source_signal_ids]
         resolved = resolver.resolve(
             data.model_copy(
@@ -245,7 +267,7 @@ def resolve_and_persist_events(
         result.quality_flags.extend(resolved.quality_flags)
         if resolved.event_resolutions:
             rejected = resolved.event_resolutions[0]
-            if rejected.action == "reject" and not (
+            if not automatic_enrichment and rejected.action == "reject" and not (
                 rejected.match_features_json.id_match or rejected.match_features_json.url_match
             ):
                 # A conflicting existing event rejects that association, not the new observation.
@@ -257,10 +279,27 @@ def resolve_and_persist_events(
                     tool_call_id=tool_call_id,
                 )
         result.errors.extend(resolved.errors)
-        result.event_resolutions.extend(resolved.event_resolutions)
         if not resolved.event_resolutions:
             continue
         resolution = resolved.event_resolutions[0]
+        if automatic_enrichment and (
+            parent_event_id is None
+            or resolution.action != "merge"
+            or resolution.review_required
+            or resolution.guardrail_status == "block"
+            or resolution.event_id != parent_event_id
+        ):
+            reason = (
+                "search enrichment has no resolved discovery parent"
+                if parent_event_id is None
+                else "search enrichment needs review before joining its parent event"
+            )
+            reason = f"{reason}: {resolution.reason}"
+            resolution = _review_unattached_enrichment(
+                resolution, signal, parent_event_id=parent_event_id, reason=reason
+            )
+            result.quality_flags.append("search_enrichment_not_auto_created")
+        result.event_resolutions.append(resolution)
         if (
             resolution.action not in {"create", "merge"}
             or resolution.review_required
@@ -341,6 +380,11 @@ def resolve_and_persist_events(
         event.source_citations_json = list(citations.values())
         touched.add(event.event_id)
         db.commit()
+        accepted_discovery_sources.update(
+            source.source_signal_id
+            for source in source_signals
+            if source.source_id in {"zhihu_hot_list", "weibo_rsshub_hot_search"}
+        )
     # Retain recent events to record explicit absence or failure in subsequent rounds.
     tracked = db.scalars(
         select(Event).where(
@@ -368,6 +412,79 @@ def resolve_and_persist_events(
     elif not data.event_signals:
         result.status = "skipped"
     return result
+
+
+def _resolved_discovery_parent(
+    db: Session,
+    enrichment_sources: list[SourceSignal],
+    sources: dict[str, SourceSignal],
+    accepted_discovery_sources: set[str],
+) -> str | None:
+    event_ids: set[str] = set()
+    for enrichment in enrichment_sources:
+        relation = enrichment.relation_to_parent
+        if relation is None or relation.decision != "accepted":
+            return None
+        expected_source_id = {
+            "zhihu_search": "zhihu_hot_list",
+            "weibo_cli": "weibo_rsshub_hot_search",
+        }.get(relation.source)
+        if expected_source_id is None:
+            return None
+        parent_key = enrichment.parent_candidate_id
+        parent_signal_id = enrichment.parent_signal_id
+        possible_parents = [
+            source for source in sources.values()
+            if source.source_id == expected_source_id
+            and source.platform == enrichment.platform
+            and source.source_signal_id in accepted_discovery_sources
+            and (
+                source.source_signal_id == parent_signal_id
+                or (parent_key is not None and parent_key in {source.url, source.title})
+                or (
+                    parent_key is not None
+                    and source.platform == "zhihu"
+                    and bool(set(canonical_ids([parent_key])) & set(canonical_ids([source.url])))
+                )
+            )
+        ]
+        parent_events = set()
+        for parent in possible_parents:
+            row = db.get(Item, int(parent.item_id)) if parent.item_id else None
+            if row is not None and row.event is not None and row.event.event_id:
+                parent_events.add(row.event.event_id)
+        if len(parent_events) != 1:
+            return None
+        event_ids.update(parent_events)
+    return next(iter(event_ids)) if len(event_ids) == 1 else None
+
+
+def _review_unattached_enrichment(
+    resolution: EventResolution,
+    signal,
+    *,
+    parent_event_id: str | None,
+    reason: str,
+) -> EventResolution:
+    review = EventMergeCandidateReview(
+        event_signal_id=signal.event_signal_id,
+        candidate_event_id=parent_event_id,
+        recommended_action=resolution.action,
+        confidence=resolution.confidence,
+        reason=reason,
+        matched_by=resolution.matched_by,
+        match_features_json=resolution.match_features_json,
+        guardrail_flags=resolution.match_features_json.guardrail_flags,
+        source_signal_ids=signal.source_signal_ids,
+    )
+    return resolution.model_copy(update={
+        "action": "candidate_review",
+        "event_id": parent_event_id or resolution.event_id,
+        "matched_candidate_event_id": parent_event_id,
+        "reason": reason,
+        "review_required": True,
+        "candidate_review": review,
+    })
 
 
 def classify_events(db: Session, data: ClassifyEventsInput) -> ClassifyEventsOutput:

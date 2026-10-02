@@ -49,7 +49,9 @@ def evaluate_search_enrichment(
     rejected_by: list[str] = []
     quality_flags = list(enrichment_item.quality_flags)
 
-    noisy_flags = sorted(set(quality_flags) & NOISE_FLAGS)
+    noisy_flags = sorted(
+        flag for flag in set(quality_flags) if flag in NOISE_FLAGS or flag.endswith("_conflict")
+    )
     if noisy_flags:
         return SearchEnrichmentRelation(
             source=source,
@@ -135,7 +137,6 @@ def _combined_text(item: NormalizedItem) -> str:
         item.summary,
         item.content,
         item.content_text,
-        str(item.normalized.get("query", "")),
     ]
     return " ".join(part for part in parts if part)
 

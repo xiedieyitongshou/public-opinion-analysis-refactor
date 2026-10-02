@@ -243,3 +243,31 @@ def test_low_relevance_search_result_is_audit_only() -> None:
     assert relation.decision == "audit_only"
     assert relation.audit_only is True
     assert "low_relevance_search_result" in relation.quality_flags
+
+
+def test_search_query_itself_does_not_prove_result_relevance() -> None:
+    parent = normalized_item(
+        source_id="weibo_rsshub_hot_search",
+        source_origin="rsshub",
+        signal_role="topic_discovery_signal",
+        platform="weibo",
+        title="太子奶创始人李途纯去世",
+        url="https://m.weibo.cn/search?q=topic",
+    )
+    enrichment = normalized_item(
+        source_id="weibo_cli_search_statuses_limited",
+        source_origin="weibo_cli",
+        signal_role="search_enrichment_signal",
+        source_type="community_search",
+        platform="weibo",
+        title="今日抽奖送手机",
+        url="https://m.weibo.cn/status/5",
+    )
+    enrichment["normalized"] = {"query": parent["title"]}
+
+    relation = evaluate_search_enrichment(
+        parent, enrichment, source="weibo_cli", parent_candidate_id="topic-1"
+    )
+
+    assert relation.decision == "audit_only"
+    assert not relation.matched_by

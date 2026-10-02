@@ -13,7 +13,7 @@ import subprocess
 import xml.etree.ElementTree as ET
 from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from email.utils import parsedate_to_datetime
 from typing import Any
 from urllib.parse import urljoin
@@ -22,6 +22,9 @@ import httpx
 from pydantic import BaseModel, ConfigDict
 
 from app.core.config import settings
+from app.schemas.signals import SearchEnrichmentRelation
+from app.services.event_constraints import title_conflicts
+from app.services.search_enrichment_filter import evaluate_search_enrichment
 
 USER_AGENT = "public-opinion-analysis-weibo-heat-minimal/0.1"
 INVALID_XML_CHARS = re.compile(
@@ -30,6 +33,7 @@ INVALID_XML_CHARS = re.compile(
 BARE_AMPERSAND = re.compile(r"&(?!amp;|lt;|gt;|quot;|apos;|#\d+;|#x[0-9a-fA-F]+;)")
 HTML_TAG = re.compile(r"<[^>]+>")
 HOT_VALUE = re.compile(r"(?<!\d)(\d{4,})(?!\d)")
+CLI_SAMPLE_MAX_AGE = timedelta(hours=72)
 
 
 class WeiboHeatError(RuntimeError):
@@ -64,6 +68,7 @@ class WeiboCLIStatusSample(BaseModel):
     comment_count: int | None
     like_count: int | None
     quality_flags: list[str]
+    relation: SearchEnrichmentRelation | None = None
 
 
 class WeiboCLIEnrichment(BaseModel):
@@ -446,25 +451,49 @@ def normalize_heat_topic(
     content_hash = hashlib.sha256(identity.encode("utf-8")).hexdigest()
     flags = list(item.quality_flags)
     matched_status_count = None
-    search_total_proxy = None
     top_repost_count = None
     top_comment_count = None
     top_like_count = None
+    latest_status_created_at = None
     signal_status = "rsshub_only"
+    cli_counts: dict[str, int] = {}
 
     if cli_enrichment is not None:
         flags.extend(cli_enrichment.quality_flags)
         if cli_enrichment.available:
-            signal_status = "rsshub_plus_cli"
-            matched_status_count = len(cli_enrichment.samples)
-            search_total_proxy = cli_enrichment.total_number_proxy
+            annotated_samples = []
+            accepted_samples = []
+            for sample in cli_enrichment.samples:
+                relation = _cli_sample_relation(item, sample, fetched_at=fetched_at)
+                annotated = sample.model_copy(update={"relation": relation})
+                annotated_samples.append(annotated)
+                if relation.decision == "accepted":
+                    accepted_samples.append(annotated)
+            cli_enrichment = cli_enrichment.model_copy(update={"samples": annotated_samples})
+            cli_counts = {
+                "returned_count": len(annotated_samples),
+                "accepted_count": len(accepted_samples),
+                "audit_count": len(annotated_samples) - len(accepted_samples),
+            }
+            if len(accepted_samples) < len(annotated_samples):
+                flags.append("weibo_cli_search_noise_detected")
+            if not accepted_samples:
+                flags.append("weibo_cli_no_relevant_status_samples")
+            signal_status = "rsshub_plus_cli" if accepted_samples else "rsshub_only"
+            matched_status_count = len(accepted_samples)
             top_repost_count = max_optional(
-                sample.repost_count for sample in cli_enrichment.samples
+                sample.repost_count for sample in accepted_samples
             )
             top_comment_count = max_optional(
-                sample.comment_count for sample in cli_enrichment.samples
+                sample.comment_count for sample in accepted_samples
             )
-            top_like_count = max_optional(sample.like_count for sample in cli_enrichment.samples)
+            top_like_count = max_optional(sample.like_count for sample in accepted_samples)
+            dates = [
+                (parsed, sample.created_at)
+                for sample in accepted_samples
+                if sample.created_at and (parsed := _parsed_cli_created_at(sample.created_at))
+            ]
+            latest_status_created_at = max(dates)[1] if dates else None
         else:
             signal_status = "cli_unavailable"
 
@@ -488,20 +517,94 @@ def normalize_heat_topic(
         raw_metrics={
             "list_position": item.rank,
             "hot_value": item.hot_value,
-            "weibo_search_total_number_proxy": search_total_proxy,
+            # The CLI total covers unseen search hits and cannot be relevance-filtered.
+            "weibo_search_total_number_proxy": None,
             "matched_status_count": matched_status_count,
             "top_status_repost_count": top_repost_count,
             "top_status_comment_count": top_comment_count,
             "top_status_like_count": top_like_count,
+            "latest_status_created_at": latest_status_created_at,
         },
         normalized={
             "weibo_signal_status": signal_status,
             "weibo_list_position_source": "rss_item_order",
             "topic_present": item.title is not None,
+            "cli_relevance_counts": cli_counts,
+            "cli_query_total_number_proxy": (
+                cli_enrichment.total_number_proxy if cli_enrichment is not None else None
+            ),
         },
         quality_flags=dedupe(flags),
         cli_enrichment=cli_enrichment,
     )
+
+
+def _cli_sample_relation(
+    topic: WeiboRSSHubItem,
+    sample: WeiboCLIStatusSample,
+    *,
+    fetched_at: str,
+) -> SearchEnrichmentRelation:
+    flags = list(sample.quality_flags)
+    text = plain_text(sample.text)
+    if not text:
+        flags.append("unrelated_result")
+    else:
+        flags.extend(title_conflicts(topic.title or "", text))
+    if sample.created_at:
+        created_at = _parsed_cli_created_at(sample.created_at)
+        observed_at = datetime.fromisoformat(fetched_at.replace("Z", "+00:00"))
+        if created_at is None:
+            flags.append("missing_created_at")
+        elif observed_at - created_at > CLI_SAMPLE_MAX_AGE:
+            flags.append("historical_content_pollution")
+    if not sample.url:
+        flags.append("missing_url")
+    parent_flags = list(topic.quality_flags)
+    if not topic.title:
+        parent_flags.append("missing_title")
+    if not topic.url:
+        parent_flags.append("missing_url")
+    return evaluate_search_enrichment(
+        {
+            "source_id": "weibo_rsshub_hot_search",
+            "source_name": "微博热搜 RSSHub",
+            "source_type": "community_hotlist",
+            "source_status": "use",
+            "source_origin": "rsshub",
+            "platform": "weibo",
+            "signal_role": "topic_discovery_signal",
+            "title": topic.title,
+            "url": topic.url,
+            "fetched_at": fetched_at,
+            "quality_flags": parent_flags,
+        },
+        {
+            "source_id": "weibo_cli_search_statuses_limited",
+            "source_name": "微博 CLI 搜索",
+            "source_type": "community_search",
+            "source_status": "use",
+            "source_origin": "weibo_cli",
+            "platform": "weibo",
+            "signal_role": "search_enrichment_signal",
+            "title": text,
+            "content": text,
+            "url": sample.url,
+            "fetched_at": fetched_at,
+            "published_at": sample.created_at,
+            "quality_flags": flags,
+        },
+        source="weibo_cli",
+        parent_candidate_id=topic.guid or topic.url or topic.title or f"rsshub-rank:{topic.rank}",
+    )
+
+
+def _parsed_cli_created_at(value: str) -> datetime | None:
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return parsed.astimezone(UTC) if parsed.tzinfo else None
 
 
 def normalize_cli_status(status: dict[str, Any]) -> WeiboCLIStatusSample:
