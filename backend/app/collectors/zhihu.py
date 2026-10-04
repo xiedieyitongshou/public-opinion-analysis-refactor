@@ -102,8 +102,8 @@ class ZhihuHotListCollector(BaseCollector):
                         "total": result.total,
                         "fetched_at": result.fetched_at,
                         "list_complete": (
-                            result.total is not None
-                            and len(raw_items) >= min(result.total, requested_limit)
+                            result.total is None
+                            or len(raw_items) >= min(result.total, requested_limit)
                         ),
                     }
                 }

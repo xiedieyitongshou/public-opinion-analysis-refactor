@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import hashlib
 from collections.abc import Iterable
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any
 
 from app.agents.event_extractor import EventSignalExtractor
@@ -296,7 +296,9 @@ def enrich_support_detail(
     return detail
 
 
-def official_agenda_rank_from_items(items: Iterable[Any]) -> OfficialAgendaRank:
+def official_agenda_rank_from_items(
+    items: Iterable[Any], *, window_end: datetime | None = None
+) -> OfficialAgendaRank:
     item_list = list(items)
     source_names = {_source_name(item) for item in item_list if _source_name(item)}
     story_keys = {_story_key(_item_reference_payload(item)) for item in item_list}
@@ -306,7 +308,7 @@ def official_agenda_rank_from_items(items: Iterable[Any]) -> OfficialAgendaRank:
         official_source_count=len(source_names),
         source_coverage_count=len(source_names),
         unique_story_count=len(story_keys),
-        freshness_bucket=_freshness_bucket(item_list),
+        freshness_bucket=_freshness_bucket(item_list, window_end=window_end),
         authority_sources=sorted(source_names),
         source_status_rank=source_status_rank,
     )
@@ -409,13 +411,13 @@ def _coverage_level(*, source_count: int, unique_story_count: int, item_count: i
     return "multi_source_independent"
 
 
-def _freshness_bucket(items: list[Any]) -> str:
+def _freshness_bucket(items: list[Any], *, window_end: datetime | None = None) -> str:
     published_values = [_datetime_value(item, "published_at") for item in items]
     published_values = [value for value in published_values if value is not None]
     if not published_values:
         return "unknown"
-    newest = max(published_values)
-    now = datetime.now(newest.tzinfo)
+    newest = max(value if value.tzinfo else value.replace(tzinfo=UTC) for value in published_values)
+    now = window_end or datetime.now(newest.tzinfo)
     hours = abs((now - newest).total_seconds()) / 3600
     if hours <= 24:
         return "24h"

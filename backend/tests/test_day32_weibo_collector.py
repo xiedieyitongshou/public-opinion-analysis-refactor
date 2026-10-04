@@ -2,6 +2,7 @@ import json
 from datetime import UTC, datetime
 
 import httpx
+import pytest
 
 import app.tools.default_tools as default_tools
 from app.collectors import CollectorRegistry, WeiboHeatCollector
@@ -105,6 +106,41 @@ def test_weibo_heat_collector_reports_rsshub_failure_as_failed() -> None:
     assert result.status == "failed"
     assert result.error_message is not None
     assert "RSSHub Weibo hot route unavailable" in result.error_message
+
+
+@pytest.mark.parametrize("xml", [RSS_XML, "<rss><channel /></rss>"])
+def test_short_or_empty_rss_is_a_complete_observable_list(xml):
+    collector = WeiboHeatCollector(client=_client(
+        http_handler=lambda req: httpx.Response(200, text=xml)
+    ))
+    result = collector.collect(_run_config(limit=20, params={"skip_top": 1}))
+    assert result.status == "succeeded"
+    assert result.returned_count < 19
+    assert result.list_complete is True
+    assert result.topn_scope == "top20:skip=1"
+
+
+@pytest.mark.parametrize("xml", ["<html>upstream error</html>", "<rss />", "not XML"])
+def test_invalid_rss_is_not_a_complete_empty_list(xml):
+    collector = WeiboHeatCollector(client=_client(
+        http_handler=lambda req: httpx.Response(200, text=xml)
+    ))
+    result = collector.collect(_run_config(limit=20))
+    assert result.status == "failed"
+    assert result.list_complete is False
+
+
+def test_missing_identity_and_explicit_incompleteness_cannot_prove_absence():
+    collector = WeiboHeatCollector(client=_client(
+        http_handler=lambda req: httpx.Response(
+            200, text="<rss><channel><item><title>残缺话题</title></item></channel></rss>"
+        )
+    ))
+    assert collector.collect(_run_config(limit=1)).list_complete is False
+    collector = WeiboHeatCollector(client=_client())
+    result = collector.collect(_run_config(limit=3, params={"list_complete": False}))
+    assert result.returned_count == 3
+    assert result.list_complete is False
 
 
 def test_fetch_source_items_tool_dispatches_weibo_collector(monkeypatch) -> None:

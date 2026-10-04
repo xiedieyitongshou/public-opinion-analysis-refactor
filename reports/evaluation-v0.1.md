@@ -74,7 +74,7 @@
 | `collect-zhihu-normal` | 正常响应通过真实 collector 解析。 | list_complete: true → false |
 | `collect-zhihu-empty` | 已知空榜与服务失败分开。 | list_complete: true → false |
 | `workflow-unrelated-official` | 养老金事件与中国高校赴安哥拉讲座无关，完整编排后不应升级成有官媒支持的 D 类。 | target_category: "E_single_platform_only" → "D_single_platform_with_official" |
-| `workflow-old-news` | 拟定产品验收要求：明确发表于 2025 年的旧官媒报道不能作为 2026 年当日新热点入池；仍待确认业务时效策略。 | event_count: 0 → 1 |
+| `workflow-old-news` | v0.1 当时尚未实现的时效要求：明确发表于 2025 年的旧官媒报道不能作为 2026 年当日新热点入池；后续修复见下方。 | event_count: 0 → 1 |
 | `workflow-search-same-question` | 同一问题的知乎热榜与搜索答案进入完整链路，应归并到一个事件。 | event_count: 1 → 2 |
 
 ## 本轮问题定位
@@ -96,9 +96,31 @@
 
   历史已拆分的事件、旧 CLI 指标及采集缓存未批量回填；重放旧采集响应不会重新执行 CLI 逐条过滤，需要另行重采集或处理历史数据。本次验证为离线测试与评估，没有新增真实 API/CLI 采样；真实噪声比例、持续运行效果以及其余 18 个既有评估失败仍未在本次解决。执行细节见[当前热点分析工作流](../docs/hotspot-analysis-workflow.md)。
 
-- **榜单完整性标记丢失。** [知乎采集器](../backend/app/collectors/zhihu.py)把已知 total 推导出的 list_complete 写入 normalize_config，返回时调用 `_result(effective_config, ...)`；因此已知短榜和已知空榜仍返回 false。这会影响后续‘明确离榜’与‘未知’的区分。
-- **未知搜索质量被当作置信度支持。** [分类规则](../backend/app/services/event_classification.py)使用 `search_hit_quality != 'none'`，默认 unknown 也满足此条件；CLI 失败且没有有效搜索证据的输入得到 medium，验收预期为 low。
-- **时效策略待确定。** 2025 年发布的真实官媒条目仍生成当日 F 类事件。当前时间窗口主要使用 fetched_at，缺少发布时间入池策略；该条属于拟定产品要求与当前实现的差异，应在修复前确认允许的历史证据用途。
+- **榜单完整性标记丢失（原始传参错误已修正，2026-10-03 补齐有效榜单与入榜／离榜规则）。** v0.1 时，[知乎采集器](../backend/app/collectors/zhihu.py)把根据 total 推导的 `list_complete` 写入 `normalize_config`，返回结果却使用 `effective_config`，导致已知短榜、空榜仍被标记为不完整；这一传参错误在此前修复中已更正。本次统一两平台的可观测榜单规则，使完整性标记真正支持入榜／离榜判断。
+
+  **改了什么：** 知乎返回合法条目列表时，已知 total 按实际应返回数量确认完整性；没有 total 时，按当前能获取到的有效列表处理，短榜、空榜均可作为本轮有效观测。若 total 明确表明应有更多条目而实际未返回，仍标记不完整。微博成功解析的 RSS channel 同样视为当前可观测榜单，包含有效短榜、空榜和跳过置顶后的采样范围；CLI 失败不否定 RSS 榜单。客户端新增响应结构检查，错误 JSON、错误页和无效 XML 不会伪装成空榜；缺少标题或 URL 的残缺条目也不能证明榜单完整。[公共采集结果](../backend/app/collectors/base.py)尊重显式 `list_complete=false`，不再因数量够多而覆盖它。
+
+  **业务效果：** 对已关联的事件，本轮在榜记为 `current_topn_present=true`；本轮成功取得完整且范围可比较的榜单、事件缺席，记为 `false`，表示在当前可观测范围内离榜。采集失败、已知残缺、采样范围改变而不能比较时仍为 `null`（未知）。[趋势分析](../backend/app/services/platform_trend.py)还补齐默认调用：即使未配置采样间隔，同一轮的明确在榜／离榜仍能返回；连续上榜时长和升降温趋势继续等待有效采样配置，不据此臆测。
+
+  **与 24 小时汇总的关系：** 当前离榜不等于抹除此前的关注记录。窗口固定为 UTC `(window_end - 24h, window_end]`，`last_topn_seen_at`、`snapshot_presence_count` 及 A–F 分类保留窗口内已接纳证据；缺席或采集故障不续期，也不把当前热度延用为在榜热度。最后一条有效发现证据离开窗口后，事件不再进入本轮 `event_ids`、分类和分析结果，数据库历史保留；重新上榜时复用可确认的原事件身份。
+
+  **剩余边界：** “完整”指当前接口、limit 和 skip_top 范围内可观测的榜单，不证明平台所有讨论都已覆盖。上游若返回结构合法但实际被截断、又没有总数等提示，现有能力无法识别；按约定采用可获取榜单作为业务依据。离榜在下一轮有效采集后确认，故障不会被当作空榜。本次没有增加调度器或展示页面。
+
+- **未知搜索质量被当作置信度支持（此前已修正，2026-10-04 补齐修复状态）。** 原先[分类规则](../backend/app/services/event_classification.py)使用 `search_hit_quality != 'none'`，默认 `unknown` 也满足条件，导致 CLI 失败、没有有效搜索支持的单平台输入被错误提升为 medium。当前规则只让明确的 `same_id_or_title`、`entity_action_match`、`keyword_overlap` 提供搜索质量支持，`unknown` 和 `none` 均不因此提高置信度。
+
+  **与采集 fallback 的关系：** [Week 04](../docs/project-log/week-04.md)中已有“CLI 失败保留 RSS 热榜种子”的降级机制，失败会标记 `cli_unavailable`，互动指标保持缺失。该故障的修复重点是分类层正确使用未知状态，而非另建 fallback 或把成功的 RSS 也标成失败。`classification-rss-fallback` 已复核通过：只有一次单平台 RSS 上榜、CLI 失败且无其他支持时，结果为 **E 类、low**；多轮有效上榜等独立证据仍可按规则提高置信度。代码修复属于此前匹配升级，本次同步文档状态；结果见[本次规则评估](evaluation-hotlist-freshness-rules.json)。
+
+- **时效策略待确定（2026-10-03 已明确并实现）。** 原先仅凭 `fetched_at`，2025 年发布的报道在 2026 年重新抓取后仍能生成当日 F 类事件。本次按来源区分“当前关注”与“历史内容”，与上述入榜／离榜规则共同完成本轮时效处理。
+
+  **解决方案：** 知乎、微博热榜按本次有效观测时间计入 24 小时关注窗口，旧问题或旧话题重新上榜仍是当前关注。官媒按 `published_at` 判断：只有发布时间位于同一滚动 24 小时窗口内的报道，才能进入当前热点提取和当前官媒来源判定。过期、缺失／无法解析发布时间、未来发布时间分别记录 `official_publication_expired`、`official_publication_unknown`、`official_publication_in_future`，原始 Item 和引用保留，信号标记为审计用途，不自动建立当天热点；重新抓取不延长报道时效。实现见[统一时效判定](../backend/app/services/hotspot_freshness.py)及[持久化、入池接口](../backend/app/services/analysis_interfaces.py)。
+
+  **防止后续分类绕过：** [分类组装](../backend/app/services/classification_assembly.py)再次校验已存官媒信号的发布时间；[官媒支撑匹配](../backend/app/services/official_support.py)和[定向搜索及缓存](../backend/app/services/official_search.py)使用相同分析窗口，只用合格报道证明当前官媒关注，不以旧 citation 恢复过期来源。排除明细写入 `official_support_detail.freshness_exclusions`，窗口依据写入 `attention_window`；入池步骤返回 `excluded_count` 并在条目中记录 `normalized.hotspot_freshness`。官媒议程的新鲜度也固定使用分析窗口，回放结果不受执行当天日期影响。官媒证据过期后，如果社区证据仍在窗口内，按剩余来源重新分类；如果没有任何有效热榜或官媒发现证据，事件退出本轮结果。
+
+  **共同验证（2026-10-03）：** 后端 `python -m pytest -q` 为 **271 项通过**，包含新增的两平台有效短榜／空榜、错误响应、缺席与重入、24 小时边界、旧知乎问题当日上榜、官媒旧／无日期／未来报道、官媒到期后 D → E、搜索缓存与历史引用不能续期等回归。[采集用例](../backend/tests/test_day30_31_zhihu_collectors.py)、[微博采集用例](../backend/tests/test_day32_weibo_collector.py)、[完整链路用例](../backend/tests/test_hotspot_analysis.py)、[官媒查询用例](../backend/tests/test_official_search_upgrade.py)记录了这些检查。`ruff check app tests` 通过；扩大到 `ruff check .` 时仍有未改动的 `scripts/source_probe.py` 中既有 `UP017` 提示。pytest 的两条依赖弃用提示不影响通过结果。
+
+  扩充评估集规则配置由此前 **190/208** 提升为 **191/208**，无新增失败、无执行错误；唯一新增通过的是 `workflow-old-news`，旧官媒案例现在生成 **0 个事件**。`collect-zhihu-normal`、`collect-zhihu-empty`、`workflow-fresh-official`、`workflow-source-outage` 和此前的 `workflow-search-same-question` 继续通过。剩余 **17 项**均为已有事件匹配／官媒匹配预期不符，不属于本轮完整性与时效修复范围。见[本次逐例结果](evaluation-hotlist-freshness-rules.json)。上方 v0.1 原始评估数据和前一轮搜索增强修复的验证数字均作为历史记录保留。
+
+  **剩余问题：** 发布时间缺失时会漏掉可能新鲜的官媒报道，需要后续补全可靠发布时间；当前不使用抓取时间或推测的更新时间代替。历史文章即使有新进展，若没有可核验的新报道时间，也只保留为背景。此次验证为离线回归和规则评估，未新增真实 API／RSS／CLI 采样或重跑神经模型配置；未批量重写历史事件及旧快照。下游应读取本轮结果及其窗口，不能把数据库中历史 `active` 事件或旧分类缓存直接当作当前榜单。
 
 ## 采集稳定性：已有真实记录
 
@@ -117,7 +139,7 @@
 ## 解释与后续处理
 
 1. 优先复核官媒无关证据用例及九步链路的分类结果，排查匹配特征在持久化与读取时的字段路径。
-2. 旧官媒报道入池用例是拟定的时效验收要求，当前实现没有明确的发布时间门槛；应先确定‘历史报道’与‘今日热点’的产品边界，再修正实现和标签。
+2. 榜单完整性与时效策略已按上文规则完成本轮修复，后续补充多轮真实采集，重点验证上游短榜、故障恢复和官媒发布时间缺失；历史数据如需展示，应按相同窗口规则重算。
 3. 对未自动合并的正例区分安全转人工与实际漏合并，再决定阈值；不能仅为提高召回率放松护栏。
 4. 人工复核新增标签，补充自然跨平台正例、真实 A/B/D 类及多轮连续采集；当前真实正例较少，衍生同 URL 用例会明显抬高混合指标。
 5. 日报质量与去重、LLM 动态规划、embedding、压力测试和线上稳定性不在本轮已验证范围。

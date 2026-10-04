@@ -1,4 +1,5 @@
 import httpx
+import pytest
 
 import app.tools.default_tools as default_tools
 from app.collectors import CollectorRegistry, ZhihuHotListCollector, ZhihuSearchCollector
@@ -38,6 +39,41 @@ def test_zhihu_hot_list_collector_reports_missing_secret_as_failed() -> None:
     assert result.status == "failed"
     assert result.error_message is not None
     assert "ZHIHU_ACCESS_SECRET" in result.error_message
+
+
+@pytest.mark.parametrize(("count", "total", "complete"), [
+    (2, 2, True), (0, 0, True), (1, None, True), (0, None, True), (1, 5, False),
+])
+def test_hotlist_completeness_uses_observable_list_and_explicit_total(count, total, complete):
+    data = {"Items": [{"Title": f"事件 {i}", "Url": f"https://zhihu.com/question/{i}"}
+                      for i in range(count)]}
+    if total is not None:
+        data["Total"] = total
+    collector = ZhihuHotListCollector(client=ZhihuClient(
+        config=ZhihuClientConfig(access_secret="test-secret"),
+        http_client=httpx.Client(
+            base_url="https://developer.zhihu.com",
+            transport=httpx.MockTransport(lambda req: httpx.Response(200, json={"Data": data})),
+        ),
+    ))
+    result = collector.collect(_run_config("zhihu_hot_list", limit=5))
+    assert result.status == "succeeded"
+    assert result.returned_count == count
+    assert result.list_complete is complete
+
+
+@pytest.mark.parametrize("data", [{}, {"Items": None}, {"Items": [None]}])
+def test_malformed_hotlist_response_is_not_a_complete_empty_list(data):
+    collector = ZhihuHotListCollector(client=ZhihuClient(
+        config=ZhihuClientConfig(access_secret="test-secret"),
+        http_client=httpx.Client(
+            base_url="https://developer.zhihu.com",
+            transport=httpx.MockTransport(lambda req: httpx.Response(200, json={"Data": data})),
+        ),
+    ))
+    result = collector.collect(_run_config("zhihu_hot_list", limit=5))
+    assert result.status == "failed"
+    assert result.list_complete is False
 
 
 def test_zhihu_search_collector_skips_without_explicit_target() -> None:

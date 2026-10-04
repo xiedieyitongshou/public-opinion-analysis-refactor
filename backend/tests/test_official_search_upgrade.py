@@ -1,7 +1,7 @@
 """Actual HTTP adapters with local transport, plus query-to-persistence-to-support checks."""
 
 import json
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 import httpx
 import pytest
@@ -152,6 +152,48 @@ def test_query_results_persist_then_match_and_retry_uses_cache():
             assert len(calls) == 2
             assert db.scalar(select(func.count()).select_from(Item)) == 2
             assert event.event_detail_json["official_search"]["cache_hit"]
+    finally:
+        engine.dispose()
+
+
+def test_cached_official_search_expires_by_publication_not_fetch_or_citation():
+    calls = []
+
+    def transport(request):
+        calls.append(request)
+        if request.method == "POST":
+            return httpx.Response(200, json={"code": 0, "data": {"records": []}})
+        return httpx.Response(200, text="var docArr = " + json.dumps([response_record()]) + ";")
+
+    now = datetime(2026, 9, 29, 3, tzinfo=UTC)
+    engine = create_engine("sqlite:///:memory:")
+    init_db(engine)
+    try:
+        with Session(engine) as db:
+            event = Event(event_id="target", title=TITLE, first_seen_at=now, last_seen_at=now)
+            db.add(event)
+            db.commit()
+            client = OfficialSearchClient(httpx.Client(transport=httpx.MockTransport(transport)))
+            common = {"run_id": "same-cache", "config": OfficialSupportConfig(),
+                      "budget": [1], "client": client}
+            first = enrich_event_support(db, event, [], window_end=now, **common)
+            assert first.official_support_status == "supported"
+            # A historic citation must not restore yesterday's attention after expiration.
+            event.source_citations_json = [{
+                **first.official_references[0].model_dump(mode="json"),
+                "source_type": "official_news",
+            }]
+            db.commit()
+            expired = enrich_event_support(
+                db, event, [], window_end=now + timedelta(hours=24), **common
+            )
+            assert len(calls) == 2
+            assert expired.official_support_status == "not_found"
+            assert expired.official_references == []
+            assert expired.official_support_detail.freshness_exclusions[0]["reason"] == (
+                "official_publication_expired"
+            )
+            assert db.scalar(select(func.count()).select_from(Item)) == 1
     finally:
         engine.dispose()
 

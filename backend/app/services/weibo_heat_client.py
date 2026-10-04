@@ -406,8 +406,11 @@ def build_url(base_url: str, route: str) -> str:
 
 def parse_rsshub_items(xml_text: str, *, limit: int) -> list[WeiboRSSHubItem]:
     root = ET.fromstring(clean_xml(xml_text))
+    channel = root.find("channel")
+    if root.tag != "rss" or channel is None:
+        raise ValueError("RSSHub response is not an RSS channel")
     parsed_items: list[WeiboRSSHubItem] = []
-    for rank, item in enumerate(root.findall(".//item")[:limit], start=1):
+    for rank, item in enumerate(channel.findall("item")[:limit], start=1):
         title = element_text(item, "title")
         url = element_text(item, "link")
         description = plain_text(element_text(item, "description"))

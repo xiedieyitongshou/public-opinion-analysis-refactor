@@ -95,7 +95,7 @@ class ZhihuClient:
         safe_limit = settings.zhihu_fetch_limit if limit is None else max(1, min(limit, 30))
         payload = self._get(self.config.hot_list_path, params={"Limit": safe_limit})
         data = _unwrap_payload(payload)
-        items_payload = _extract_items(data)
+        items_payload = _extract_items(data, strict=True)
         items = [ZhihuHotListItem.model_validate(item) for item in items_payload]
         return ZhihuHotListResult(
             total=_extract_total(data),
@@ -310,14 +310,18 @@ def _unwrap_payload(payload: dict[str, Any]) -> Any:
     return payload
 
 
-def _extract_items(data: Any) -> list[dict[str, Any]]:
+def _extract_items(data: Any, *, strict: bool = False) -> list[dict[str, Any]]:
     if isinstance(data, list):
+        if strict and not all(isinstance(item, dict) for item in data):
+            raise ZhihuAPIError("Zhihu hot list contains invalid records")
         return [item for item in data if isinstance(item, dict)]
     if isinstance(data, dict):
         for key in ("Items", "items", "List", "list", "Results", "results"):
             value = data.get(key)
             if isinstance(value, list):
-                return [item for item in value if isinstance(item, dict)]
+                return _extract_items(value, strict=strict)
+    if strict:
+        raise ZhihuAPIError("Zhihu hot list response has no valid item list")
     return []
 
 

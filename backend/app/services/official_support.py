@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 from collections.abc import Iterable
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from app.schemas import (
@@ -14,6 +14,7 @@ from app.schemas import (
     OfficialSupportDetail,
     OfficialSupportResult,
 )
+from app.services.hotspot_freshness import official_publication_exclusion
 from app.services.match_documents import event_document, item_document
 from app.services.matching_engine import Comparison, compare_many, retrieve
 
@@ -118,8 +119,50 @@ def match_official_support(
     event: Any,
     official_items: Iterable[Any] | None,
     config: OfficialSupportConfig | None = None,
+    *,
+    window_end: datetime | None = None,
 ) -> OfficialSupportResult:
-    """Match one event against official media evidence already present in items."""
+    """Optionally scope official attention to publications in the analysis window."""
+    exclusions = []
+    current_items = None if official_items is None else list(official_items)
+    if window_end is not None and current_items is not None:
+        eligible = []
+        for item in current_items:
+            evidence = _evidence_item(item)
+            reason = official_publication_exclusion(evidence.published_at, window_end)
+            if reason:
+                exclusions.append({
+                    "item_id": evidence.item_id,
+                    "url": evidence.url,
+                    "published_at": (
+                        evidence.published_at.isoformat() if evidence.published_at else None
+                    ),
+                    "reason": reason,
+                })
+            else:
+                eligible.append(item)
+        current_items = eligible
+    result = _match_official_support(
+        event, current_items, config, allow_citation_snapshot=window_end is None
+    )
+    if window_end is not None:
+        result.official_support_detail.attention_window = {
+            "start": (window_end - timedelta(hours=24)).isoformat(),
+            "end": window_end.isoformat(),
+            "basis": "published_at",
+        }
+        result.official_support_detail.freshness_exclusions = exclusions
+    return result
+
+
+def _match_official_support(
+    event: Any,
+    official_items: Iterable[Any] | None,
+    config: OfficialSupportConfig | None,
+    *,
+    allow_citation_snapshot: bool,
+) -> OfficialSupportResult:
+    """Match one event against admitted official media evidence."""
 
     config = config or OfficialSupportConfig()
     event_data = _event_data(event)
@@ -136,6 +179,12 @@ def match_official_support(
     ]
 
     if not evidence_items:
+        if not allow_citation_snapshot:
+            return OfficialSupportResult(
+                event_id=event_data.event_id,
+                official_support_status="not_found",
+                quality_flags=["official_pool_empty_for_window"],
+            )
         citation_result = _result_from_existing_official_citations(event_data)
         if citation_result is not None:
             return citation_result

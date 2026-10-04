@@ -216,9 +216,10 @@ class BaseCollector(ABC):
             list_complete=(
                 status == "succeeded"
                 and self.metadata.source_id in {"zhihu_hot_list", "weibo_rsshub_hot_search"}
-                and (bool(config.params.get("list_complete")) or returned_count >= max(
+                and bool(config.params.get("list_complete", returned_count >= max(
                     1, config.limit - int(config.params.get("skip_top") or 0)
-                ))
+                )))
+                and all(item.get("title") and item.get("url") for item in items)
             ),
             topn_scope=scope,
             sampling_signature=sampling,

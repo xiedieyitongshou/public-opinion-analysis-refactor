@@ -33,6 +33,7 @@ from app.schemas.signals import (
     SourceSignal,
 )
 from app.services.classification_assembly import assemble_hotspot_classification_from_db
+from app.services.hotspot_freshness import official_publication_exclusion
 from app.services.match_documents import canonical_ids, event_document, event_features
 from app.services.matching_profiles import official_config
 from app.services.official_paths import enrich_support_detail, official_agenda_rank_from_items
@@ -64,6 +65,26 @@ def prepare_source_signals(
         if not item.title or not item.url or not item.content_hash:
             output.errors.append(f"{item.source_id}: title, URL and identity are required")
             continue
+        exclusion = (
+            official_publication_exclusion(item.published_at, window_end)
+            if item.source_type == "official_news" else None
+        )
+        if item.source_type == "official_news":
+            item = item.model_copy(update={
+                "normalized": {
+                    **item.normalized,
+                    "hotspot_freshness": {
+                        "eligible": exclusion is None,
+                        "basis": "published_at",
+                        "window_start": (window_end - timedelta(hours=24)).isoformat(),
+                        "window_end": window_end.isoformat(),
+                        "exclusion_reason": exclusion,
+                    },
+                },
+                "quality_flags": list(dict.fromkeys([
+                    *item.quality_flags, *([exclusion, "audit_only"] if exclusion else [])
+                ])),
+            })
         source = db.scalar(select(Source).where(Source.name == item.source_name))
         if source is None:
             source = Source(
@@ -115,6 +136,11 @@ def prepare_source_signals(
             "event_text_for_embedding": item.event_text_for_embedding,
             "source_signal": signal.model_dump(mode="json"),
         }
+        output.saved_count += 1
+        if exclusion:
+            output.excluded_count += 1
+            output.quality_flags = sorted(set([*output.quality_flags, exclusion]))
+            continue
         output.items.append(item)
         output.source_signals.append(signal)
         output.source_refs_by_signal_id[signal.source_signal_id] = SourceSignalMatchRef(
@@ -123,7 +149,6 @@ def prepare_source_signals(
             platform_id=f"{item.source_id}:{item.external_id or row.id}",
             canonical_ids=canonical_ids([signal.url] if signal.url else []),
         )
-        output.saved_count += 1
     db.commit()
     if output.errors:
         output.status = "partial" if output.items else "failed"
@@ -167,6 +192,24 @@ def item_to_source_signal(item, item_id: str) -> SourceSignal:
         quality_flags=item.quality_flags,
         **attachment,
     )
+
+
+def _has_current_attention(event: Event, window_end: datetime) -> bool:
+    """Keep only accepted discovery evidence in the rolling attention window."""
+    start = window_end - timedelta(hours=24)
+    for item in event.items:
+        signal = (item.normalized_json or {}).get("source_signal", {})
+        if signal.get("audit_only") or signal.get("contributes_to_classification") is False:
+            continue
+        fetched = parse_datetime(item.fetched_at)
+        if fetched is None or not start < fetched <= window_end:
+            continue
+        if item.source.source_type == "official_news":
+            if official_publication_exclusion(item.published_at, window_end) is None:
+                return True
+        elif item.source.source_type in {"community_hotlist", "community_question_hotlist"}:
+            return True
+    return False
 
 
 def _candidate(event: Event) -> RetrievedEventMatchCandidate:
@@ -394,7 +437,10 @@ def resolve_and_persist_events(
             or_(Event.last_seen_at > window_end - timedelta(hours=24), Event.event_id.in_(touched)),
         )
     ).all()
-    result.event_ids = sorted(event.event_id for event in tracked)
+    result.event_ids = sorted(
+        event.event_id for event in tracked
+        if data.discovery_mode != "automatic" or _has_current_attention(event, window_end)
+    )
     result.review_payload = {
         "run_id": data.run_id,
         "event_resolutions": [value.model_dump(mode="json") for value in result.event_resolutions],
@@ -520,10 +566,11 @@ def classify_events(db: Session, data: ClassifyEventsInput) -> ClassifyEventsOut
         community = any(item.source.platform in {"zhihu", "weibo"} for item in event.items)
         if data.official_search_enabled and community:
             support = enrich_event_support(
-                db, event, pool, run_id=data.run_id, config=config, budget=budget
+                db, event, pool, run_id=data.run_id, config=config, budget=budget,
+                window_end=data.window_end,
             )
         else:
-            support = match_official_support(event, pool, config)
+            support = match_official_support(event, pool, config, window_end=data.window_end)
         degraded = [
             flag
             for flag in support.quality_flags
@@ -551,11 +598,15 @@ def classify_events(db: Session, data: ClassifyEventsInput) -> ClassifyEventsOut
             )
         )
         if event.items and all(item.source.source_type == "official_news" for item in event.items):
+            current_items = [
+                item for item in event.items
+                if official_publication_exclusion(item.published_at, data.window_end) is None
+            ]
             event.event_detail_json = {
                 **event.event_detail_json,
-                "official_agenda_rank": official_agenda_rank_from_items(event.items).model_dump(
-                    mode="json"
-                ),
+                "official_agenda_rank": official_agenda_rank_from_items(
+                    current_items, window_end=data.window_end
+                ).model_dump(mode="json"),
             }
             db.commit()
     return output

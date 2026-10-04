@@ -52,6 +52,9 @@ class WeiboHeatCollector(BaseCollector):
         params["cli_topic_limit"] = max(
             0, min(int(params["cli_topic_limit"]), limit - params["skip_top"])
         )
+        # A valid RSS response is our observable list, including a short or empty feed.
+        # HTTP/XML failures still return failed; CLI failure does not invalidate RSS.
+        params.setdefault("list_complete", True)
         return super().collect(config.model_copy(update={"limit": limit, "params": params}), db=db)
 
     def fetch(self, config: CollectorRunConfig) -> WeiboHeatResult:

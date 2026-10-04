@@ -58,6 +58,10 @@ def analyze_platform_trend(data: PlatformTrendInput) -> PlatformTrendResult:
         flags.extend(["no_window_observations", "no_topn_evidence"])
     else:
         latest = main[-1]
+        # This run's explicit presence/absence needs no sampling interval. Intervals
+        # are required to infer continuity or carry a previous round forward.
+        if gap is None and latest.run_id == data.run_id:
+            result.current_topn_present = latest.topn_present
         if gap is None and latest.topn_present is True:
             result.latest_platform_heat = latest.platform_heat
         if latest.collection_status in {"failed", "skipped"}:
@@ -101,7 +105,7 @@ def analyze_platform_trend(data: PlatformTrendInput) -> PlatformTrendResult:
                 result.latest_platform_heat = latest.platform_heat
                 _set_trend(result, main, gap, data.config.rank_delta_threshold,
                            data.config.score_delta_threshold, flags)
-        else:
+        elif result.current_topn_present is None:
             flags.append("current_presence_unknown")
 
     # Search/CLI-only evidence may explain a static partial score but never creates duration.

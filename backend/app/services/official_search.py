@@ -264,13 +264,15 @@ def persist_search_items(db: Session, items: list[NormalizedItem]) -> list[Item]
     return rows
 
 
-def enrich_event_support(db, event, pool, *, run_id, config, budget: list[int], client=None):
+def enrich_event_support(
+    db, event, pool, *, run_id, config, budget: list[int], client=None, window_end=None
+):
     """Search only unsupported community events; cache queries and retain their provenance."""
     from app.services.match_documents import as_datetime
     from app.services.official_paths import build_official_query, enrich_support_detail
     from app.services.official_support import match_official_support
 
-    support = match_official_support(event, pool, config)
+    support = match_official_support(event, pool, config, window_end=window_end)
     if support.official_support_status in {"supported", "weak_supported"}:
         return support
     query = build_official_query(event)
@@ -308,7 +310,7 @@ def enrich_event_support(db, event, pool, *, run_id, config, budget: list[int], 
             "results": [result.audit() for result in results],
             "item_ids": sorted({row.id for row in rows}),
         }
-    support = match_official_support(event, [*(pool or []), *rows], config)
+    support = match_official_support(event, [*(pool or []), *rows], config, window_end=window_end)
     results = audit.get("results", [])
     succeeded = any(result["status"] == "succeeded" for result in results)
     failed = any(result["status"] != "succeeded" for result in results)

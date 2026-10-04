@@ -20,6 +20,7 @@ from app.schemas import (
 )
 from app.schemas.display import OfficialSupportStatus
 from app.services.event_classification import classify_hotspot
+from app.services.hotspot_freshness import official_publication_exclusion
 
 WINDOW_HOURS = 24
 
@@ -376,6 +377,10 @@ def _accepted_source_signals(
         ):
             continue
         if signal_time is None or not _in_window(signal_time, window_start, window_end):
+            continue
+        if signal.source_type == "official_news" and official_publication_exclusion(
+            signal.published_at, window_end
+        ):
             continue
         accepted.append(signal)
     return accepted

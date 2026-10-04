@@ -402,3 +402,212 @@ def test_empty_collection_finishes_without_creating_events(environment):
     assert result.status == "skipped", result.model_dump()
     assert len(result.tasks) == 9
     assert count(db, Event) == count(db, PlatformScore) == count(db, EventSnapshot) == 0
+
+
+def register_weibo_feed(environment, monkeypatch, state):
+    import app.services.weibo_heat_client as weibo_module
+    from app.collectors.weibo import WeiboHeatCollector
+    from app.services.weibo_heat_client import WeiboHeatClient, WeiboHeatClientConfig
+
+    _, clock, collectors = environment
+
+    class Clock(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return clock.time
+
+    monkeypatch.setattr(weibo_module, "datetime", Clock)
+
+    def response(req):
+        items = "".join(
+            f"<item><title>{title}</title><link>https://weibo.test/{index}</link></item>"
+            for index, title in enumerate(state["titles"])
+        )
+        return httpx.Response(200, text=f"<rss><channel>{items}</channel></rss>")
+
+    collectors.register(WeiboHeatCollector(client=WeiboHeatClient(
+        config=WeiboHeatClientConfig(
+            rsshub_base_url="https://rsshub.test", rsshub_skip_top=0, cli_enabled=False,
+        ),
+        http_client=httpx.Client(transport=httpx.MockTransport(response)),
+    )))
+
+
+@pytest.mark.parametrize("platform", ["zhihu", "weibo"])
+def test_offlist_keeps_24h_history_then_expires_and_reentry_reuses_identity(
+    environment, monkeypatch, platform,
+):
+    db, client, _ = environment
+    client.titles = [TITLE]
+    state = {"titles": [TITLE]}
+    if platform == "weibo":
+        register_weibo_feed(environment, monkeypatch, state)
+    source = "zhihu_hot_list" if platform == "zhihu" else "weibo_rsshub_hot_search"
+
+    def run(run_id):
+        # Default API callers need current presence even without scheduling config.
+        data = request(run_id, client.time, sources=[source]).model_copy(
+            update={"trend_configs": {}}
+        )
+        result = agent.run(db, data)
+        assert result.status != "failed", result.errors
+        return result
+
+    agent = HotspotAnalysisAgent()
+    first = run("on-list")
+    event_id = first.event_ids[0]
+    assert first.analyses[0].platforms[platform].current_topn_present is True
+    client.time += timedelta(hours=2)
+    client.titles = state["titles"] = []
+    absent = run("off-list")
+    trend = absent.analyses[0].platforms[platform]
+    assert trend.current_topn_present is False
+    assert trend.latest_platform_heat is None
+    assert trend.last_topn_seen_at == START
+    assert trend.snapshot_presence_count == 1
+    assert "current_presence_unknown" not in trend.quality_flags
+    assert absent.classifications[0].classification.priority_category == "E_single_platform_only"
+    assert getattr(absent.classifications[0].classification_input.platform_presence,
+                   f"{platform}_topn") is True
+    # The left window boundary is exclusive; nothing renews the old positive observation.
+    client.time = START + timedelta(hours=24)
+    expired = run("expired")
+    assert expired.event_ids == expired.classifications == expired.analyses == []
+    assert count(db, Event) == 1  # History is retained, not deleted.
+    client.time += timedelta(hours=1)
+    client.titles = state["titles"] = [TITLE]
+    returned = run("returned")
+    assert returned.event_ids == [event_id]
+    assert returned.analyses[0].platforms[platform].current_topn_present is True
+    assert returned.analyses[0].platforms[platform].snapshot_presence_count == 1
+    assert count(db, Event) == 1
+
+
+def register_official_feed(environment, monkeypatch, *, published_at):
+    import app.collectors.official as official_module
+
+    _, clock, collectors = environment
+
+    class Clock(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return clock.time
+
+    monkeypatch.setattr(official_module, "datetime", Clock)
+    pub_date = f"<pubDate>{published_at.isoformat()}</pubDate>" if published_at else ""
+    xml = f"""<rss><channel><item><title>{TITLE}</title>
+    <link>https://news.example.test/story</link>{pub_date}
+    <description>{TITLE}</description></item></channel></rss>"""
+    collectors.register(OfficialRSSCollector(
+        OfficialRSSSourceConfig(
+            source_id="chinanews_scroll_rss", source_name="中国新闻网", platform="chinanews",
+            rss_url="https://news.example.test/rss", channel="news", source_status="use",
+            authority_weight=1.0,
+        ),
+        http_client=httpx.Client(
+            transport=httpx.MockTransport(lambda req: httpx.Response(200, text=xml))
+        ),
+    ))
+
+
+@pytest.mark.parametrize(("published", "reason"), [
+    (START - timedelta(days=365), "official_publication_expired"),
+    (START - timedelta(hours=24), "official_publication_expired"),
+    (None, "official_publication_unknown"),
+    (START + timedelta(hours=1), "official_publication_in_future"),
+])
+@pytest.mark.parametrize("with_community", [False, True])
+def test_old_or_undated_official_reports_are_audited_without_creating_current_attention(
+    environment, monkeypatch, published, reason, with_community,
+):
+    db, client, _ = environment
+    client.titles = [TITLE]
+    register_official_feed(environment, monkeypatch, published_at=published)
+    sources = ["chinanews_scroll_rss", *(["zhihu_hot_list"] if with_community else [])]
+    result = HotspotAnalysisAgent().run(db, request("old-official", START, sources=sources))
+    assert result.status != "failed", result.errors
+    assert count(db, Event) == int(with_community)
+    row = db.scalar(select(Item).where(Item.url == "https://news.example.test/story"))
+    assert row.event_id is None
+    assert row.normalized_json["hotspot_freshness"]["exclusion_reason"] == reason
+    assert row.normalized_json["source_signal"]["audit_only"] is True
+    assert reason in result.quality_flags
+    prepared = db.scalar(select(AgentTask).where(AgentTask.task_type == "prepare_source_signals"))
+    assert prepared.output_json["excluded_count"] == 1
+    if with_community:
+        classification = result.classifications[0]
+        assert classification.classification.priority_category == "E_single_platform_only"
+        assert classification.classification_input.platform_presence.official_source is False
+        exclusions = classification.classification_detail_json[
+            "official_support_detail"
+        ]["freshness_exclusions"]
+        assert exclusions[0]["reason"] == reason
+    else:
+        assert result.event_ids == result.classifications == []
+
+
+@pytest.mark.parametrize("with_community", [False, True])
+def test_official_expiry_uses_publication_and_refetch_does_not_extend_it(
+    environment, monkeypatch, with_community,
+):
+    db, client, _ = environment
+    client.titles = [TITLE]
+    published = START - timedelta(hours=23)
+    register_official_feed(environment, monkeypatch, published_at=published)
+    agent = HotspotAnalysisAgent()
+    sources = ["chinanews_scroll_rss", *(["zhihu_hot_list"] if with_community else [])]
+    first = agent.run(db, request("fresh-official", START, sources=sources))
+    assert first.status != "failed", first.errors
+    assert first.classifications[0].classification.priority_category == (
+        "D_single_platform_with_official" if with_community else "F_official_only"
+    )
+    event = db.scalar(select(Event))
+    if not with_community:
+        assert event.event_detail_json["official_agenda_rank"]["freshness_bucket"] == "24h"
+    assert event.last_seen_at.replace(tzinfo=UTC) == START
+    client.time += timedelta(hours=1)
+    if with_community:
+        sources = ["zhihu_hot_list"]
+        client.titles = []
+    expired = agent.run(db, request("expired-official", client.time, sources=sources))
+    assert expired.status != "failed", expired.errors
+    if with_community:
+        classification = expired.classifications[0]
+        assert classification.classification.priority_category == "E_single_platform_only"
+        assert not expired.classifications[0].classification_input.platform_presence.official_source
+        assert expired.analyses[0].platforms["zhihu"].current_topn_present is False
+    else:
+        assert expired.event_ids == expired.classifications == []
+    assert count(db, Event) == 1
+    assert count(db, Item) == 1 + int(with_community)
+    db.refresh(event)
+    assert event.last_seen_at.replace(tzinfo=UTC) == START
+
+
+def test_old_question_observed_today_is_still_current_attention(environment):
+    from app.schemas.analysis import PrepareSourceSignalsInput
+    from app.schemas.normalized import NormalizedItem
+    from app.services.analysis_interfaces import prepare_source_signals
+    from app.services.classification_assembly import assemble_hotspot_classification
+
+    db, client, collectors = environment
+    client.titles = [TITLE]
+    collection = collectors.collect(FetchSourceItemsInput(
+        run_id="old-question", source_ids=["zhihu_hot_list"], limit=2,
+        validate_only=False, dry_run=False,
+    ), db=db)
+    item = NormalizedItem.model_validate(collection.items[0]).model_copy(update={
+        "published_at": START - timedelta(days=365),
+    })
+    prepared = prepare_source_signals(db, PrepareSourceSignalsInput(
+        run_id="old-question", collection=collection, items=[item], window_end=START,
+    ))
+    assert prepared.excluded_count == 0
+    assert len(prepared.source_signals) == 1
+    assert prepared.source_signals[0].audit_only is False
+    classified = assemble_hotspot_classification(
+        run_id="old-question", event=Event(event_id="old-question", title=TITLE),
+        platform_scores=[], source_signals=prepared.source_signals, window_end=START,
+        persist=False,
+    )
+    assert classified.classification.priority_category == "E_single_platform_only"

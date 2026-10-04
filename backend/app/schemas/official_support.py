@@ -64,6 +64,8 @@ class OfficialSupportDetail(BaseModel):
     source_independence_flags: list[str] = Field(default_factory=list)
     official_query: dict[str, Any] | None = None
     candidate_comparisons: list[dict[str, Any]] = Field(default_factory=list)
+    attention_window: dict[str, str] | None = None
+    freshness_exclusions: list[dict[str, Any]] = Field(default_factory=list)
     quality_flags: list[str] = Field(default_factory=list)
 
 

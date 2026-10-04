@@ -7,7 +7,9 @@ Day 47 以稳定 `Event.event_id` 和真实来源采集轮次为输入，分别�
 1. `fetch_source_items` 传入稳定的 `run_id`。采集结果包含 `observation_id`、实际 `observed_at`、`topn_scope`、完整性和采样口径。`validate_only` / `dry_run` 不进入正式时间序列。
 2. 事件融合完成后，调用 `analyze_event_heat`，传入采集输出、已跟踪的 `event_ids`，以及新关联内容的 `event_ids_by_content_hash`。已有 `Item.event_id` 关联会自动复用。工具为每个已跟踪事件保存主榜单 true / false / unknown 观测；知乎搜索和微博 CLI 单独出现时不生成上榜时长。
 3. Day 46 分类与 Day 47 分析使用同一个 `run_id` 和固定 `window_end`。分析默认沿用 `classification_detail.window_end`；也可显式传入。两者均读取 UTC `(window_end - 24h, window_end]`。同一分析 run 重试必须使用原窗口。
-4. 为 `sources.fetch_interval_minutes` 配置主来源调度间隔，或在 `analyze_event_heat.configs` 传入各平台的 `expected_interval_minutes`。未配置时仍保留可用静态热度，但连续时长和趋势为 unknown。
+4. 为 `sources.fetch_interval_minutes` 配置主来源调度间隔，或在 `analyze_event_heat.configs` 传入各平台的 `expected_interval_minutes`。未配置时仍保留可用静态热度，同一轮的明确在榜／离榜也会返回；历史轮次不能据此外推当前状态，连续时长和趋势仍为 unknown。
+
+有效短榜／空榜属于当前可观测范围内的完整榜单；已知数量不齐、响应无效、采集失败或范围不可比时，缺席仍为未知。`current_topn_present=false` 表示当前离榜，不抹去 24 小时窗口内的 `last_topn_seen_at`、`snapshot_presence_count` 或 A–F 来源证据。窗口过期且没有其他有效发现证据后，热点分析编排不再返回该事件；旧快照留作历史。
 
 调用示例（已取得 `FetchSourceItemsOutput` 且完成事件融合）：
 

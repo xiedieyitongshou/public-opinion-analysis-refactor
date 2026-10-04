@@ -54,6 +54,8 @@ class PrepareSourceSignalsOutput(BaseModel):
     source_signals: list[SourceSignal] = Field(default_factory=list)
     source_refs_by_signal_id: dict[str, SourceSignalMatchRef] = Field(default_factory=dict)
     saved_count: int = 0
+    excluded_count: int = 0
+    quality_flags: list[str] = Field(default_factory=list)
     errors: list[str] = Field(default_factory=list)
 
 
