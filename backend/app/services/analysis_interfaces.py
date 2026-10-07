@@ -557,7 +557,8 @@ def classify_events(db: Session, data: ClassifyEventsInput) -> ClassifyEventsOut
         for value in data.event_resolutions
         if value.action in {"create", "merge"} and not value.review_required
     }
-    budget = [settings.official_search_max_events]
+    budget = [min(settings.official_search_max_events, data.official_search_budget)
+              if data.official_search_budget is not None else settings.official_search_max_events]
     for event in db.scalars(
         select(Event).where(Event.event_id.in_(data.event_ids)).order_by(Event.id)
     ).all():

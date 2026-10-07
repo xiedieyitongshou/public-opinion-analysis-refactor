@@ -1,10 +1,13 @@
 """Database initialization helpers."""
 
+from pathlib import Path
+
 from sqlalchemy import Engine, inspect
 
 from app.db.session import Base, engine
 from app.models import (
     agent_runtime,  # noqa: F401
+    briefing,  # noqa: F401
     business,  # noqa: F401
 )
 
@@ -16,6 +19,8 @@ def init_db(bind: Engine = engine) -> None:
     databases; full migrations can replace this when schema evolution expands.
     """
     if bind.dialect.name == "sqlite":
+        if bind.url.database not in {None, "", ":memory:"}:
+            Path(bind.url.database).parent.mkdir(parents=True, exist_ok=True)
         inspector = inspect(bind)
         if "platform_scores" in inspector.get_table_names() and not any(
             column["name"] == "observation_id"
@@ -28,6 +33,10 @@ def init_db(bind: Engine = engine) -> None:
     Base.metadata.create_all(bind=bind)
     if bind.dialect.name == "sqlite":
         with bind.begin() as connection:
+            connection.exec_driver_sql(
+                "CREATE UNIQUE INDEX IF NOT EXISTS ux_one_active_analysis "
+                "ON analysis_runs ((1)) WHERE status IN ('queued', 'running')"
+            )
             connection.exec_driver_sql(
                 "CREATE UNIQUE INDEX IF NOT EXISTS ux_platform_score_observation "
                 "ON platform_scores (event_id, platform, observation_id)"

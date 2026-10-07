@@ -137,6 +137,16 @@ class CollectorRegistry:
             )
             if input_data.run_id:
                 config.params = {**config.params, "run_id": input_data.run_id}
+            if source_id == "zhihu_search" and config.params.get("from_hotlist"):
+                parent = next((value for value in results
+                               if value.source_id == "zhihu_hot_list"
+                               and value.status == "succeeded"), None)
+                config.params["candidates"] = [
+                    {"title": item["title"], "url": item["url"],
+                     "rank": (item.get("raw_metrics") or {}).get("rank", 0)}
+                    for item in (parent.normalized_items if parent else [])
+                    if item.get("title") and item.get("url")
+                ][:int(config.params.get("max_queries", 3))]
             result = collector.collect(config, db=db)
             results.append(result)
             if result.status == "failed":

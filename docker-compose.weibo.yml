@@ -1,6 +1,7 @@
 services:
   rsshub:
-    image: diygod/rsshub:latest
+    # The Weibo route needs a browser to initialize its visitor session.
+    image: diygod/rsshub:chromium-bundled
     ports:
       - "1200:1200"
     environment:

@@ -451,9 +451,10 @@ def _evidence_item(item: Any) -> OfficialEvidenceItem:
     raw_metrics = _dict_value(item, "raw_metrics_json", "raw_metrics", default={}) or {}
     quality_flags = _list_value(item, "quality_flags_json", "quality_flags")
     item_id = (
-        _string_value(item, "item_id")
-        or _string_value(item, "external_id")
+        _string_value(source_citation, "item_id")
+        or _string_value(item, "item_id")
         or _string_value(item, "id")
+        or _string_value(item, "external_id")
     )
     return OfficialEvidenceItem(
         item_id=item_id,

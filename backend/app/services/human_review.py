@@ -74,6 +74,42 @@ def decide_human_review_task(
     task: HumanReviewTask,
     input_data: HumanReviewDecisionInput,
 ) -> HumanReviewDecisionOutput:
+    from uuid import uuid4
+
+    from app.services.briefing_jobs import acquire_lease, release_lease
+    from app.services.review_refresh import refresh_after_review
+
+    owner = str(uuid4())
+    if not acquire_lease(db, "analysis", owner, seconds=900):
+        return HumanReviewDecisionOutput(
+            status="failed", human_review_task=task_record(task),
+            message="采集分析正在运行，请完成后再处理候选。",
+        )
+    try:
+        result = _decide_human_review_task(db, task, input_data)
+        if result.status == "succeeded":
+            try:
+                result.report_id = refresh_after_review(db, task, result.event_id)
+                result.refresh_status = "refreshed" if result.report_id else "no_analysis_run"
+            except Exception as exc:
+                db.rollback()
+                result.refresh_status = "failed"
+                result.message = f"审核已保存，重算失败：{type(exc).__name__}"
+            payload = dict(task.payload_json or {})
+            payload["refresh"] = {"status": result.refresh_status, "report_id": result.report_id,
+                                  "error": result.message}
+            task.payload_json = payload
+            db.commit()
+        return result
+    finally:
+        release_lease(db, "analysis", owner)
+
+
+def _decide_human_review_task(
+    db: Session,
+    task: HumanReviewTask,
+    input_data: HumanReviewDecisionInput,
+) -> HumanReviewDecisionOutput:
     if task.status != "pending":
         return HumanReviewDecisionOutput(
             status="failed",
@@ -224,6 +260,11 @@ def _apply_decision_side_effect(
         _append_event_review_detail(db, str(candidate_event_id), payload, input_data, now=now)
         return str(candidate_event_id)
     if input_data.decision == "create_new_event":
+        item_ids = [int(value) for value in payload.get("item_ids", [])]
+        rows = db.scalars(select(Item).where(Item.id.in_(item_ids))).all() if item_ids else []
+        if rows and all(row.signal_role == "search_enrichment_signal" for row in rows):
+            raise ValueError("搜索增强样本不能独立创建自动发现热点，请关联已有父事件")
+        observed = _original_observed_times(db, payload)
         event_id = _new_event_id(payload, now)
         event = Event(
             event_id=event_id,
@@ -231,8 +272,8 @@ def _apply_decision_side_effect(
             event_type=None,
             lifecycle_status="active",
             confidence_score=payload.get("confidence"),
-            first_seen_at=now,
-            last_seen_at=now,
+            first_seen_at=min(observed) if observed else None,
+            last_seen_at=max(observed) if observed else None,
             keywords_json=[],
             source_citations_json=payload.get("source_citations") or [],
             event_detail_json={
@@ -297,7 +338,12 @@ def _append_event_review_detail(
     )
     detail["human_review_decisions"] = reviews
     event.event_detail_json = detail
-    event.last_seen_at = now
+    observed = _original_observed_times(db, payload)
+    if observed:
+        from app.services.briefing import as_utc
+        event.last_seen_at = max([*observed, *(
+            [as_utc(event.last_seen_at)] if event.last_seen_at else []
+        )])
     db.add(event)
 
 
@@ -331,6 +377,19 @@ def _new_event_id(payload: dict[str, Any], now: datetime) -> str:
     )
     digest = hashlib.sha256(seed.encode("utf-8")).hexdigest()[:12]
     return f"evt_{now.date().strftime('%Y%m%d')}_{digest}"
+
+
+def _original_observed_times(db, payload):
+    from app.services.briefing import as_utc
+
+    values = [as_utc(citation["fetched_at"]) for citation in payload.get("source_citations", [])
+              if citation.get("fetched_at")]
+    if not values:
+        rows = db.scalars(select(Item).where(Item.id.in_(
+            [int(value) for value in payload.get("item_ids", [])]
+        )))
+        values = [as_utc(row.fetched_at) for row in rows if row.fetched_at]
+    return values
 
 
 def _event_title(payload: dict[str, Any], event_id: str) -> str:

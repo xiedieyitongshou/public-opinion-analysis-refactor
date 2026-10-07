@@ -60,3 +60,5 @@ class HumanReviewDecisionOutput(BaseModel):
     human_review_task: HumanReviewTaskRecord
     event_id: str | None = None
     message: str | None = None
+    refresh_status: str | None = None
+    report_id: int | None = None

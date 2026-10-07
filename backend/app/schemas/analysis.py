@@ -67,6 +67,8 @@ class ClassifyEventsInput(BaseModel):
     event_resolutions: list[EventResolution] = Field(default_factory=list)
     matching_profile: Literal["rules", "hybrid", "hybrid_rerank"] = "rules"
     official_search_enabled: bool = False
+    # Zero permits reuse of cached evidence without making new external requests.
+    official_search_budget: int | None = Field(default=None, ge=0)
 
 
 class ClassifyEventsOutput(BaseModel):

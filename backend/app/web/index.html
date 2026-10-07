@@ -1,0 +1,127 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>每日关注 · 简报工作台</title>
+    <link rel="stylesheet" href="/static/app.css" />
+    <script src="/static/app.js" defer></script>
+  </head>
+  <body>
+    <header class="masthead">
+      <a class="brand" href="/">观 / 每日关注<span>DAILY BRIEFING</span></a>
+      <div class="header-actions">
+        <span class="private-label">个人简报工作台</span
+        ><button id="logout" class="quiet" hidden>退出</button>
+      </div>
+    </header>
+    <main>
+      <div id="notice" class="notice" role="status" hidden></div>
+      <section id="login" class="login panel" hidden>
+        <p class="eyebrow">WELCOME BACK</p>
+        <h1>让每天的关注<br />有迹可循。</h1>
+        <p class="muted">查看平台热点、核对事件归并，确认今天要发送的简报。</p>
+        <form id="login-form">
+          <label for="token">管理员口令</label
+          ><input
+            id="token"
+            name="token"
+            type="password"
+            autocomplete="current-password"
+            required
+          />
+          <button type="submit" class="primary">进入工作台 →</button>
+        </form>
+        <p class="small muted">
+          首次使用请在 backend/.env 中设置 ADMIN_TOKEN。
+        </p>
+      </section>
+      <div id="workspace" hidden>
+        <section class="intro">
+          <div>
+            <p class="eyebrow">YOUR DAILY SIGNAL</p>
+            <h1>过去 24 小时，大家在关注什么？</h1>
+            <p class="muted">
+              知乎、微博与官媒的关注线索，一份有来源依据的每日简报。
+            </p>
+          </div>
+          <button id="collect" class="primary">采集新一期 ↗</button>
+        </section>
+        <nav class="tabs" aria-label="工作台导航">
+          <button data-tab="briefings" class="active">简报</button>
+          <button data-tab="operations">运行与用量</button
+          ><button data-tab="reviews">
+            人工复核 <span id="review-count" class="badge">0</span>
+          </button>
+          <button data-tab="deliveries">邮件投递</button
+          ><button id="refresh" class="quiet refresh">刷新数据 ↻</button>
+        </nav>
+        <section id="briefings" class="tab-panel">
+          <div class="section-heading">
+            <div>
+              <p class="eyebrow">EDITION ARCHIVE</p>
+              <h2>简报与历史版本</h2>
+            </div>
+            <p class="muted small">确认后的内容保持固定，修改生成新版本。</p>
+          </div>
+          <div id="report-list" class="report-grid"></div>
+          <section id="preview-panel" class="panel" hidden>
+            <div class="section-heading">
+              <h2 id="preview-title">简报预览</h2>
+              <div id="preview-actions" class="actions"></div>
+            </div>
+            <div id="quality" class="quality"></div>
+            <iframe id="report-preview" title="日报正文预览"></iframe>
+          </section>
+        </section>
+        <section id="operations" class="tab-panel" hidden>
+          <div class="section-heading">
+            <div>
+              <p class="eyebrow">SYSTEM PULSE</p>
+              <h2>运行与来源</h2>
+            </div>
+            <div id="schedule-summary" class="muted small"></div>
+          </div>
+          <div id="source-list" class="source-grid"></div>
+          <div class="panel">
+            <h2>过去 24 小时的 API 使用</h2>
+            <p id="usage-notes" class="muted small"></p>
+            <div id="usage" class="table-wrap"></div>
+            <div id="quotas"></div>
+          </div>
+          <div class="panel">
+            <h2>采集任务</h2>
+            <div id="jobs" class="table-wrap"></div>
+          </div>
+        </section>
+        <section id="reviews" class="tab-panel" hidden>
+          <div class="section-heading">
+            <div>
+              <p class="eyebrow">HUMAN IN THE LOOP</p>
+              <h2>待处理的事件关系</h2>
+            </div>
+            <p class="muted small">未确认的候选关系不会参与跨平台分类。</p>
+          </div>
+          <div id="review-list"></div>
+        </section>
+        <section id="deliveries" class="tab-panel" hidden>
+          <div class="section-heading">
+            <div>
+              <p class="eyebrow">DELIVERY DESK</p>
+              <h2>邮件投递记录</h2>
+            </div>
+            <p id="email-summary" class="muted small"></p>
+          </div>
+          <div class="panel">
+            <div id="delivery-list" class="table-wrap"></div>
+          </div>
+          <p class="small muted">
+            “已投递”表示 SMTP
+            服务已接收，不代表收件人已阅读。结果未知时请核对收件箱，再决定是否重试。
+          </p>
+        </section>
+      </div>
+    </main>
+    <footer>来源可追溯 · 热度在平台内比较 · 未知如实保留</footer>
+  </body>
+</html>

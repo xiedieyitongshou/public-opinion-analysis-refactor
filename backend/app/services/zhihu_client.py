@@ -12,6 +12,7 @@ import httpx
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.core.config import settings
+from app.services.request_usage import http_request
 
 
 class ZhihuAPIError(RuntimeError):
@@ -138,7 +139,10 @@ class ZhihuClient:
             close_client = True
 
         try:
-            response = client.get(path, params=params, headers=self._headers())
+            source = ("zhihu_hot_list" if path == self.config.hot_list_path else
+                      "zhihu_quota" if path == self.config.quota_path else "zhihu_search")
+            response = http_request(client, source, "get", path,
+                                    params=params, headers=self._headers())
             response.raise_for_status()
             payload = response.json()
         except httpx.HTTPStatusError as exc:

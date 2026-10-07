@@ -105,6 +105,7 @@ class EventCard(BaseModel):
 
     event_id: str
     title: str
+    title_is_source_quote: bool = False
     summary: str
     domain: str | None = None
     priority_category: PriorityCategory = "unknown"
@@ -178,6 +179,7 @@ class BriefingSection(BaseModel):
     summary: str | None = None
     event_cards: list[EventCard] = Field(default_factory=list)
     notes: list[str] = Field(default_factory=list)
+    key: str | None = None
 
 
 class DailyBriefing(BaseModel):
@@ -193,16 +195,27 @@ class DailyBriefing(BaseModel):
     risk_notes: list[str] = Field(default_factory=list)
     created_at: datetime | str
     retention_until: datetime | str | None = None
+    window_start: datetime | None = None
+    window_end: datetime | None = None
+    timezone: str = "Asia/Shanghai"
+    event_count: int = 0
+    source_health: list[dict[str, Any]] = Field(default_factory=list)
+    pending_review_count: int = 0
+    excluded_events: list[dict[str, str]] = Field(default_factory=list)
 
     @model_validator(mode="after")
     def count_citations_and_require_sections(self) -> DailyBriefing:
         if not self.sections:
             raise ValueError("DailyBriefing must include at least one section")
-        self.source_citation_count = sum(
-            len(card.source_citations)
+        self.source_citation_count = len({
+            (citation.item_id, citation.url, citation.source_name)
             for section in self.sections
             for card in section.event_cards
-        )
+            for citation in card.source_citations
+        })
+        self.event_count = len({
+            card.event_id for section in self.sections for card in section.event_cards
+        })
         return self
 
 

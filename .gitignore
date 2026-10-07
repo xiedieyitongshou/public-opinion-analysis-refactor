@@ -223,6 +223,9 @@ backend/data/*.sqlite
 backend/data/*.sqlite3
 backend/data/weibo-cli-live-samples/
 backend/data/models/
+backend/data/briefing-mvp/
+backend/data/*.db-wal
+backend/data/*.db-shm
 notes/source-probe-raw/
 
 # IDE project files

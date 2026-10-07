@@ -9,6 +9,10 @@ from app.core.config import settings
 def offline_defaults(monkeypatch):
     monkeypatch.setattr(settings, "matching_profile", "rules")
     monkeypatch.setattr(settings, "official_search_enabled", False)
+    monkeypatch.setattr(settings, "admin_token", "test-admin")
+    monkeypatch.setattr(settings, "scheduler_enabled", False)
+    monkeypatch.setattr(settings, "email_schedule_enabled", False)
+    monkeypatch.setattr(settings, "quota_probe_enabled", False)
 
 
 @pytest.fixture

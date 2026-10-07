@@ -17,6 +17,7 @@ from sqlalchemy.orm import Session
 from app.core.config import settings
 from app.models import Item, Source
 from app.schemas.normalized import NormalizedItem
+from app.services.request_usage import http_request
 
 ENDPOINTS = {
     "people": "https://search.people.cn/search-platform/front/search",
@@ -67,7 +68,8 @@ class OfficialSearchClient:
         try:
             headers = {"User-Agent": "public-opinion-analysis-official-search/0.2"}
             if source == "people":
-                response = client.post(
+                response = http_request(
+                    client, "official_search_people", "post",
                     ENDPOINTS[source],
                     json={
                         "key": query,
@@ -85,7 +87,8 @@ class OfficialSearchClient:
                     follow_redirects=True,
                 )
             else:
-                response = client.get(
+                response = http_request(
+                    client, "official_search_chinanews", "get",
                     ENDPOINTS[source], params={"q": query}, headers=headers, follow_redirects=True
                 )
             status = response.status_code

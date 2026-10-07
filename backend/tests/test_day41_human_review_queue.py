@@ -278,4 +278,4 @@ def client_for(session_factory) -> TestClient:
             db.close()
 
     app.dependency_overrides[get_db] = override_db
-    return TestClient(app)
+    return TestClient(app, headers={"Authorization": "Bearer test-admin"})

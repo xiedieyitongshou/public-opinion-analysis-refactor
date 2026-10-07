@@ -24,6 +24,7 @@ from pydantic import BaseModel, ConfigDict
 from app.core.config import settings
 from app.schemas.signals import SearchEnrichmentRelation
 from app.services.event_constraints import title_conflicts
+from app.services.request_usage import http_request, measured_call
 from app.services.search_enrichment_filter import evaluate_search_enrichment
 
 USER_AGENT = "public-opinion-analysis-weibo-heat-minimal/0.1"
@@ -253,7 +254,10 @@ class WeiboHeatClient:
             )
 
         try:
-            result = self._cli_runner(command, self.config.cli_timeout_seconds)
+            result = measured_call(
+                "weibo_cli", "search", "cli_invocation",
+                lambda: self._cli_runner(command, self.config.cli_timeout_seconds),
+            )
         except FileNotFoundError:
             return WeiboCLIEnrichment(
                 enabled=True,
@@ -344,7 +348,8 @@ class WeiboHeatClient:
         try:
             for _ in range(attempts):
                 try:
-                    response = client.get(
+                    response = http_request(
+                        client, "weibo_rsshub_hot_search", "get",
                         rsshub_url,
                         follow_redirects=True,
                         headers={"Accept": "application/rss+xml, application/xml, text/xml"},

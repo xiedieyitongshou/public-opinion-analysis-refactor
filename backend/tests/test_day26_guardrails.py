@@ -161,7 +161,7 @@ def test_ops_api_exposes_guardrails_and_runtime_lists() -> None:
 
     app.dependency_overrides[get_db] = override_db
     try:
-        client = TestClient(app)
+        client = TestClient(app, headers={"Authorization": "Bearer test-admin"})
         rules = client.get("/ops/guardrails/rules")
         sources = client.get("/ops/sources")
         tasks = client.get("/ops/agent-tasks")

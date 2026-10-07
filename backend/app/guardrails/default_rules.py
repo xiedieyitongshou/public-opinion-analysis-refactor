@@ -251,8 +251,15 @@ def _event_cards(payload: dict[str, Any]) -> list[dict[str, Any]]:
 
 def _card_text(card: dict[str, Any]) -> str:
     evidence = card.get("evidence_summary") or {}
+    # Only a verifiable, explicitly labelled source-title quote is exempt. The
+    # generated summary and evidence prose remain subject to claim checks.
+    quoted_title = card.get("title_is_source_quote") and any(
+        citation.get("title") == card.get("title") and citation.get("url")
+        for citation in card.get("source_citations") or []
+        if isinstance(citation, dict)
+    )
     parts = [
-        card.get("title"),
+        None if quoted_title else card.get("title"),
         card.get("summary"),
         evidence.get("lead"),
         " ".join(evidence.get("platform_evidence") or []),

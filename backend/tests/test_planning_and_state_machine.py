@@ -34,21 +34,15 @@ def make_session():
 
 
 def test_planner_creates_linear_daily_briefing_plan() -> None:
-    plan = Planner().create_daily_briefing_plan({"source_limit": 10})
+    plan = Planner().create_daily_briefing_plan({"run_id": "observed-round"})
 
     assert plan.mode == "daily_briefing"
     assert [step.tool_name for step in plan.steps] == [
-        "fetch_source_items",
-        "normalize_raw_items",
-        "extract_event_signals",
-        "match_and_resolve_events",
-        "calculate_event_scores",
         "generate_daily_briefing",
         "review_briefing_quality",
-        "run_briefing_guardrails",
-        "create_human_review_task",
+        "save_daily_report",
     ]
-    assert plan.steps[1].depends_on == ["fetch_source_items"]
+    assert plan.steps[1].input_bindings == {"briefing": "generate.briefing"}
 
 
 def test_planner_creates_event_search_placeholder_plan() -> None:

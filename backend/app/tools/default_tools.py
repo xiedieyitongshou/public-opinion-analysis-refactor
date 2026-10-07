@@ -37,6 +37,14 @@ from app.schemas.analysis import (
     PrepareSourceSignalsInput,
     PrepareSourceSignalsOutput,
 )
+from app.schemas.briefing import (
+    GenerateBriefingInput,
+    GenerateBriefingOutput,
+    ReviewBriefingInput,
+    ReviewBriefingOutput,
+    SaveBriefingInput,
+    SaveBriefingOutput,
+)
 from app.tools.runtime import ToolContext, ToolDefinition, ToolRegistry
 
 
@@ -85,6 +93,22 @@ def placeholder_handler(input_data: PlaceholderInput, context: ToolContext) -> P
         message=f"{context.actor} requested a placeholder tool; implementation is scheduled later.",
         data=input_data.payload,
     )
+
+
+def generate_daily_briefing_handler(data, context):
+    from app.services.briefing import generate_briefing
+    return GenerateBriefingOutput(briefing=generate_briefing(context.db_session, data.run_id))
+
+
+def review_briefing_quality_handler(data, context):
+    from app.services.briefing import review_briefing
+    return ReviewBriefingOutput(briefing=data.briefing, quality=review_briefing(data.briefing))
+
+
+def save_daily_report_handler(data, context):
+    from app.services.briefing import save_briefing
+    report = save_briefing(context.db_session, data.briefing, data.supersedes_id)
+    return SaveBriefingOutput(report_id=report.id)
 
 
 def fetch_source_items_handler(
@@ -441,12 +465,19 @@ def build_default_tool_registry() -> ToolRegistry:
         )
     )
 
-    placeholder_tools = [
-        "generate_daily_briefing",
-        "review_briefing_quality",
-        "save_daily_report",
-        "render_briefing_image",
-    ]
+    for name, input_model, output_model, handler in (
+        ("generate_daily_briefing", GenerateBriefingInput, GenerateBriefingOutput,
+         generate_daily_briefing_handler),
+        ("review_briefing_quality", ReviewBriefingInput, ReviewBriefingOutput,
+         review_briefing_quality_handler),
+        ("save_daily_report", SaveBriefingInput, SaveBriefingOutput, save_daily_report_handler),
+    ):
+        registry.register(ToolDefinition(
+            name=name, description=f"Week 8 {name}", input_model=input_model,
+            output_model=output_model, handler=handler, has_side_effect=name == "save_daily_report",
+        ))
+
+    placeholder_tools = ["render_briefing_image"]
 
     for name in placeholder_tools:
         registry.register(

@@ -1,10 +1,12 @@
 """Application configuration."""
 
 from functools import lru_cache
+from pathlib import Path
 from typing import Literal
 
-from pydantic import Field
+from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+from sqlalchemy.engine import make_url
 
 
 class Settings(BaseSettings):
@@ -124,6 +126,40 @@ class Settings(BaseSettings):
     deepseek_api_key: str | None = Field(default=None, alias="DEEPSEEK_API_KEY")
     deepseek_base_url: str = Field(default="https://api.deepseek.com", alias="DEEPSEEK_BASE_URL")
     deepseek_model: str = Field(default="deepseek-chat", alias="DEEPSEEK_MODEL")
+
+    admin_token: str | None = None
+    admin_cookie_secure: bool = False  # Set true behind HTTPS.
+    scheduler_enabled: bool = False
+    sampling_interval_minutes: int = Field(default=180, ge=120, le=180)
+    job_timeout_seconds: int = Field(default=900, ge=60, le=3600)
+    request_limits: dict[str, int] = Field(default_factory=lambda: {
+        "zhihu_hot_list": 2, "zhihu_search": 5, "zhihu_quota": 1,
+        "weibo_rsshub_hot_search": 4, "weibo_cli": 3,
+        "chinanews_scroll_rss": 3, "people_politics_rss": 3, "xinhua_politics_rss": 3,
+        "official_search_people": 3, "official_search_chinanews": 3,
+    })
+    quota_probe_enabled: bool = False
+    briefing_timezone: str = "Asia/Shanghai"
+    email_schedule_enabled: bool = False
+    email_send_time: str = Field(default="08:00", pattern=r"^(?:[01]\d|2[0-3]):[0-5]\d$")
+    email_recipients: list[str] = Field(default_factory=list)
+    email_from: str | None = None
+    smtp_host: str | None = None
+    smtp_port: int = Field(default=587, ge=1, le=65535)
+    smtp_username: str | None = None
+    smtp_password: str | None = None
+    smtp_security: Literal["starttls", "ssl", "plain"] = "starttls"
+    smtp_timeout_seconds: int = Field(default=20, ge=1, le=60)
+    email_max_attempts: int = Field(default=3, ge=1, le=5)
+
+    @model_validator(mode="after")
+    def resolve_local_database(self):
+        url = make_url(self.database_url)
+        if (url.get_backend_name() == "sqlite" and url.database not in {None, "", ":memory:"}
+                and not Path(url.database).is_absolute()):
+            path = Path(__file__).resolve().parents[2] / url.database
+            self.database_url = url.set(database=str(path.resolve())).render_as_string()
+        return self
 
     model_config = SettingsConfigDict(
         env_file=("backend/.env", ".env", "../.env"),

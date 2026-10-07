@@ -1,6 +1,8 @@
 # 舆情热点分析系统
 
-当前可运行的核心是**固定九步 Agent 编排**，顺序串起三个业务模块：数据采集 → 归一化与事件构建 → 分平台热度、官媒分类与趋势分析。命令行入口是 `backend/app/analysis_cli.py`，每次执行一轮采集和分析；`backend/app/main.py` 是独立的 FastAPI 入口，提供健康检查与运维接口，启动 API 不会自动触发采集。当前结果可落库和回溯，但日报、出图、后台页面及完整部署尚未完成。
+当前系统复用**固定九步 Agent 编排**完成采集、事件构建和分平台分析，再生成固定版本的每日简报。第八周 MVP 已接通过去 24 小时的知乎／微博／官媒栏目、A–F 分类、平台内趋势、管理后台和 HTML 邮件流程。入口是 `backend/app/briefing_cli.py` 与 `backend/app/main.py`；原 `analysis_cli.py` 仍可单独运行一轮九步分析。连续采样可配置开启，默认只处理手动任务。完整服务器部署与长图导出仍属后续范围。
+
+先看 [MVP 运行说明](docs/briefing-mvp.md)；本机启动后访问 <http://127.0.0.1:8000>。实际完成范围和仍待完成的 24 小时／真实邮箱验收见 [briefing-v0.1](reports/briefing-v0.1.md)。
 
 ## 运行结构
 
@@ -27,12 +29,16 @@ flowchart TD
     T8 -. "官媒证据 / 分类" .-> DB
     AG -. "AgentTask / ToolCall" .-> DB
     DB -. "历史观测" .-> T9
-    API["FastAPI：app.main"] --> OPS["/health、/ops/*<br/>不启动分析 Plan"]
+    API["FastAPI：app.main<br/>管理员页面 /api/* /ops/*"] --> JOB["任务队列 / 可选定时采样"]
+    JOB --> AG
+    T9 --> REPORT["生成 → 质量检查 → 保存固定版本"]
+    REPORT --> VIEW["网页 / JSON / HTML与文本邮件"]
+    VIEW --> MAIL["人工确认版本 → 手动或每日投递"]
 ```
 
 `HotspotAnalysisAgent` 在 [`backend/app/agents/analysis.py`](backend/app/agents/analysis.py) 构造固定 Plan；`AgentTaskRunner` 按依赖执行，`ToolRegistry` 校验输入、调用工具并记录任务与工具日志。这里的 Agent 是**可审计的确定性编排**，不是已接入 LLM 的动态规划器。九步中的业务算法仍由各 Tool 内部的 Collector、Agent 或 service 完成，并非每个算法函数都是单独注册的 Tool。
 
-默认注册表共有 **16 个 Tool**：下表的 9 个属于当前主链路；另外 7 个是独立评估、日报 Guardrails、4 个日报／出图占位和 Mode B 检索占位，均不在这条固定 Plan 中。
+默认注册表共有 **16 个 Tool**：下表的 9 个属于分析主链路；另外包括独立评估、日报 Guardrails，以及已接通的日报生成、质量检查和保存工具。MVP 在分析之后执行三步日报 Plan；图片渲染和 Mode B 检索仍为占位。
 
 | 顺序 | Tool | 当前职责和主要交接数据 |
 |---|---|---|
@@ -67,11 +73,11 @@ flowchart TD
 需要 Python 3.11+。下面从项目根目录开始；命令示例为 PowerShell。完整分析使用 SQLite（默认位于 `backend/data/app.db`），首次 CLI 运行会初始化表。
 
 ```powershell
+py -3.11 -m venv .venv
+.\.venv\Scripts\python.exe -m pip install -e "./backend[dev]"
 cd backend
-python -m venv .venv
-.\.venv\Scripts\python.exe -m pip install -e ".[dev]"
 $env:ZHIHU_ACCESS_SECRET = "<你的知乎开放平台密钥>"
-.\.venv\Scripts\python.exe -m app.analysis_cli --sources zhihu_hot_list --limit 5 --interval-minutes 120 --matching-profile rules
+..\.venv\Scripts\python.exe -m app.analysis_cli --sources zhihu_hot_list --limit 5 --interval-minutes 120 --matching-profile rules
 ```
 
 这条命令实际调用知乎 API，并依次执行九个 Tool。`--matching-profile rules` 便于在未下载语义模型时先运行规则基线；默认配置为 `hybrid_rerank`，启用本地 embedding/rerank 的安装方法见[匹配更新说明](docs/matching-upgrade.md#模型安装与运行)。真实运行默认允许限额内的官媒定向搜索，可用 `--no-official-search` 关闭。每次调用默认生成新的 `run_id`；显式复用旧 ID 是回放该轮采集，不是重新抓取。回放、隔离数据库与结构化输出见[工作流说明](docs/hotspot-analysis-workflow.md#运行与离线验证)。
@@ -80,20 +86,21 @@ $env:ZHIHU_ACCESS_SECRET = "<你的知乎开放平台密钥>"
 
 ```powershell
 docker compose -f ..\docker-compose.weibo.yml up -d rsshub
-.\.venv\Scripts\python.exe scripts/weibo_heat_minimal.py --base-url http://localhost:1200 --json
+..\.venv\Scripts\python.exe scripts/weibo_heat_minimal.py --base-url http://localhost:1200 --json
 npm install -g @weibo-ai/weibo-cli@0.9.1
 weibo-cli auth login
 weibo-cli doctor
-.\.venv\Scripts\python.exe scripts/weibo_heat_minimal.py --base-url http://localhost:1200 --with-cli --cli-topic-limit 3 --json
+..\.venv\Scripts\python.exe scripts/weibo_heat_minimal.py --base-url http://localhost:1200 --with-cli --cli-topic-limit 3 --json
 $env:WEIBO_CLI_ENABLED = "true"  # 此开关用于完整分析链路中的可选 CLI 增强
 ```
 
 完成外部服务配置后，可用 `--sources zhihu_hot_list weibo_rsshub_hot_search people_politics_rss chinanews_scroll_rss xinhua_politics_rss` 跑多源一轮。`docker-compose.weibo.yml` 与 `backend/Dockerfile.weibo` 只覆盖 RSSHub／微博最小采集，不是整个后端的部署方案。知乎也可单独执行 `python scripts/zhihu_smoke_test.py --limit 10` 验证凭据和热榜接口。
 
-API 需要另开进程；它目前提供 `GET /health` 和 `/ops/*` 的来源、条目、事件、任务／Tool 日志、Guardrails 与人工复核接口，没有“启动完整分析”的 HTTP 路由或可视化后台页面。
+API 需要另开进程。现在提供管理员页面、`POST /api/jobs` 启动采集、日报／用量／投递查询及原有 `/ops/*` 运维接口；管理接口需要管理员令牌。MVP 推荐使用仓库根目录 `.venv`，在 `backend` 目录执行：
 
 ```powershell
-.\.venv\Scripts\python.exe -m uvicorn app.main:app --reload
+..\.venv\Scripts\python.exe -m app.briefing_cli init
+..\.venv\Scripts\python.exe -m uvicorn app.main:app --host 127.0.0.1 --port 8000
 ```
 
 ## 评估结果与尚未完成的工作
@@ -103,9 +110,9 @@ API 需要另开进程；它目前提供 `GET /health` 和 `/ops/*` 的来源、
 接下来仍需处理：
 
 - **漏合并和漏补证。** 分析 10 对未自动合并的正例与 4 条官媒漏检，区分应当转人工的保守决策和实际漏召回；补充自然跨平台正例及人工复核标签。现有人工队列主要接收事件合并的 `candidate_review`，官媒相关性疑难项尚未自动进入该队列。
-- **发布时间策略。** v0.2 中，2025 年发布的旧官媒报道仍可在 2026 年当前轮次形成 F 类事件。需先确定历史报道可作为证据的用途，以及“当日新热点”的入池条件，再修改时间策略。
+- **持续验证时效策略。** 后续已修复旧官媒报道重新抓取后进入当天热点的问题；按滚动 24 小时和可靠发布时间入池，合法短榜／空榜可判断离榜。缺失发布时间导致的漏收、无提示截断和历史回放限制见 [v0.1 修复说明](reports/evaluation-v0.1.md#本轮问题定位)。
 - **多轮实采与长期监控。** 现有真实记录只覆盖有限轮次；还需连续采样测源可用率、限流、榜单完整性与趋势质量。微博官方 CLI 的主要持续使用约束是认证、服务开通与付费额度，不能因为单次调用成功就把长期可调用性当成已解决。官媒搜索实测中中新网可用，人民网请求曾返回 HTTP 405；旧 RSS 内容或缺失发布时间也会影响判断。
-- **工作流后段。** `run_evaluation_suite` 已注册并可独立使用；`run_briefing_guardrails` 有实现，但日报生成、质量复核、保存和图片渲染 Tool 目前只是 `not_implemented` 占位。`search_existing_evidence` 的 Mode B 检索也是占位；LLM 动态规划、日报质量／去重、压力测试尚未完成。
+- **MVP 运行验收与扩展。** 日报生成、质量复核、固定版本保存、页面和邮件流程已经接通；连续 24 小时实采与真实收件邮箱验收仍在进行／待配置。图片渲染、Mode B 检索、LLM 动态规划和压力测试仍未完成。
 
 评估报告使用离线用例：完整链路会运行现有九步 Plan，但替换采集返回值；v0.2 **没有再次调用**知乎 API 或微博 CLI。评估方法、逐例失败和局限以两份报告为准。
 
@@ -113,12 +120,12 @@ API 需要另开进程；它目前提供 `GET /health` 和 `/ops/*` 的来源、
 
 ### 完整部署（待实现）
 
-待补：后端应用镜像与编排、持久化数据库／迁移、定时采集、凭据配置、运行监控与部署说明。现有微博 Docker 文件只供最小采集实验。
+已有本地 SQLite、采集调度和最小监控页面；待补后端应用镜像与编排、生产迁移、日志轮转和服务器部署说明。现有微博 Docker 文件覆盖 RSSHub 与最小采集实验。
 
 ### 热点图／日报图片生成（待实现）
 
-待补：从已审核的事件与分平台分析生成日报内容、图表或图片，记录来源引用与生成结果；现有 `render_briefing_image` Tool 仍返回 `not_implemented`。
+日报内容、来源引用、网页和 HTML／纯文本邮件已实现。长图是可选导出，`render_briefing_image` Tool 仍返回 `not_implemented`。
 
-### 后端管理页面（待实现）
+### 后端管理页面（MVP 已实现）
 
-待补：基于现有 `/ops/*` 接口展示来源状态、事件及证据、采集轮次、趋势、Tool 日志和人工复核；目前只有 API，没有管理页面。
+提供简报与历史、来源健康／请求用量／采集任务、候选对比与人工复核、邮件投递记录四个栏目。人工决定触发原始时间重算和更正草稿；完整 Agent Ops 扩展沿用第九周计划。

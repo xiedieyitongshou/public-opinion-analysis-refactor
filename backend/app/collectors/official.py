@@ -17,6 +17,7 @@ import httpx
 from app.collectors.base import BaseCollector
 from app.core.config import settings
 from app.schemas import CollectorMetadata, CollectorRunConfig, NormalizedItem, SourceStatus
+from app.services.request_usage import http_request
 from app.services.weibo_heat_client import BARE_AMPERSAND, INVALID_XML_CHARS
 
 HTML_TAG = re.compile(r"<[^>]+>")
@@ -69,7 +70,8 @@ class OfficialRSSCollector(BaseCollector):
             close_client = True
 
         try:
-            response = client.get(
+            response = http_request(
+                client, self.source_config.source_id, "get",
                 url,
                 follow_redirects=True,
                 headers={
