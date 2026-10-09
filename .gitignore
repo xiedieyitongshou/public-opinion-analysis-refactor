@@ -224,6 +224,11 @@ backend/data/*.sqlite3
 backend/data/weibo-cli-live-samples/
 backend/data/models/
 backend/data/briefing-mvp/
+backend/data/deployment-test/
+backend/logs/
+backend/artifacts/
+deploy/.env*
+!deploy/.env.example
 backend/data/*.db-wal
 backend/data/*.db-shm
 notes/source-probe-raw/

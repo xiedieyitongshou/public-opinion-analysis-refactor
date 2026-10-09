@@ -1,0 +1,31 @@
+# Isolated local SMTP inbox; it never relays messages to real recipients.
+services:
+  backend:
+    environment:
+      SCHEDULER_ENABLED: "false"
+      DAILY_BRIEFING_ENABLED: "false"
+      EMAIL_SCHEDULE_ENABLED: "false"
+      SMTP_HOST: mailpit
+      SMTP_PORT: "1025"
+      SMTP_SECURITY: plain
+      SMTP_USERNAME: ""
+      SMTP_PASSWORD: ""
+      EMAIL_FROM: briefing@example.test
+      EMAIL_RECIPIENTS: '["reader@example.test"]'
+    depends_on:
+      mailpit:
+        condition: service_started
+  mailpit:
+    image: axllent/mailpit:v1.31.4
+    environment:
+      MP_DATABASE: /data/mailpit.db
+      MP_MAX_MESSAGES: "100"
+    volumes:
+      - test-mail:/data
+    ports:
+      - "127.0.0.1:${MAILPIT_PORT:-18025}:8025"
+    logging:
+      driver: json-file
+      options: {max-size: 5m, max-file: "2"}
+volumes:
+  test-mail:

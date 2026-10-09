@@ -1,0 +1,13 @@
+**
+!backend/
+!backend/pyproject.toml
+!backend/requirements-linux.lock
+!backend/app/
+!backend/app/**
+!backend/scripts/
+!backend/scripts/prepare_semantic_models.py
+!backend/scripts/container_smoke.py
+!backend/scripts/profile_classification.py
+!backend/Dockerfile
+backend/**/__pycache__/
+backend/**/*.pyc

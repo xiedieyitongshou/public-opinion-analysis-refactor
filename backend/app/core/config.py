@@ -1,5 +1,6 @@
 """Application configuration."""
 
+from datetime import datetime
 from functools import lru_cache
 from pathlib import Path
 from typing import Literal
@@ -117,6 +118,7 @@ class Settings(BaseSettings):
     semantic_model_dir: str | None = None
     semantic_device: str = "cpu"
     semantic_cpu_threads: int = Field(default=4, ge=1, le=32)
+    semantic_cache_path: str | None = None
     matching_profile: Literal["rules", "hybrid", "hybrid_rerank"] = "hybrid_rerank"
     official_search_enabled: bool = True
     official_search_cache_minutes: int = Field(default=30, ge=0, le=1440)
@@ -130,6 +132,7 @@ class Settings(BaseSettings):
     admin_token: str | None = None
     admin_cookie_secure: bool = False  # Set true behind HTTPS.
     scheduler_enabled: bool = False
+    scheduler_until: datetime | None = None
     sampling_interval_minutes: int = Field(default=180, ge=120, le=180)
     job_timeout_seconds: int = Field(default=900, ge=60, le=3600)
     request_limits: dict[str, int] = Field(default_factory=lambda: {
@@ -140,6 +143,10 @@ class Settings(BaseSettings):
     })
     quota_probe_enabled: bool = False
     briefing_timezone: str = "Asia/Shanghai"
+    runtime_log_dir: str | None = None
+    runtime_log_retention_days: int = Field(default=14, ge=2, le=365)
+    briefing_artifact_dir: str = "./artifacts"
+    daily_briefing_enabled: bool = False
     email_schedule_enabled: bool = False
     email_send_time: str = Field(default="08:00", pattern=r"^(?:[01]\d|2[0-3]):[0-5]\d$")
     email_recipients: list[str] = Field(default_factory=list)
@@ -154,6 +161,8 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def resolve_local_database(self):
+        if self.scheduler_until is not None and self.scheduler_until.tzinfo is None:
+            raise ValueError("SCHEDULER_UNTIL must include a timezone")
         url = make_url(self.database_url)
         if (url.get_backend_name() == "sqlite" and url.database not in {None, "", ":memory:"}
                 and not Path(url.database).is_absolute()):

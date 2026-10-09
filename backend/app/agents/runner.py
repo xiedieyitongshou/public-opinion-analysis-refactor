@@ -1,6 +1,8 @@
 """Minimal linear agent task runner."""
 
+import logging
 from copy import deepcopy
+from time import perf_counter
 from typing import Any
 
 from sqlalchemy.orm import Session
@@ -21,6 +23,7 @@ class AgentTaskRunner:
         outputs: dict[str, dict[str, Any]] = {}
 
         for step in TaskGraph(plan=plan).execution_order():
+            started = perf_counter()
             task = AgentTask(
                 task_type=step.tool_name,
                 status=TaskStatus.PENDING.value,
@@ -32,6 +35,10 @@ class AgentTaskRunner:
             db.add(task)
             db.commit()
             db.refresh(task)
+
+            logging.getLogger(__name__).info(
+                "task_started plan=%s task=%s tool=%s", plan.plan_id, task.id, step.tool_name
+            )
 
             transition_task(task, TaskStatus.RUNNING)
             db.add(task)
@@ -78,6 +85,10 @@ class AgentTaskRunner:
             db.commit()
             db.refresh(task)
             tasks.append(task)
+            logging.getLogger(__name__).info(
+                "task_finished plan=%s task=%s tool=%s status=%s seconds=%.3f",
+                plan.plan_id, task.id, step.tool_name, task.status, perf_counter() - started,
+            )
             if result.output is not None:
                 outputs[step.step_id] = result.output
 

@@ -13,10 +13,15 @@ from app.api.auth import require_admin
 from app.core.config import settings
 from app.db.session import get_db
 from app.models import DailyReport, Event, HumanReviewTask
-from app.models.briefing import AnalysisRun, EmailDelivery, ReportRevision
+from app.models.briefing import AnalysisRun, DailyBriefingJob, EmailDelivery, ReportRevision
 from app.schemas.display import DailyBriefing
 from app.services.briefing import approve_report, generate_briefing, save_briefing, source_health
-from app.services.briefing_email import email_ready, recover_interrupted_deliveries, send_report
+from app.services.briefing_email import (
+    email_ready,
+    reconcile_sent_report,
+    recover_interrupted_deliveries,
+    send_report,
+)
 from app.services.briefing_jobs import default_analysis_input, queue_analysis
 from app.services.briefing_render import render_report, render_text
 from app.services.human_review import task_record
@@ -68,6 +73,7 @@ def dashboard(db: Db, request: Request):
         "scheduler": {
             "enabled": settings.scheduler_enabled,
             "interval_minutes": settings.sampling_interval_minutes,
+            "until": settings.scheduler_until,
             "error": coordinator.last_error if coordinator else None,
         },
         "email": {
@@ -76,9 +82,18 @@ def dashboard(db: Db, request: Request):
             "time": settings.email_send_time,
             "timezone": settings.briefing_timezone,
             "recipient_count": len(settings.email_recipients),
+            "auto_generate": settings.daily_briefing_enabled,
         },
         "request_limits": settings.request_limits,
     }
+
+
+@router.get("/daily-jobs")
+def daily_jobs(db: Db):
+    return [{"date": row.local_date, "run_id": row.run_id, "report_id": row.report_id,
+             "status": row.status, "error": row.error}
+            for row in db.scalars(select(DailyBriefingJob)
+                                  .order_by(DailyBriefingJob.local_date.desc()).limit(30))]
 
 
 @router.get("/usage")
@@ -236,6 +251,7 @@ def resolve_delivery(delivery_id: int, data: DeliveryDecision, db: Db):
     row.status = "sent" if data.received else "failed"
     row.error = "管理员已核对收件箱：" + ("已收到" if data.received else "未收到，可手动重试")
     db.commit()
+    reconcile_sent_report(db, row.report_id)
     return {"status": row.status}
 
 

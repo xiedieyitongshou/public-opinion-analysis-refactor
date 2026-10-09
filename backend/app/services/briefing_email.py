@@ -16,7 +16,7 @@ from sqlalchemy.exc import IntegrityError
 
 from app.core.config import settings
 from app.models import DailyReport
-from app.models.briefing import DailyDispatch, EmailDelivery
+from app.models.briefing import DailyBriefingJob, DailyDispatch, EmailDelivery
 from app.schemas.display import DailyBriefing
 from app.services.briefing import as_utc, review_briefing
 from app.services.briefing_render import render_report, render_text
@@ -107,6 +107,17 @@ def recover_interrupted_deliveries(db, now=None):
     db.commit()
 
 
+def reconcile_sent_report(db, report_id):
+    rows = db.scalars(select(EmailDelivery).where(EmailDelivery.report_id == report_id)).all()
+    if rows and all(row.status == "sent" for row in rows):
+        report = db.get(DailyReport, report_id)
+        report.status = "sent"
+        db.execute(update(DailyBriefingJob).where(
+            DailyBriefingJob.report_id == report_id,
+        ).values(status="sent", error=None))
+        db.commit()
+
+
 def send_report(db, report, *, sender=smtp_send, automatic=False):
     if report.status not in {"approved", "sent"}:
         raise ValueError("只有已确认的日报版本可以发送")
@@ -174,6 +185,7 @@ def send_report(db, report, *, sender=smtp_send, automatic=False):
     if deliveries and all(row.status == "sent" for row in deliveries):
         report.status = "sent"
         db.commit()
+        reconcile_sent_report(db, report.id)
     return deliveries
 
 

@@ -82,3 +82,12 @@ class DailyDispatch(Base):
     __tablename__ = "daily_dispatches"
     local_date: Mapped[str] = mapped_column(String(10), primary_key=True)
     report_id: Mapped[int] = mapped_column(ForeignKey("daily_reports.id"))
+
+
+class DailyBriefingJob(Base):
+    __tablename__ = "daily_briefing_jobs"
+    local_date: Mapped[str] = mapped_column(String(10), primary_key=True)
+    run_id: Mapped[str] = mapped_column(String(100), unique=True)
+    status: Mapped[str] = mapped_column(String(30), default="queued")
+    report_id: Mapped[int | None] = mapped_column(ForeignKey("daily_reports.id"))
+    error: Mapped[str | None] = mapped_column(Text)

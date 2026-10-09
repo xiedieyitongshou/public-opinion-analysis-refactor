@@ -14,6 +14,9 @@ const labels = {
   skipped: "未采集",
   unknown: "待核对",
   sending: "投递中",
+  ready: "等待定时投递",
+  awaiting_email: "等待邮箱配置",
+  needs_review: "需要人工核对",
   stale: "已过期",
 };
 const names = {
@@ -387,8 +390,9 @@ async function load() {
     api("/api/jobs"),
     api("/api/review-queue"),
     api("/api/deliveries"),
+    api("/api/daily-jobs"),
   ]);
-  const [dash, reports, usage, jobs, reviews, deliveries] = responses;
+  const [dash, reports, usage, jobs, reviews, deliveries, dailyJobs] = responses;
   dashboard = dash;
   $("login").hidden = true;
   $("workspace").hidden = false;
@@ -398,9 +402,9 @@ async function load() {
   listReports(reports);
   $("schedule-summary").textContent =
     dash.scheduler.error ||
-    `定时采集${dash.scheduler.enabled ? `开启 · 每 ${dash.scheduler.interval_minutes} 分钟` : "关闭 · 可手动触发"}`;
+    `定时采集${dash.scheduler.enabled ? `开启 · 每 ${dash.scheduler.interval_minutes} 分钟` : "关闭 · 可手动触发"}${dash.scheduler.until ? ` · 截止 ${time(dash.scheduler.until)}` : ""}`;
   $("email-summary").textContent = dash.email.configured
-    ? `${dash.email.recipient_count} 位收件人 · ${dash.email.scheduled ? `每日 ${dash.email.time}` : "手动投递"} · ${dash.email.timezone}`
+    ? `${dash.email.recipient_count} 位收件人 · ${dash.email.scheduled ? `每日 ${dash.email.time} · ${dash.email.auto_generate ? "自动生成并发送" : "发送已确认版本"}` : "手动投递"} · ${dash.email.timezone}`
     : "邮箱尚未配置 · 简报和邮件预览可正常使用";
   $("usage-notes").textContent =
     `工具调用 ${usage.tool_call_count} 次。${usage.notes.join(" ")}`;
@@ -457,6 +461,12 @@ async function load() {
   );
   await listReviews(reviews.items);
   listDeliveries(deliveries);
+  table(
+    $("daily-jobs"),
+    ["日期", "轮次", "状态", "结果"],
+    dailyJobs.map((j) => [j.date, j.run_id, badge(j.status),
+      j.error || (j.report_id ? `简报 #${j.report_id}` : "等待本轮采集完成")]),
+  );
 }
 $("login-form").addEventListener("submit", (event) => {
   event.preventDefault();

@@ -120,3 +120,9 @@ The next implementation stage can rely on the collector layer to provide normali
 - 24 小时有限实采于 10-07 00:42 开始，尚未完成连续运行验收；真实邮箱投递仍待配置后验收。原有来源、归并和时效限制保留。
 
 交付：[MVP 运行说明](../briefing-mvp.md)、[briefing-v0.1 验收记录](../../reports/briefing-v0.1.md)。
+
+## 2026-10-09：后续 Docker 与自动日报准备
+
+在第八周 MVP 基础上完成本地 Docker、每日自动生成／检查／发送、按天持久日志和有限试运行配置。301 项测试通过；容器实际采集一轮约 105 秒，生成 40 个已接纳事件的日报，来源警告和 19 条待审核候选如实保留。邮件只投递到本地 Mailpit，容器重建后不重复发送。
+
+服务器连接及真实邮箱尚未接入，云端 24 小时运行仍待下一阶段。详见 [部署步骤](../deployment.md) 与 [本地验收](../../reports/deployment-local-v0.1.md)。

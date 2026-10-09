@@ -1,0 +1,72 @@
+name: opinion
+services:
+  backend:
+    image: opinion-backend:week09
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    init: true
+    restart: unless-stopped
+    stop_grace_period: 40s
+    env_file: ${APP_ENV_FILE:-./deploy/.env}
+    environment:
+      APP_ENV: production
+      DEBUG: "false"
+      DATABASE_URL: sqlite:////app/data/app.db
+      WEIBO_RSSHUB_BASE_URL: http://rsshub:1200
+      SEMANTIC_MODEL_DIR: /models
+      SEMANTIC_CACHE_PATH: /app/data/semantic-cache.db
+      RUNTIME_LOG_DIR: /app/logs
+      BRIEFING_ARTIFACT_DIR: /app/artifacts
+      # Desktop proxy variables must not become cloud runtime dependencies.
+      HTTP_PROXY: ""
+      HTTPS_PROXY: ""
+      ALL_PROXY: ""
+      NO_PROXY: localhost,127.0.0.1,rsshub,mailpit
+    ports:
+      - "127.0.0.1:${APP_PORT:-8000}:8000"
+    volumes:
+      - app-data:/app/data
+      - app-logs:/app/logs
+      - app-artifacts:/app/artifacts
+      - cli-home:/home/app/.weibo-cli
+      - type: bind
+        source: ${MODEL_DIR:-./backend/data/models}
+        target: /models
+        read_only: true
+        bind:
+          create_host_path: false
+    depends_on:
+      rsshub:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/ready', timeout=5)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    logging:
+      driver: json-file
+      options: {max-size: 10m, max-file: "3"}
+  rsshub:
+    image: diygod/rsshub@sha256:3c5f0b37a54223c4735b5d6428d2886d97ae24e04297a619fb211a2bc9e174aa
+    restart: unless-stopped
+    init: true
+    shm_size: 512mb
+    environment:
+      NODE_ENV: production
+      CACHE_TYPE: memory
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:1200/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    logging:
+      driver: json-file
+      options: {max-size: 10m, max-file: "3"}
+volumes:
+  app-data:
+  app-logs:
+  app-artifacts:
+  cli-home:

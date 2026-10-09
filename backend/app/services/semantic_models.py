@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import logging
 import math
 from collections import OrderedDict
 from functools import lru_cache
 from pathlib import Path
 from threading import RLock
+from time import perf_counter
 
 from app.core.config import settings
 
@@ -27,8 +29,16 @@ class LocalSemanticModels:
         self._scores: OrderedDict = OrderedDict()
         self._lock = RLock()
         self.calls = {"embedding_batches": 0, "rerank_batches": 0}
+        self._disk_scores = None
+        if settings.semantic_cache_path:
+            from app.services.semantic_cache import RerankCache
+
+            self._disk_scores = RerankCache(settings.semantic_cache_path, root)
 
     def _load(self, kind):
+        if (kind == "embedding" and self._encoder is not None
+                or kind == "reranker" and self._reranker is not None):
+            return
         path = self.root / kind
         if not (path / "config.json").exists():
             raise SemanticUnavailable(f"{kind}_model_not_prepared")
@@ -81,10 +91,14 @@ class LocalSemanticModels:
 
     def rerank(self, pairs: list[tuple[str, str]]) -> list[float]:
         with self._lock:
-            self._load("reranker")
             missing = list(dict.fromkeys(pair for pair in pairs if pair not in self._scores))
+            if self._disk_scores and missing:
+                self._scores.update(self._disk_scores.get_many(missing))
+                missing = [pair for pair in missing if pair not in self._scores]
             try:
                 if missing:
+                    started = perf_counter()
+                    self._load("reranker")
                     scores = []
                     input_names = {entry.name for entry in self._reranker.get_inputs()}
                     for offset in range(0, len(missing), 8):
@@ -100,14 +114,23 @@ class LocalSemanticModels:
                         logits = self._reranker.run(
                             None, {key: val for key, val in tokens.items() if key in input_names}
                         )[0].reshape(-1)
-                        scores.extend(
+                        batch_scores = [
                             1 / (1 + math.exp(-max(-80, min(80, float(logit))))) for logit in logits
-                        )
+                        ]
+                        scores.extend(batch_scores)
+                        if self._disk_scores:
+                            self._disk_scores.put_many(batch, batch_scores)
                     self.calls["rerank_batches"] += math.ceil(len(missing) / 8)
                     self._scores.update(zip(missing, map(float, scores), strict=True))
+                    logging.getLogger(__name__).info(
+                        "rerank pairs=%s computed=%s seconds=%.3f", len(pairs), len(missing),
+                        perf_counter() - started,
+                    )
                 result = [self._scores[pair] for pair in pairs]
                 self._trim(self._scores)
                 return result
+            except SemanticUnavailable:
+                raise
             except Exception as exc:  # noqa: BLE001 - ONNX exceptions need not be RuntimeError.
                 raise SemanticUnavailable(
                     f"reranker_inference_failed:{type(exc).__name__}"
