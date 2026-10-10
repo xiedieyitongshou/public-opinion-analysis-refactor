@@ -74,8 +74,9 @@ class Settings(BaseSettings):
     )
     weibo_cli_enabled: bool = Field(default=False, alias="WEIBO_CLI_ENABLED")
     weibo_cli_command: str = Field(default="weibo-cli", alias="WEIBO_CLI_COMMAND")
-    weibo_cli_topic_limit: int = Field(default=3, alias="WEIBO_CLI_TOPIC_LIMIT", ge=0, le=10)
-    weibo_cli_search_count: int = Field(default=5, alias="WEIBO_CLI_SEARCH_COUNT", ge=1, le=20)
+    # Match the collector's maximum; only the selected RSS topics are searched.
+    weibo_cli_topic_limit: int = Field(default=50, alias="WEIBO_CLI_TOPIC_LIMIT", ge=0, le=50)
+    weibo_cli_search_count: int = Field(default=10, alias="WEIBO_CLI_SEARCH_COUNT", ge=1, le=20)
     weibo_cli_timeout_seconds: float = Field(
         default=30.0,
         alias="WEIBO_CLI_TIMEOUT_SECONDS",
@@ -137,7 +138,7 @@ class Settings(BaseSettings):
     job_timeout_seconds: int = Field(default=900, ge=60, le=3600)
     request_limits: dict[str, int] = Field(default_factory=lambda: {
         "zhihu_hot_list": 2, "zhihu_search": 5, "zhihu_quota": 1,
-        "weibo_rsshub_hot_search": 4, "weibo_cli": 3,
+        "weibo_rsshub_hot_search": 4, "weibo_cli": 50,
         "chinanews_scroll_rss": 3, "people_politics_rss": 3, "xinhua_politics_rss": 3,
         "official_search_people": 3, "official_search_chinanews": 3,
     })

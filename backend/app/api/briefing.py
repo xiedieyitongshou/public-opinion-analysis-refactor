@@ -21,9 +21,11 @@ from app.services.briefing_email import (
     reconcile_sent_report,
     recover_interrupted_deliveries,
     send_report,
+    smtp_ready,
 )
 from app.services.briefing_jobs import default_analysis_input, queue_analysis
 from app.services.briefing_render import render_report, render_text
+from app.services.email_recipients import active_recipients
 from app.services.human_review import task_record
 from app.services.request_usage import usage_summary
 
@@ -77,11 +79,12 @@ def dashboard(db: Db, request: Request):
             "error": coordinator.last_error if coordinator else None,
         },
         "email": {
-            "configured": email_ready(),
+            "configured": email_ready(db),
+            "smtp_configured": smtp_ready(),
             "scheduled": settings.email_schedule_enabled,
             "time": settings.email_send_time,
             "timezone": settings.briefing_timezone,
-            "recipient_count": len(settings.email_recipients),
+            "recipient_count": len(active_recipients(db)),
             "auto_generate": settings.daily_briefing_enabled,
         },
         "request_limits": settings.request_limits,
@@ -177,10 +180,15 @@ def approve(report_id: int, db: Db):
     return report_info(db, row)
 
 
+class SendReportInput(BaseModel):
+    recipient_ids: list[int] | None = Field(default=None, min_length=1, max_length=500)
+
+
 @router.post("/reports/{report_id}/send")
-def send(report_id: int, db: Db):
+def send(report_id: int, db: Db, data: SendReportInput | None = None):
     try:
-        rows = send_report(db, get_report(db, report_id))
+        rows = send_report(db, get_report(db, report_id),
+                           recipient_ids=data.recipient_ids if data else None)
     except ValueError as exc:
         raise HTTPException(409, str(exc)) from exc
     return [

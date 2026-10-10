@@ -32,6 +32,7 @@ const names = {
   zhihu_quota: "知乎额度查询",
 };
 let dashboard = {};
+let previewedReportId = null;
 function node(tag, text, cls) {
   const el = document.createElement(tag);
   if (text != null) el.textContent = text;
@@ -65,9 +66,9 @@ async function busy(el, action) {
     el.disabled = false;
   }
 }
-async function api(path, data) {
+async function api(path, data, method) {
   const response = await fetch(path, {
-    method: data === undefined ? "GET" : "POST",
+    method: method || (data === undefined ? "GET" : "POST"),
     credentials: "same-origin",
     headers: data === undefined ? {} : { "Content-Type": "application/json" },
     body: data === undefined ? undefined : JSON.stringify(data),
@@ -81,7 +82,9 @@ async function api(path, data) {
     throw new Error(
       typeof body.detail === "string"
         ? body.detail
-        : JSON.stringify(body.detail),
+        : Array.isArray(body.detail)
+          ? body.detail.map((error) => error.msg.replace(/^Value error, /, "")).join("；")
+          : JSON.stringify(body.detail),
     );
   }
   return body;
@@ -166,7 +169,8 @@ function listReports(reports) {
   });
   if (!reports.length) empty(root, "第一份简报将在采集完成后出现。");
 }
-async function preview(id) {
+async function preview(id, selectedRecipientIds = null) {
+  previewedReportId = id;
   const r = await api(`/api/reports/${id}`);
   $("preview-panel").hidden = false;
   $("preview-title").textContent = `${r.title} / #${id}`;
@@ -192,28 +196,49 @@ async function preview(id) {
       ),
     );
   if (["approved", "sent"].includes(r.status)) {
+    const recipients = (await api("/api/recipients")).items.filter((row) => row.enabled);
+    const picker = node("fieldset", null, "recipient-picker");
+    picker.append(node("legend", "选择本次收件人"));
+    const choices = recipients.map((row) => {
+      const label = node("label", null, "check-label");
+      const check = node("input");
+      check.type = "checkbox";
+      check.value = row.id;
+      check.checked = selectedRecipientIds === null || selectedRecipientIds.includes(row.id);
+      label.append(check, node("span", row.note ? `${row.email}（${row.note}）` : row.email));
+      picker.append(label);
+      return check;
+    });
+    if (!recipients.length) picker.append(node("p", "请先在“邮件管理”中添加并启用收件邮箱。", "muted"));
+    actions.append(picker);
     const send = button(
-      "发送邮件",
+      "发送给选中邮箱",
       async () => {
+        const selected = choices.filter((el) => el.checked).map((el) => Number(el.value));
+        if (!selected.length) return;
         if (
           !confirm(
-            `将版本 #${id} 发送至已配置的 ${dashboard.email.recipient_count} 位收件人？同版本已成功投递的地址会自动跳过。`,
+            `将版本 #${id} 发送给选中的 ${selected.length} 位收件人？同版本已成功投递的地址会自动跳过。`,
           )
         )
           return;
-        const rows = await api(`/api/reports/${id}/send`, {});
+        const rows = await api(`/api/reports/${id}/send`, { recipient_ids: selected });
         show(
-          rows
+          rows.length ? rows
             .map((d) => `${d.recipient}：${labels[d.status] || d.status}`)
-            .join("；"),
+            .join("；") : "收件人状态已变化，本次未投递，请刷新后检查。",
         );
         await load();
-        await preview(id);
+        await preview(id, selected);
       },
       "primary",
     );
-    send.disabled = !dashboard.email.configured;
-    send.title = dashboard.email.configured ? "" : "请先配置 SMTP 与收件人";
+    const updateSelection = () => {
+      send.disabled = !dashboard.email.smtp_configured || !choices.some((el) => el.checked);
+    };
+    choices.forEach((el) => el.addEventListener("change", updateSelection));
+    updateSelection();
+    send.title = dashboard.email.smtp_configured ? "" : "请先配置发件服务";
     actions.append(send);
   }
   actions.append(
@@ -356,6 +381,60 @@ async function listReviews(tasks) {
     root.append(panel);
   }
 }
+function resetRecipientForm() {
+  $("recipient-form").reset();
+  $("recipient-id").value = "";
+  $("recipient-form-title").textContent = "添加收件邮箱";
+  $("recipient-save").textContent = "添加邮箱";
+  $("recipient-cancel").hidden = true;
+}
+async function refreshEmailManagement() {
+  await load();
+  if (previewedReportId !== null) await preview(previewedReportId);
+}
+function listRecipients(result) {
+  const root = $("recipient-list");
+  root.replaceChildren();
+  const warning = $("recipient-import-warning");
+  warning.hidden = !result.legacy_import_skipped;
+  warning.textContent = `旧配置中有 ${result.legacy_import_skipped} 个无效地址未导入，请核对后在此添加。`;
+  result.items.forEach((row) => {
+    const card = node("article", null, "recipient-card");
+    card.append(node("h3", row.email), node("p", row.note || "未填写备注", "small muted"));
+    card.append(node("span", row.enabled ? "推送已启用" : "已停用", `status ${row.enabled ? "succeeded" : "skipped"}`));
+    const last = row.last_delivery;
+    card.append(node("p", last ? `最近：简报 #${last.report_id} · ${labels[last.status] || last.status} · ${time(last.finished_at)}` : "暂无投递记录", "small muted recipient-last"));
+    if (last?.error) card.append(node("p", last.error, "small muted"));
+    const actions = node("div", null, "actions");
+    actions.append(button("编辑", () => {
+      $("recipient-id").value = row.id;
+      $("recipient-email").value = row.email;
+      $("recipient-note").value = row.note;
+      $("recipient-enabled").checked = row.enabled;
+      $("recipient-form-title").textContent = "编辑收件邮箱";
+      $("recipient-save").textContent = "保存修改";
+      $("recipient-cancel").hidden = false;
+      $("recipient-form").scrollIntoView({ block: "center" });
+      $("recipient-email").focus();
+    }));
+    actions.append(button(row.enabled ? "停用" : "启用", async () => {
+      await api(`/api/recipients/${row.id}`, { email: row.email, note: row.note, enabled: !row.enabled }, "PUT");
+      if ($("recipient-id").value === String(row.id)) resetRecipientForm();
+      show(row.enabled ? "已停用，后续尚未发送的邮件会跳过此邮箱。" : "已启用，将参与之后的定时日报。");
+      await refreshEmailManagement();
+    }));
+    actions.append(button("删除", async () => {
+      if (!confirm(`删除收件邮箱 ${row.email}？历史投递记录会保留。`)) return;
+      await api(`/api/recipients/${row.id}`, {}, "DELETE");
+      if ($("recipient-id").value === String(row.id)) resetRecipientForm();
+      show("已删除收件邮箱，历史投递记录保留。");
+      await refreshEmailManagement();
+    }, "quiet"));
+    card.append(actions);
+    root.append(card);
+  });
+  if (!result.items.length) empty(root, "还没有收件邮箱，可在上方添加。");
+}
 function listDeliveries(rows) {
   table(
     $("delivery-list"),
@@ -391,8 +470,9 @@ async function load() {
     api("/api/review-queue"),
     api("/api/deliveries"),
     api("/api/daily-jobs"),
+    api("/api/recipients"),
   ]);
-  const [dash, reports, usage, jobs, reviews, deliveries, dailyJobs] = responses;
+  const [dash, reports, usage, jobs, reviews, deliveries, dailyJobs, recipients] = responses;
   dashboard = dash;
   $("login").hidden = true;
   $("workspace").hidden = false;
@@ -403,9 +483,7 @@ async function load() {
   $("schedule-summary").textContent =
     dash.scheduler.error ||
     `定时采集${dash.scheduler.enabled ? `开启 · 每 ${dash.scheduler.interval_minutes} 分钟` : "关闭 · 可手动触发"}${dash.scheduler.until ? ` · 截止 ${time(dash.scheduler.until)}` : ""}`;
-  $("email-summary").textContent = dash.email.configured
-    ? `${dash.email.recipient_count} 位收件人 · ${dash.email.scheduled ? `每日 ${dash.email.time} · ${dash.email.auto_generate ? "自动生成并发送" : "发送已确认版本"}` : "手动投递"} · ${dash.email.timezone}`
-    : "邮箱尚未配置 · 简报和邮件预览可正常使用";
+  $("email-summary").textContent = `${dash.email.smtp_configured ? "发件服务已配置" : "发件服务待配置"} · ${dash.email.recipient_count} 位启用收件人 · ${dash.email.scheduled ? `每日 ${dash.email.time} · ${dash.email.auto_generate ? "自动生成并发送" : "发送已确认版本"}` : "手动投递"} · ${dash.email.timezone}`;
   $("usage-notes").textContent =
     `工具调用 ${usage.tool_call_count} 次。${usage.notes.join(" ")}`;
   table(
@@ -461,6 +539,7 @@ async function load() {
   );
   await listReviews(reviews.items);
   listDeliveries(deliveries);
+  listRecipients(recipients);
   table(
     $("daily-jobs"),
     ["日期", "轮次", "状态", "结果"],
@@ -468,6 +547,21 @@ async function load() {
       j.error || (j.report_id ? `简报 #${j.report_id}` : "等待本轮采集完成")]),
   );
 }
+$("recipient-form").addEventListener("submit", (event) => {
+  event.preventDefault();
+  busy(event.submitter, async () => {
+    const id = $("recipient-id").value;
+    await api(id ? `/api/recipients/${id}` : "/api/recipients", {
+      email: $("recipient-email").value,
+      note: $("recipient-note").value,
+      enabled: $("recipient-enabled").checked,
+    }, id ? "PUT" : "POST");
+    resetRecipientForm();
+    show("收件邮箱已保存，即时生效。");
+    await refreshEmailManagement();
+  });
+});
+$("recipient-cancel").addEventListener("click", resetRecipientForm);
 $("login-form").addEventListener("submit", (event) => {
   event.preventDefault();
   busy(event.submitter, async () => {

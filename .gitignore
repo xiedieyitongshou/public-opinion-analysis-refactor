@@ -225,6 +225,7 @@ backend/data/weibo-cli-live-samples/
 backend/data/models/
 backend/data/briefing-mvp/
 backend/data/deployment-test/
+backend/data/email-management/
 backend/logs/
 backend/artifacts/
 deploy/.env*

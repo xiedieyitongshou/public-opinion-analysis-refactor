@@ -2,6 +2,7 @@ import json
 from datetime import UTC, datetime
 
 import httpx
+import pytest
 
 from app.schemas import NormalizedItem
 from app.services.weibo_heat_client import (
@@ -188,6 +189,43 @@ def test_cli_metrics_only_use_relevant_recent_statuses() -> None:
         "accepted", "audit_only", "rejected"
     ]
     assert "weibo_cli_search_noise_detected" in result.quality_flags
+
+
+@pytest.mark.parametrize("search_count", [5, 10])
+def test_all_paid_records_are_filtered_including_relevant_results_after_first_five(search_count):
+    def cli_runner(command, timeout):
+        assert command[command.index("--count") + 1] == "10"
+        assert command[command.index("--sort") + 1] == "time"
+        query = command[command.index("--q") + 1]
+        return CLIProcessResult(returncode=0, stderr="", stdout=json.dumps({
+            "statuses": [{
+                "id": index + 1,
+                "text": "今日抽奖送手机" if index < 5 else f"#{query}# 后续消息",
+                "created_at": datetime.now(UTC).isoformat(),
+                "attitudes_count": 9999 if index < 5 else 12,
+            } for index in range(10)],
+        }))
+
+    client = WeiboHeatClient(
+        config=WeiboHeatClientConfig(
+            rsshub_base_url="http://rsshub.test", cli_enabled=True, cli_topic_limit=1,
+            cli_search_count=search_count,
+        ),
+        http_client=httpx.Client(transport=httpx.MockTransport(
+            lambda req: httpx.Response(200, text=RSS_XML)
+        )),
+        cli_runner=cli_runner,
+    )
+    result = client.fetch_heat(limit=3, skip_top=1)
+    topic = result.items[0]
+    assert result.cli["search_count"] == 10
+    assert topic.normalized["cli_relevance_counts"] == {
+        "returned_count": 10, "accepted_count": 5, "audit_count": 5,
+    }
+    assert topic.raw_metrics["matched_status_count"] == 5
+    assert topic.raw_metrics["top_status_like_count"] == 12
+    assert all(sample.relation.decision == "accepted"
+               for sample in topic.cli_enrichment.samples[5:])
 
 
 def test_cli_only_unrelated_results_do_not_add_heat_metrics() -> None:

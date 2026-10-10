@@ -8,7 +8,9 @@ from fastapi.staticfiles import StaticFiles
 from app.api.routes import api_router
 from app.core.config import settings
 from app.db.init_db import init_db
+from app.db.session import SessionLocal
 from app.services.briefing_jobs import JobCoordinator
+from app.services.email_recipients import initialize_recipients
 from app.services.runtime_logging import configure_logging
 
 
@@ -28,6 +30,8 @@ async def lifespan(app):
             if not all(path.is_file() for path in required):
                 raise RuntimeError("Prepare and mount the local semantic models before startup")
     init_db()
+    with SessionLocal() as db:
+        initialize_recipients(db)
     coordinator = JobCoordinator()
     app.state.coordinator = coordinator
     coordinator.start()

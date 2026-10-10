@@ -6,6 +6,8 @@ import pytest
 
 import app.tools.default_tools as default_tools
 from app.collectors import CollectorRegistry, WeiboHeatCollector
+from app.core.config import Settings
+from app.services.request_usage import request_scope
 from app.services.weibo_heat_client import CLIProcessResult, WeiboHeatClient, WeiboHeatClientConfig
 from app.tools import ToolContext, ToolDefinition, ToolRegistry
 
@@ -92,6 +94,80 @@ def test_weibo_heat_collector_keeps_rsshub_topic_when_cli_fails() -> None:
     item = result.normalized_items[0]
     assert item["normalized"]["weibo_signal_status"] == "cli_unavailable"
     assert "weibo_cli_missing_token" in item["quality_flags"]
+
+
+@pytest.mark.parametrize("limit,skip_top", [(20, 1), (20, 0), (50, 0)])
+def test_default_cli_covers_entire_selected_list_within_request_budget(limit, skip_top):
+    collector, queries = _full_list_collector(limit)
+    with request_scope("full-weibo-list", Settings(_env_file=None).request_limits, 30) as scope:
+        result = collector.collect(_run_config(limit=limit, params={"skip_top": skip_top}))
+
+    assert result.status == "succeeded"
+    assert result.list_complete is True
+    assert result.normalized_count == limit - skip_top
+    assert queries == [item["title"] for item in result.normalized_items]
+    assert scope.counts["weibo_cli"] == limit - skip_top
+    assert all(item["raw_metrics"]["matched_status_count"] == 10
+               for item in result.normalized_items)
+    assert all(item["normalized"]["weibo_signal_status"] == "rsshub_plus_cli"
+               for item in result.normalized_items)
+    sampling = json.loads(result.sampling_signature)
+    assert sampling["cli_topic_limit"] == limit - skip_top
+    assert sampling["cli_search_count"] == 10
+    assert sampling["cli_search_sort"] == "time"
+
+
+def test_cli_failure_in_middle_does_not_skip_later_topics():
+    collector, queries = _full_list_collector(20, fail_at=5)
+    result = collector.collect(_run_config(limit=20, params={"skip_top": 0}))
+
+    assert result.status == "succeeded"
+    assert len(queries) == result.normalized_count == 20
+    assert result.normalized_items[4]["normalized"]["weibo_signal_status"] == "cli_unavailable"
+    assert result.normalized_items[4]["raw_metrics"]["matched_status_count"] is None
+    assert result.normalized_items[-1]["raw_metrics"]["matched_status_count"] == 10
+
+
+def test_explicit_small_cli_budget_preserves_all_rss_topics_and_missing_metrics():
+    collector, queries = _full_list_collector(20)
+    with request_scope("small-weibo-budget", {"weibo_rsshub_hot_search": 1, "weibo_cli": 3}, 30):
+        result = collector.collect(_run_config(limit=20, params={"skip_top": 0}))
+
+    assert result.status == "succeeded"
+    assert result.list_complete is True
+    assert result.normalized_count == 20
+    assert len(queries) == 3
+    for item in result.normalized_items[3:]:
+        assert "weibo_cli_request_budget_exceeded" in item["quality_flags"]
+        assert item["normalized"]["weibo_signal_status"] == "cli_unavailable"
+        assert item["raw_metrics"]["matched_status_count"] is None
+
+
+def test_weibo_sampling_signature_records_actual_count_and_invalidates_older_sampling():
+    signatures = []
+    for count in (5, 10, 20):
+        client = WeiboHeatClient(
+            config=WeiboHeatClientConfig(
+                rsshub_base_url="http://rsshub.test", cli_enabled=True, cli_search_count=count,
+            ),
+            http_client=httpx.Client(transport=httpx.MockTransport(_rsshub_handler)),
+            cli_runner=_successful_cli_runner,
+        )
+        result = WeiboHeatCollector(client=client).collect(_run_config(
+            limit=3,
+            params={"skip_top": 1, "cli_topic_limit": 1, "cli_search_count": 999},
+        ))
+        assert result.status == "succeeded"
+        sampling = json.loads(result.sampling_signature)
+        assert sampling["cli_search_count"] == max(10, count)
+        assert sampling["cli_sampling_version"] == "all-returned-v1"
+        signatures.append(result.sampling_signature)
+    assert signatures[0] == signatures[1]
+    assert signatures[1] != signatures[2]
+    old_sampling = json.loads(signatures[1])
+    for key in ("cli_search_count", "cli_search_sort", "cli_sampling_version"):
+        old_sampling.pop(key)
+    assert json.dumps(old_sampling, sort_keys=True, ensure_ascii=False) != signatures[1]
 
 
 def test_weibo_heat_collector_reports_rsshub_failure_as_failed() -> None:
@@ -200,6 +276,43 @@ def _client(
         ),
         cli_runner=cli_runner,
     )
+
+
+def _full_list_collector(limit, *, fail_at=None):
+    titles = [f"城市第{index}号地铁线路正式开通" for index in range(limit)]
+    xml = "<rss><channel>" + "".join(
+        f"<item><title>{title}</title><link>https://m.weibo.cn/search?q={index}</link>"
+        f"<guid>topic-{index}</guid></item>"
+        for index, title in enumerate(titles)
+    ) + "</channel></rss>"
+    queries = []
+
+    def cli_runner(command, timeout):
+        assert command[command.index("--count") + 1] == "10"
+        assert command[command.index("--sort") + 1] == "time"
+        query = command[command.index("--q") + 1]
+        queries.append(query)
+        if len(queries) == fail_at:
+            return _failed_cli_runner(command, timeout)
+        return CLIProcessResult(returncode=0, stderr="", stdout=json.dumps({
+            "statuses": [{
+                "id": len(queries) * 100 + index,
+                "text": f"#{query}# 最新消息",
+                "created_at": datetime.now(UTC).isoformat(),
+                "comments_count": index,
+                "reposts_count": index,
+                "attitudes_count": index,
+            } for index in range(10)],
+        }))
+
+    client = WeiboHeatClient(
+        config=WeiboHeatClientConfig(rsshub_base_url="http://rsshub.test", cli_enabled=True),
+        http_client=httpx.Client(transport=httpx.MockTransport(
+            lambda req: httpx.Response(200, text=xml)
+        )),
+        cli_runner=cli_runner,
+    )
+    return WeiboHeatCollector(client=client), queries
 
 
 def _run_config(*, limit: int, params: dict | None = None):

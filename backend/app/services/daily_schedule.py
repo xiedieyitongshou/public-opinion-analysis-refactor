@@ -14,8 +14,9 @@ from app.models import DailyReport
 from app.models.briefing import AnalysisRun, DailyBriefingJob, DailyDispatch
 from app.schemas.display import DailyBriefing
 from app.services.briefing import approve_report, as_utc, review_briefing
-from app.services.briefing_email import email_ready, send_report, smtp_send
+from app.services.briefing_email import email_ready, send_report, smtp_ready, smtp_send
 from app.services.briefing_render import render_report, render_text
+from app.services.email_recipients import freeze_daily_audience
 
 logger = logging.getLogger(__name__)
 
@@ -92,8 +93,9 @@ def tick_daily(db, *, now=None, sender=smtp_send, allow_queue=True):
     archive_report(report)
     if job.status == "blocked" or not settings.email_schedule_enabled:
         return job
-    if not email_ready():
-        job.status, job.error = "awaiting_email", "smtp_not_configured"
+    if not email_ready(db):
+        job.status = "awaiting_email"
+        job.error = "发件服务尚未配置" if not smtp_ready() else "没有启用的收件邮箱"
         db.commit()
         return job
     dispatch = db.get(DailyDispatch, day)
@@ -108,8 +110,11 @@ def tick_daily(db, *, now=None, sender=smtp_send, allow_queue=True):
         job.status, job.error = "needs_review", "another_daily_version_already_dispatched"
         db.commit()
         return job
-    deliveries = send_report(db, report, sender=sender, automatic=True)
-    if all(row.status == "sent" for row in deliveries):
+    audience = freeze_daily_audience(db, day, report.id)
+    deliveries = send_report(db, report, sender=sender, automatic=True, audience=audience)
+    if not deliveries:
+        job.status, job.error = "awaiting_email", "本次投递名单中的邮箱均已停用或删除"
+    elif all(row.status == "sent" for row in deliveries):
         job.status, job.error = "sent", None
     elif any(row.status == "unknown" for row in deliveries):
         job.status, job.error = "needs_review", "smtp_delivery_unknown"

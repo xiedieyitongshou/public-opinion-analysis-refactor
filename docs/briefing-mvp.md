@@ -67,11 +67,10 @@ docker compose -f ..\docker-compose.weibo.yml up -d rsshub
 
 ## 邮件配置与发送
 
-在本地 `.env` 配置以下字段，重启服务后先预览、再确认版本：
+在本地 `.env` 配置发件服务，重启服务后先预览、再确认版本；Docker 使用 `deploy/.env`。收件地址在“邮件管理”页面维护，保存后无需重启：
 
 ```dotenv
 EMAIL_FROM="briefing@example.com"
-EMAIL_RECIPIENTS='["reader@example.com"]'
 SMTP_HOST="smtp.example.com"
 SMTP_PORT=587
 SMTP_SECURITY="starttls"
@@ -82,7 +81,13 @@ EMAIL_SEND_TIME="08:00"
 BRIEFING_TIMEZONE="Asia/Shanghai"
 ```
 
-后台“确认此版本”通过发布检查后，才可以手动发送。开启 `EMAIL_SCHEDULE_ENABLED=true` 后，每日到达设定时间，选择**当日已经确认**的最新版本；当天首次选定后固定版本，不自动发送之后生成的其他草稿。没有已确认版本就不投递。HTML 和纯文本作为同一封 multipart 邮件的两个正文部分。
+“邮件管理”支持新增邮箱和备注、编辑、启用／停用、删除，并展示最近投递状态。保存即时生效；删除收件人不删除历史投递回执。管理接口沿用管理员登录，SMTP 密码不在页面显示或修改。
+
+升级时，旧 `EMAIL_RECIPIENTS` 中的有效地址只导入一次；重复地址去重，无效地址的数量在页面提示。导入完成后以数据库为准，清空或停用名单后不会因重启恢复旧地址。可选的初始配置仍接受 `EMAIL_RECIPIENTS='["reader@example.com"]'`，之后增删邮箱应在页面操作。
+
+后台“确认此版本”通过发布检查后，才可以勾选收件人手动发送。开启 `EMAIL_SCHEDULE_ENABLED=true` 后，每日到达设定时间，选择**当日已经确认**的最新版本；当天首次选定后固定版本，不自动发送之后生成的其他草稿。没有已确认版本就不投递。HTML 和纯文本作为同一封 multipart 邮件的两个正文部分。
+
+定时投递开始时，将启用名单固定到当天的投递记录，重试及重启不会扩大名单。之后新增的地址参加下一次日报；当天已发完时，可在日报页勾选新地址手动补发。停用、删除或修改地址后，尚未发出的旧地址会跳过；已交给邮件服务器的邮件无法撤回。逐地址发送，不把整个收件名单放进邮件正文或 To 字段。
 
 第九周新增可选的 `DAILY_BRIEFING_ENABLED=true`：每天专门采集、生成、质量检查后自动确认并投递，不再要求逐日点击确认。阻断结果不发送，警告随正文保留。Docker、日志和有限试运行见 [部署说明](deployment.md)。未开启时保持上面的人工确认流程。
 

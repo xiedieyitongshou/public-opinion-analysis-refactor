@@ -3,7 +3,17 @@
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import JSON, DateTime, Float, ForeignKey, Integer, String, Text, UniqueConstraint
+from sqlalchemy import (
+    JSON,
+    Boolean,
+    DateTime,
+    Float,
+    ForeignKey,
+    Integer,
+    String,
+    Text,
+    UniqueConstraint,
+)
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.session import Base
@@ -82,6 +92,33 @@ class DailyDispatch(Base):
     __tablename__ = "daily_dispatches"
     local_date: Mapped[str] = mapped_column(String(10), primary_key=True)
     report_id: Mapped[int] = mapped_column(ForeignKey("daily_reports.id"))
+
+
+class EmailRecipient(Base):
+    __tablename__ = "email_recipients"
+    __table_args__ = {"sqlite_autoincrement": True}
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    email: Mapped[str] = mapped_column(String(320))
+    email_key: Mapped[str] = mapped_column(String(320), unique=True)
+    note: Mapped[str] = mapped_column(String(120), default="")
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class EmailRecipientInitialization(Base):
+    __tablename__ = "email_recipient_initialization"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    imported_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    skipped_count: Mapped[int] = mapped_column(Integer, default=0)
+
+
+class DailyEmailAudience(Base):
+    __tablename__ = "daily_email_audiences"
+    local_date: Mapped[str] = mapped_column(String(10), primary_key=True)
+    report_id: Mapped[int] = mapped_column(ForeignKey("daily_reports.id"))
+    recipients_json: Mapped[list[dict[str, Any]]] = mapped_column(JSON)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
 
 
 class DailyBriefingJob(Base):

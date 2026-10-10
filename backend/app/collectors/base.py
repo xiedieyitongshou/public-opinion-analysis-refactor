@@ -175,15 +175,21 @@ class BaseCollector(ABC):
         observed_at = observed_at or datetime.now(UTC)
         run_id = config.params.get("run_id")
         scope = f"top{config.limit}:skip={config.params.get('skip_top', 0)}"
+        sampling_params = {
+            "source_id": self.metadata.source_id,
+            "limit": config.limit,
+            "skip_top": config.params.get("skip_top", 0),
+            "with_cli": config.params.get("with_cli", False),
+            "cli_topic_limit": config.params.get("cli_topic_limit"),
+            "query": config.params.get("query"),
+        }
+        if self.metadata.source_id == "weibo_rsshub_hot_search":
+            sampling_params.update({
+                key: config.params.get(key)
+                for key in ("cli_search_count", "cli_search_sort", "cli_sampling_version")
+            })
         sampling = json.dumps(
-            {
-                "source_id": self.metadata.source_id,
-                "limit": config.limit,
-                "skip_top": config.params.get("skip_top", 0),
-                "with_cli": config.params.get("with_cli", False),
-                "cli_topic_limit": config.params.get("cli_topic_limit"),
-                "query": config.params.get("query"),
-            },
+            sampling_params,
             sort_keys=True,
             ensure_ascii=False,
         )

@@ -90,8 +90,8 @@ docker compose -f ..\docker-compose.weibo.yml up -d rsshub
 npm install -g @weibo-ai/weibo-cli@0.9.1
 weibo-cli auth login
 weibo-cli doctor
-..\.venv\Scripts\python.exe scripts/weibo_heat_minimal.py --base-url http://localhost:1200 --with-cli --cli-topic-limit 3 --json
-$env:WEIBO_CLI_ENABLED = "true"  # 此开关用于完整分析链路中的可选 CLI 增强
+..\.venv\Scripts\python.exe scripts/weibo_heat_minimal.py --base-url http://localhost:1200 --with-cli --json
+$env:WEIBO_CLI_ENABLED = "true"  # 开启后默认覆盖本轮全部有效 RSS 话题
 ```
 
 完成外部服务配置后，可用 `--sources zhihu_hot_list weibo_rsshub_hot_search people_politics_rss chinanews_scroll_rss xinhua_politics_rss` 跑多源一轮。`docker-compose.weibo.yml` 与 `backend/Dockerfile.weibo` 只覆盖 RSSHub／微博最小采集，不是整个后端的部署方案。知乎也可单独执行 `python scripts/zhihu_smoke_test.py --limit 10` 验证凭据和热榜接口。
@@ -130,4 +130,4 @@ API 需要另开进程。现在提供管理员页面、`POST /api/jobs` 启动�
 
 ### 后端管理页面（MVP 已实现）
 
-提供简报与历史、来源健康／请求用量／采集任务、候选对比与人工复核、邮件投递记录四个栏目。人工决定触发原始时间重算和更正草稿；完整 Agent Ops 扩展沿用第九周计划。
+提供简报与历史、来源健康／请求用量／采集任务、候选对比与人工复核、邮件管理四个栏目。邮件管理支持收件邮箱增删改、启停、最近投递状态；日报可勾选收件人发送，定时投递使用启用名单，修改无需重启。人工决定触发原始时间重算和更正草稿；完整 Agent Ops 扩展沿用第九周计划。

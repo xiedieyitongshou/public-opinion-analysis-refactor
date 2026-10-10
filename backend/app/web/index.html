@@ -53,7 +53,7 @@
           ><button data-tab="reviews">
             人工复核 <span id="review-count" class="badge">0</span>
           </button>
-          <button data-tab="deliveries">邮件投递</button
+          <button data-tab="deliveries">邮件管理</button
           ><button id="refresh" class="quiet refresh">刷新数据 ↻</button>
         </nav>
         <section id="briefings" class="tab-panel">
@@ -108,9 +108,28 @@
           <div class="section-heading">
             <div>
               <p class="eyebrow">DELIVERY DESK</p>
-              <h2>邮件投递记录</h2>
+              <h2>收件人与邮件投递</h2>
             </div>
             <p id="email-summary" class="muted small"></p>
+          </div>
+          <div class="panel">
+            <h2 id="recipient-form-title">添加收件邮箱</h2>
+            <p class="small muted">保存后即时生效。启用的邮箱参与之后的定时日报；当日已发出的日报可在“简报”中选择邮箱手动发送。</p>
+            <p id="recipient-import-warning" class="notice error" hidden></p>
+            <form id="recipient-form" class="recipient-form">
+              <input id="recipient-id" type="hidden" />
+              <label>邮箱地址<input id="recipient-email" type="email" maxlength="320" autocomplete="off" required /></label>
+              <label>备注（选填）<input id="recipient-note" type="text" maxlength="120" placeholder="例如：自己的邮箱、团队日报" /></label>
+              <label class="check-label"><input id="recipient-enabled" type="checkbox" checked />启用推送</label>
+              <div class="actions">
+                <button type="submit" class="primary" id="recipient-save">添加邮箱</button>
+                <button type="button" id="recipient-cancel" hidden>取消编辑</button>
+              </div>
+            </form>
+          </div>
+          <div class="panel">
+            <h2>收件人列表</h2>
+            <div id="recipient-list" class="recipient-grid"></div>
           </div>
           <div class="panel">
             <h2>每日生成与发送</h2>

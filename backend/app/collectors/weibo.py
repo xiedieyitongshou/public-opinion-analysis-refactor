@@ -7,7 +7,12 @@ from typing import Any
 
 from app.collectors.base import BaseCollector
 from app.schemas import CollectorMetadata, CollectorRunConfig, NormalizedItem
-from app.services.weibo_heat_client import WeiboHeatClient, WeiboHeatResult, WeiboHeatTopic
+from app.services.weibo_heat_client import (
+    CLI_SEARCH_SORT,
+    WeiboHeatClient,
+    WeiboHeatResult,
+    WeiboHeatTopic,
+)
 
 
 def weibo_heat_metadata() -> CollectorMetadata:
@@ -52,6 +57,10 @@ class WeiboHeatCollector(BaseCollector):
         params["cli_topic_limit"] = max(
             0, min(int(params["cli_topic_limit"]), limit - params["skip_top"])
         )
+        # These describe the actual client command, not caller-supplied display metadata.
+        params["cli_search_count"] = getattr(client_config, "cli_requested_count", 10)
+        params["cli_search_sort"] = CLI_SEARCH_SORT
+        params["cli_sampling_version"] = "all-returned-v1"
         # A valid RSS response is our observable list, including a short or empty feed.
         # HTTP/XML failures still return failed; CLI failure does not invalidate RSS.
         params.setdefault("list_complete", True)

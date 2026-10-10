@@ -24,7 +24,7 @@ from pydantic import BaseModel, ConfigDict
 from app.core.config import settings
 from app.schemas.signals import SearchEnrichmentRelation
 from app.services.event_constraints import title_conflicts
-from app.services.request_usage import http_request, measured_call
+from app.services.request_usage import RequestBudgetExceeded, http_request, measured_call
 from app.services.search_enrichment_filter import evaluate_search_enrichment
 
 USER_AGENT = "public-opinion-analysis-weibo-heat-minimal/0.1"
@@ -35,6 +35,7 @@ BARE_AMPERSAND = re.compile(r"&(?!amp;|lt;|gt;|quot;|apos;|#\d+;|#x[0-9a-fA-F]+;
 HTML_TAG = re.compile(r"<[^>]+>")
 HOT_VALUE = re.compile(r"(?<!\d)(\d{4,})(?!\d)")
 CLI_SAMPLE_MAX_AGE = timedelta(hours=72)
+CLI_SEARCH_SORT = "time"
 
 
 class WeiboHeatError(RuntimeError):
@@ -134,6 +135,11 @@ class WeiboHeatClientConfig:
     cli_search_count: int = settings.weibo_cli_search_count
     cli_timeout_seconds: float = settings.weibo_cli_timeout_seconds
 
+    @property
+    def cli_requested_count(self) -> int:
+        # Keep older configurations below the API minimum usable without discarding paid results.
+        return max(10, self.cli_search_count)
+
 
 @dataclass(frozen=True)
 class CLIProcessResult:
@@ -219,7 +225,8 @@ class WeiboHeatClient:
                 "enabled": cli_should_run,
                 "command": split_command(self.config.cli_command),
                 "topic_limit": safe_cli_topic_limit,
-                "search_count": self.config.cli_search_count,
+                "search_count": self.config.cli_requested_count,
+                "search_sort": CLI_SEARCH_SORT,
                 "timeout_seconds": self.config.cli_timeout_seconds,
                 "raw_payload_included": include_cli_raw,
             },
@@ -236,8 +243,10 @@ class WeiboHeatClient:
             query,
             "--type",
             "1",
+            "--sort",
+            CLI_SEARCH_SORT,
             "--count",
-            str(max(10, self.config.cli_search_count)),
+            str(self.config.cli_requested_count),
             "--output",
             "json",
         ]
@@ -280,6 +289,17 @@ class WeiboHeatClient:
                 samples=[],
                 quality_flags=["weibo_cli_timeout"],
             )
+        except RequestBudgetExceeded as exc:
+            return WeiboCLIEnrichment(
+                enabled=True,
+                available=False,
+                command=command,
+                returncode=None,
+                stderr=str(exc),
+                total_number_proxy=None,
+                samples=[],
+                quality_flags=["weibo_cli_request_budget_exceeded"],
+            )
 
         if result.returncode != 0:
             return WeiboCLIEnrichment(
@@ -308,10 +328,8 @@ class WeiboHeatClient:
             )
 
         status_payloads = extract_status_items(payload)
-        samples = [
-            normalize_cli_status(status)
-            for status in status_payloads[: self.config.cli_search_count]
-        ]
+        # Every returned record has already been paid for. Filter relevance per record later.
+        samples = [normalize_cli_status(status) for status in status_payloads]
         flags: list[str] = []
         if not samples:
             flags.append("weibo_cli_no_status_samples")

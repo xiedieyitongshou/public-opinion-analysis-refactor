@@ -11,15 +11,21 @@ from email.utils import format_datetime, parseaddr
 from uuid import uuid4
 from zoneinfo import ZoneInfo
 
-from sqlalchemy import select, update
+from sqlalchemy import func, select, update
 from sqlalchemy.exc import IntegrityError
 
 from app.core.config import settings
 from app.models import DailyReport
-from app.models.briefing import DailyBriefingJob, DailyDispatch, EmailDelivery
+from app.models.briefing import DailyBriefingJob, DailyDispatch, DailyEmailAudience, EmailDelivery
 from app.schemas.display import DailyBriefing
 from app.services.briefing import as_utc, review_briefing
 from app.services.briefing_render import render_report, render_text
+from app.services.email_recipients import (
+    active_recipients,
+    eligible_audience,
+    freeze_daily_audience,
+    selected_recipients,
+)
 
 
 def valid_address(address):
@@ -33,13 +39,15 @@ def valid_address(address):
     )
 
 
-def email_ready():
+def smtp_ready():
     return bool(
         settings.smtp_host
         and valid_address(settings.email_from)
-        and settings.email_recipients
-        and all(valid_address(value) for value in settings.email_recipients)
     )
+
+
+def email_ready(db):
+    return smtp_ready() and bool(active_recipients(db))
 
 
 def build_message(report, recipient, message_id):
@@ -112,25 +120,41 @@ def reconcile_sent_report(db, report_id):
     if rows and all(row.status == "sent" for row in rows):
         report = db.get(DailyReport, report_id)
         report.status = "sent"
-        db.execute(update(DailyBriefingJob).where(
-            DailyBriefingJob.report_id == report_id,
-        ).values(status="sent", error=None))
-        db.commit()
+    by_address = {row.recipient.casefold(): row.status for row in rows}
+    for job in db.scalars(select(DailyBriefingJob).where(
+        DailyBriefingJob.report_id == report_id,
+    )):
+        audience = db.get(DailyEmailAudience, job.local_date)
+        if audience is None:
+            continue  # A manual send must not complete an unstarted daily audience.
+        targets = eligible_audience(db, audience.recipients_json)
+        if targets and all(by_address.get(entry["email"].casefold()) == "sent"
+                           for entry in targets):
+            job.status, job.error = "sent", None
+    db.commit()
 
 
-def send_report(db, report, *, sender=smtp_send, automatic=False):
+def send_report(db, report, *, sender=None, automatic=False, recipient_ids=None, audience=None):
     if report.status not in {"approved", "sent"}:
         raise ValueError("只有已确认的日报版本可以发送")
     if review_briefing(DailyBriefing.model_validate(report.briefing_json))["blocks_publish"]:
         raise ValueError("日报质量检查阻断发送")
-    if not email_ready():
-        raise ValueError("尚未配置 SMTP、发件人和有效收件人；仍可预览邮件")
+    if not smtp_ready():
+        raise ValueError("尚未配置 SMTP 和发件人；仍可管理收件人、预览邮件")
+    targets = (selected_recipients(db, recipient_ids) if audience is None
+               else eligible_audience(db, audience))
+    sender = sender or smtp_send
     recover_interrupted_deliveries(db)
     deliveries = []
-    for recipient in dict.fromkeys(settings.email_recipients):
+    for entry in targets:
+        # Recheck before each send so disabling/deleting a later recipient takes effect.
+        if not eligible_audience(db, [entry]):
+            continue
+        recipient = entry["email"]
         row = db.scalar(
             select(EmailDelivery).where(
-                EmailDelivery.report_id == report.id, EmailDelivery.recipient == recipient
+                EmailDelivery.report_id == report.id,
+                func.lower(EmailDelivery.recipient) == recipient.casefold(),
             )
         )
         if row is None:
@@ -192,7 +216,7 @@ def send_report(db, report, *, sender=smtp_send, automatic=False):
 def dispatch_daily(db, *, now=None, sender=smtp_send):
     now = now or datetime.now(UTC)
     local = now.astimezone(ZoneInfo(settings.briefing_timezone))
-    if local.strftime("%H:%M") < settings.email_send_time or not email_ready():
+    if local.strftime("%H:%M") < settings.email_send_time or not email_ready(db):
         return []
     day = local.date().isoformat()
     dispatch = db.get(DailyDispatch, day)
@@ -215,4 +239,5 @@ def dispatch_daily(db, *, now=None, sender=smtp_send):
         except IntegrityError:
             db.rollback()
             report = db.get(DailyReport, db.get(DailyDispatch, day).report_id)
-    return send_report(db, report, sender=sender, automatic=True)
+    audience = freeze_daily_audience(db, day, report.id)
+    return send_report(db, report, sender=sender, automatic=True, audience=audience)
