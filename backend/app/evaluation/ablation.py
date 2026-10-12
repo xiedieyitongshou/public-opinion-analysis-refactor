@@ -150,7 +150,7 @@ def render_ablation(reports, old):
         "同一主体、地点或高模型分数均不足以证明同一事件；自动合并保持保守，"
         "仍可能漏合并，也可能存在规则未覆盖的官媒误匹配。详细失败清单保留如下。",
         "",
-        "[实现、模型安装及边界说明](../docs/matching-upgrade.md)；"
+        "[实现、模型安装及边界说明](../docs/event-matching.md)；"
         "[2026-09-29 官媒定向查询实测](official-search-validation-2026-09-29.md)。",
     ]
     return "\n".join(lines)

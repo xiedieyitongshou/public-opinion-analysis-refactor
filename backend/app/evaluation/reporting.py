@@ -13,6 +13,8 @@ def render_report(report: dict) -> str:
     lines = [
         "# 三模块系统评估报告 v0.2（匹配改进后）",
         "",
+        "[项目首页](../README.md) · [验证记录](../README.md#验证记录)",
+        "",
         f"评估时间：{report['started_at']}；固定业务窗口结束：{report['window_end']}。",
         "",
         f"本轮执行 **{report['selected_case_count']} 条用例**："
@@ -183,7 +185,7 @@ def render_report(report: dict) -> str:
         f"- 本轮 app 源码 SHA-256：`{report['app_source_sha256']}`。",
         f"- 用例集 SHA-256：`{report['dataset_sha256']}`。",
         f"- [完整逐例结果]({report.get('report_name', 'evaluation-v0.2')}.json)、"
-        "[扩充用例与标注说明](../docs/evaluation-cases-v0.3.md)。",
+        "[扩充用例与标注说明](../docs/evaluation.md)。",
         "",
         "在仓库根目录执行（不需要 API key、Docker 或数据库服务）：",
         "",

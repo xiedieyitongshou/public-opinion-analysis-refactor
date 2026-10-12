@@ -1,105 +1,79 @@
-# 热点事件分类与排序边界
+# 热点分类与组装
 
-## 文档目标
+[返回项目首页](../README.md) · [产品展示](product-design.md) · [平台热度](platform-heat.md)
 
-本文对应 Day 25：定义热点事件分类、类内排序和禁止跨平台总分的边界。
+分类回答“这个事件有哪些已接纳来源、有没有官媒支撑”。本文说明判定规则、来源状态和展示组装；分类不重新抽取事件或计算热度。
 
-MVP 不输出单一 `total_priority_score`。热点结果拆成分类、平台出现情况、跨平台匹配方式、官媒支撑、置信度和证据摘要。
+## 输入与窗口
 
-## 分类字段
+组装器读取稳定 `Event.event_id`、已接纳的来源信号、本平台分数、事件归并记录和 `OfficialSupportResult`。所有结果使用同轮固定 UTC `(window_end - 24h, window_end]`。
 
-```text
-priority_category
-platform_presence
-cross_platform_match_type
-official_support_status
-confidence_level
-category_rank
-classification_detail
-```
+社区来源按真实观测时间入窗，官媒按可靠报道时间入窗；重评分的 `calculated_at` 不能让旧信号重新成为当前关注。只有已确认的条目关联参与组装，待人工审核的合并候选不提前算作另一平台来源。
 
-## 分类枚举
+当前离榜不删除窗口内已经接纳的覆盖证据。因此分类里的 `zhihu_topn=true` 可以表示过去 24 小时曾在榜，当前是否仍在榜要看趋势里的 `current_topn_present`。
 
-| 分类 | 条件 | 输出口径 |
-|---|---|---|
-| `A_cross_platform_with_official` | 微博 TopN 与知乎 TopN 自然重合，且官媒 `supported` / `weak_supported` | 多社区平台共同关注，且有官方报道支撑 |
-| `B_single_platform_with_search_and_official` | 单一平台 TopN，另一社区平台搜索高相关命中，且官媒 `supported` / `weak_supported` | 一个社区平台上榜，另一平台有讨论补证，且有官方报道 |
-| `C_cross_platform_without_official` | 两个社区平台有自然重合或高相关搜索补证，但官媒 `not_found` | 社区跨平台讨论成立，但缺少官媒事实支撑 |
-| `D_single_platform_with_official` | 单一平台 TopN，无高相关社区搜索补证，但官媒 `supported` / `weak_supported` | 一个社区平台关注，且有官方报道 |
-| `E_single_platform_only` | 单一平台 TopN，无官媒支撑，无高相关跨平台搜索补证 | 平台内候选，只能低置信或保守展示 |
-| `F_official_only` | 只在官媒 RSS 出现，未匹配社区 TopN / 搜索补证 | 官方报道事件，当前社区样本未捕捉到讨论 |
+## 平台覆盖与匹配方式
 
-## presence 字段
+| 字段 | 含义 |
+| --- | --- |
+| `zhihu_topn` | 当前窗口有已接纳的知乎热榜证据 |
+| `zhihu_search` | 已接纳的知乎搜索增强，不能替代热榜 |
+| `weibo_topn` | 当前窗口有已接纳的微博 RSS 热榜话题 |
+| `weibo_cli` | 已接纳的微博 CLI 增强，不代表独立上榜 |
+| `official_source` | 当前事件有已接纳的官媒来源证据 |
+| `mock` | 演示／测试来源标记，不冒充真实来源 |
 
-```text
-zhihu_topn
-zhihu_search
-weibo_topn
-weibo_cli
-official_source
-mock
-```
+`natural_topn_overlap` 表示两平台热榜证据属于同一事件；`search_supported`／`weak_search_supported` 表示单一热榜与另一平台的已接纳搜索证据；`single_platform_only` 表示单平台热榜；`official_only` 表示官媒来源。无足够依据时保留 `none`／`unknown`。
 
-边界：
+分类服务不重新拿标题比一次两平台热榜，覆盖依据来自事件融合和来源关联。知乎“热榜＋回答”仍只算知乎；微博“RSS＋CLI”仍只算微博。
 
-- `zhihu_search = true` 不等于知乎 TopN。
-- `weibo_cli = true` 不等于微博 TopN。
-- `search_supported` 弱于 `natural_topn_overlap`。
-- `official_source = true` 代表当前样本中存在官媒证据，不代表公众热度高。
+## A–F 规则
 
-## confidence_level
+| 类别 | 当前规则 | 展示含义 |
+| --- | --- | --- |
+| A `cross_platform_with_official` | 知乎和微博均有热榜证据，官媒 `supported` 或 `weak_supported` | 双社区关注，且有官媒支撑 |
+| B `single_platform_with_search_and_official` | 单社区热榜、另一社区搜索支持、官媒有支持 | 单社区上榜，另一个社区有讨论补证 |
+| C `cross_platform_without_official` | 跨社区覆盖成立，官媒没有被接纳为支持 | 社区共同讨论，当前没有已接纳官媒依据 |
+| D `single_platform_with_official` | 单社区热榜、官媒有支持、无跨社区支持 | 单平台关注并有官媒报道 |
+| E `single_platform_only` | 单社区热榜，无官媒和跨社区支持 | 可独立展示的单平台热点 |
+| F `official_only` | 仅官媒来源，没有社区覆盖 | 官方报道事件，当前社区样本未捕捉到对应关注 |
+| `unknown` | 输入不足，不能满足上述分类 | 保留缺失原因 |
 
-`confidence_level` 是证据链和分类稳定性的置信度，不是事实真伪判定。
+枚举在代码中带完整前缀，例如 `A_cross_platform_with_official`。C 类的“无支持”同时可能来自 `not_found` 或 `not_checked`，必须展示原始官媒状态，不能把未检查写成确定未报道。
 
-MVP 默认规则：
+B 类及跨平台搜索枚举保留在契约中，但当前自动任务不从一个平台触发另一个平台搜索。不能把本平台增强算成 B，也不为填充类别额外制造跨平台证据。
 
-| 分类 | 默认置信度 |
-|---|---|
+## 分类置信度
+
+| 类别 | 当前默认规则 |
+| --- | --- |
 | A | `high` |
-| B | `high` / `medium`，取决于搜索命中质量 |
-| C | `medium` |
-| D | `medium` |
-| E | `low` / `medium`，取决于快照出现次数和补强质量 |
-| F | `medium` / `low`，取决于官媒支撑强弱 |
+| B | 搜索质量为同身份／标题时 `high`，其余为 `medium` |
+| C、D | `medium` |
+| E | 多次有效出现或有已知搜索支持时 `medium`，否则 `low` |
+| F | 官媒 `supported` 时 `medium`，否则 `low` |
+| unknown | `unknown` |
 
-## 类内排序
+关键来源不可用标记会使置信度降为 `low`。搜索质量 `unknown` 不作为支持。分类置信度只是证据完整与分类稳定程度，不代表事实真伪，也不是事件匹配分数。
 
-类内排序使用字典序 sort keys，不生成跨平台总分。
+已接纳的 E 类可能置信度低，仍可进入简报；它与“尚未确认能否归并的候选”不同。后者在确认前不贡献来源覆盖。
 
-通用 sort keys：
+## 组装结果与存储
 
-```text
-category_rank
-official_support_rank      # supported > weak_supported > not_found > not_checked
-match_strength_rank        # natural_topn_overlap > search_supported > weak_search_supported > single_platform_only > official_only > none
-primary_rank_bucket        # top3 > top10 > top20 > tail > unknown
-snapshot_presence_count    # 多快照出现次数，desc
-rank_delta_direction       # rising > stable > falling > unknown
-search_hit_quality_rank    # same_id/title_contained > entity_action_match > keyword_overlap > none
-freshness_bucket           # <=24h > <=72h > <=7d > stale > unknown
-source_health_rank         # use > fallback > unavailable > unknown
-noise_rank                 # quality_flags 少者优先
-```
+[`classification_assembly.py`](../backend/app/services/classification_assembly.py)派生覆盖和搜索质量，调用 [`classify_hotspot`](../backend/app/services/event_classification.py)，再构造证据解释。
 
-## 禁止项
+| 输出 | 用途 |
+| --- | --- |
+| `HotspotClassification` | 类别、置信度、覆盖、支持状态、原因、限制和排序键 |
+| `EvidenceSummary` | `lead`、平台／官媒／讨论依据、限制及保守表述要求 |
+| `classification_detail_json` | 轮次、窗口、输入来源、平台分、匹配特征、缺失／拒绝原因、质量标记 |
 
-- 禁止把 `weibo_rank + zhihu_vote_count + official_source_count` 合成总分。
-- 禁止把 `zhihu_search` 的互动数描述为知乎热榜热度。
-- 禁止把微博 CLI `total_number_proxy` 描述为全站讨论量。
-- 禁止把 RSSHub item 顺序描述为微博官方热度值。
-- 禁止把 `confidence_level` 写成事实真伪保证。
+详情保存在 `events.event_detail_json.classification_detail`，同轮重算覆盖该对象并保留其他 key，不把不同轮次结果追加混在一起。趋势使用另一个 `platform_heat_analysis` 对象；展示只接受同轮同窗口结果。字段入口见[数据契约](data-contracts.md)。
 
-## Day 43 official support boundary
+## 排序与展示边界
 
-- `official_support_status` is produced by `match_official_support(event, official_items, config)`.
-- Official media matching reuses existing `items` / `Event` data; it does not crawl, search, or register a new Agent Tool.
-- Official evidence can explain evidence, authority, freshness, and coverage, but it must not be converted into public attention or community heat.
-- `F_official_only` means the event has official evidence but no community TopN/search support in the current sample.
-- `F_official_only` events may be shown in a separate "high evidence, low discussion" lane, but must not displace community hotspot main-list items solely because official media covered them.
+底层 `HotspotSortKey` 提供类别、官媒支撑、匹配方式、榜位分桶、出现次数、排名变化、搜索质量、时效、来源健康和噪声的字典序键，不相加成跨平台分数。
 
-## 代码位置
+实际 MVP 日报使用 [`briefing.platform_sort_key`](../backend/app/services/briefing.py)：平台栏目先比较在榜／未知／离榜，知乎可比较真实 rank，再比较本平台分数。官媒栏目比较引用来源数与最新报道时间。A–F 栏目内目前按标题和事件 ID 稳定排列，不是全网热度排名。
 
-```text
-backend/app/schemas/classification.py
-backend/app/services/event_classification.py
-```
+卡片保留来源引用与限制。同事件可出现在多个平台栏目，但同一栏目不能重复；官媒报道不能描述为“公众热议”，RSS 位置不能冒充官方热度。发布保护见[Guardrails](guardrails.md)。

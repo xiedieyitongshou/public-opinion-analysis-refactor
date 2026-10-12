@@ -1,6 +1,8 @@
 # Docker 部署与一天试运行
 
-本轮先在本机完成 Linux Docker 验证；阿里云 SSH 连接、服务器资源和真实邮箱将在提供连接信息后接入。后端与管理页面由同一个服务提供，另启 RSSHub；SQLite、运行日志、日报文件和 CLI 登录状态分别使用持久卷。本次默认通过 SSH 隧道访问后台。
+[返回项目首页](../README.md) · [后台与邮件操作](user-guide.md) · [部署验收记录](../reports/docker-acceptance-v0.1.md)
+
+本指南用于 Linux Docker 部署和连续一天试运行。目前已完成本机容器验证，阿里云实跑与真实收件邮箱仍待验收。后端与管理页面由同一个服务提供，另启 RSSHub；SQLite、运行日志、日报文件和 CLI 登录状态分别使用持久卷，默认通过 SSH 隧道访问后台。
 
 ## 运行行为
 
@@ -41,7 +43,7 @@ chmod 600 deploy/.env
 
 建议由邮箱服务支持的 SSL 465 或 STARTTLS 587 发信；阿里云对 TCP 25 有默认限制，参见 [ECS 常用端口](https://help.aliyun.com/en/ecs/user-guide/common-ports)。邮件账户和实际收件箱需要在服务器阶段验收。
 
-将已经准备好的 `backend/data/models` 上传到服务器相同相对路径，或设置 Compose 变量 `MODEL_DIR` 为绝对路径。目录包含 `manifest.json`、`embedding` 和 `reranker`，现有模型约 1.51 GB。运行时仅从只读挂载加载，禁止自动下载；缺少模型时生产服务不会启动。准备脚本为 `backend/scripts/prepare_semantic_models.py`，需要下载时在单独的准备环境运行。
+将已经准备好的 `backend/data/models` 上传到服务器相同相对路径，或设置 Compose 变量 `MODEL_DIR` 为绝对路径。目录包含 `manifest.json`、`embedding` 和 `reranker`，现有模型约 1.51 GB。运行时仅从只读挂载加载，禁止自动下载；默认 `hybrid_rerank` 配置缺少必需模型文件时生产服务不会启动。准备步骤和规则模式的边界见[模型安装与运行](event-matching.md#模型安装与运行)，需要下载时在单独的准备环境运行。
 
 ```bash
 docker compose build backend

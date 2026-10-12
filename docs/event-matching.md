@@ -1,245 +1,104 @@
-﻿# 事件匹配与语义重排设计
+# 事件匹配、归并与人工复核
 
-## 文档目标
+[返回项目首页](../README.md) · [规则抽取](event-extraction.md) · [搜索增强](search-enrichment.md) · [官媒证据](official-evidence.md)
 
-本文定义微博话题、知乎问题 / 搜索结果和官媒新闻如何在事件层面进行匹配、重排和人工复核。
+`match_and_resolve_events` 判断不同条目是否属于同一件事，复用稳定事件 ID。本文说明召回、比较、决策和模型运行方式；单平台事件不要求强行寻找跨平台对应项。
 
-核心原则：
-
-- 事件匹配是确定性工具和可审计特征驱动，不让 LLM 凭直觉合并事件。
-- embedding 用于语义召回和 rerank，不单独决定自动合并。
-- BM25 / n-gram 保留可解释召回能力，适合短文本和关键词强相关场景。
-- MVP 阶段实体、动作和时间窗口是自动合并的硬约束；对象约束不进入第一版正式 `EventSignal`，留作后续扩展。
-- 中置信度结果进入异步人工复核队列，不阻断自动采集分析链路。
-
-## 当前实现（2026-09-30）
-
-生产链路在 `match_and_resolve_events` 内执行共享 `MatchDocument` 适配、规范身份、BM25／dense 独立召回与 RRF、真实 BGE cross-encoder 及约束判定。官媒 query 后的候选比较复用同一服务，但使用独立的“能否作为报道依据”策略。模型分数不代表同一事件概率。
-
-安装、运行开关、源码位置与能力边界见 [匹配更新说明](matching-upgrade.md)，结果见 [同集对照评估](../reports/evaluation-v0.2.md)。下文保留早期设计背景；其细粒度能力名称不都对应当前独立注册的 Tool，实际编排以 [三模块链路](hotspot-analysis-workflow.md) 为准。
-
-## 早期采样基线
-
-早期采样脚本使用规则型相关性过滤：
+## 调用与数据流
 
 ```text
-same_question_id
-candidate_title_contained / topic_title_contained
-query_contained
-keyword_overlap_high
+EventSignal + 来源引用
+→ EventResolverAgent → EventMatcher
+→ 规范身份 / URL / 知乎父问题身份
+→ BM25 与 embedding 独立召回 → RRF 合并候选
+→ 特征比较与 cross-encoder 重排
+→ 实体、动作、时间等约束 + Guardrails
+→ merge / create / candidate_review / reject / skip
 ```
 
-其中 `keyword_overlap_high` 使用 2-6 gram 和词片段集合计算重合度，当前采样阈值为 `0.55`。
+[`MatchDocument`](../backend/app/services/match_documents.py)统一标题、摘要、实体、动作、关键词、时间提示、观测时间、URL 和规范身份。持久化事件优先读取 `event_detail_json.match_features`，兼容旧顶层字段；明确为空的字段不能被旧值偷偷补回。
 
-这套方法优点是可解释、低成本、容易回放；缺点是对同义改写、跨平台表达差异和新闻标题 / 社区话题长短不一致的情况召回不足。
+身份命中可以跳过神经模型推理，但仍检查冲突。知乎问题与其回答共享 `zhihu:question:<id>`；微博 query 或 hashtag 只是候选线索，不等同于稳定身份。
 
-## 推荐方案
+## 召回与模型分工
 
-第一阶段采用混合匹配：
+| 方法 | 当前用途 | 限制 |
+| --- | --- | --- |
+| 身份／URL | 同条内容、同知乎问题的强关联 | 不能覆盖明确事实冲突 |
+| BM25 | 基于候选集合 IDF、词频和长度归一化召回 | 中文使用字符 bigram，拉丁字母与数字按词处理 |
+| N-gram | 可解释的字面重叠特征 | 泛词重合不等于同一事件 |
+| Embedding | 独立语义召回和相似度特征 | 没有字面重叠也可召回，但不能单独自动合并 |
+| RRF | 合并 BM25 与 dense 候选排名 | 合并排名，不把原始分数当同一种量纲 |
+| Cross-encoder | 对候选重排并辅助判断 | 高分仍需要具体锚点和约束通过 |
 
-```text
-ID / URL 硬匹配
--> 标题强包含和实体规则匹配
--> BM25 / n-gram 候选召回
--> embedding 语义召回或 rerank
--> 混合 rerank
--> Guardrails 决策
--> auto_merge / candidate_review / reject
+当前在数据库候选范围内计算，未使用向量数据库或近似向量索引。相关服务见 [`matching_engine.py`](../backend/app/services/matching_engine.py) 与 [`event_matcher.py`](../backend/app/agents/event_matcher.py)。
+
+## 决策与阈值
+
+事件匹配同时使用规则、模型与约束，不是只按 rerank 的三个档位分类。当前配置来自 [`EventMatchConfig`](../backend/app/schemas/matching.py)：
+
+| 配置 | 默认值 | 作用 |
+| --- | ---: | --- |
+| `auto_merge_confidence_threshold` | 0.85 | 综合匹配置信度达到自动合并档位，仍须通过护栏 |
+| `candidate_review_confidence_threshold` | 0.60 | 综合置信度进入人工复核档位 |
+| `rerank_auto_merge_min_score` | 0.85 | rerank 辅助自动合并的门槛，不能独立覆盖冲突 |
+| `embedding_candidate_min_similarity` | 0.78 | embedding 候选相关配置 |
+| `embedding_auto_merge_min_similarity` | 0.86 | embedding 强相似约束判断 |
+| `time_window_same_event_hours` | 72 | 同事件匹配默认时间跨度，区别于日报 24 小时窗口 |
+
+具体行为：
+
+- 明确身份或 URL 命中可复用事件，但明确冲突优先拒绝。
+- 综合高分且约束、Guardrails 通过才自动合并；弱话题或仅高语义相似可转人工。
+- 中间档进入 `candidate_review`，待确认条目不提前加入候选事件的来源证据。
+- 综合分低于复核阈值，否认与该候选的自动归并。普通发现信号可建立独立事件；搜索增强在自动模式下仍受父话题约束，不能自行建热点。
+- 低 rerank 分会在适用条件下降低候选置信度，但不是对所有身份匹配一票否决。模型分数不是“同一事件概率”。
+
+共享约束覆盖已识别的日期、年份、型号、部分地点／桥梁、动作和灾害类型冲突。系统保留初始特征与最多三份代表描述，防止连续相似条目串错事件；这不是通用中文事实推理或完整聚类质量保证。
+
+## 持久化与审计
+
+`event_signal_id` 标识本轮信号，`event_fingerprint` 辅助匹配，`Event.event_id` 才是跨轮次稳定业务身份。没有将 `first_seen_at` 冒充事件发生时间；抽取中的 `event_time_hint` 也可能只是发布时间提示。
+
+每次比较保存 `MatchFeatures`，包括身份、标题包含、关键词／N-gram、BM25、embedding、rerank、实体／动作、时间距离、缺失字段和冲突。模型未执行的分数保留 `null`，不伪造分数。
+
+匹配结果经 [`event_resolver.py`](../backend/app/agents/event_resolver.py)决定落库。高分没有通过约束、父话题未确定或需要人工处理的关系不贡献跨平台覆盖。人工队列保存具体 Item、候选事件和判断依据。
+
+后台可处理归并、单独创建、忽略或拒绝，搜索增强仍受创建限制。确认后按原观测时间重算，生成更正草稿；已保存日报内容不变。见 [Guardrails 与人工复核](guardrails.md)。
+
+## 模型安装与运行
+
+| `MATCHING_PROFILE` | 执行方式 |
+| --- | --- |
+| `rules` | 身份、规则、BM25 等，不加载神经模型 |
+| `hybrid` | 增加 embedding 与混合召回 |
+| `hybrid_rerank` | 增加 cross-encoder；项目默认配置 |
+
+当前使用 `BAAI/bge-small-zh-v1.5`（512 维）与 `Xenova/bge-reranker-base` 的量化 ONNX 权重。后者来源于 BGE reranker，当前评估对应 int8 转换，不应写成原始浮点模型结果。
+
+在 `backend` 目录、已创建虚拟环境后执行：
+
+```powershell
+..\.venv\Scripts\python.exe -m pip install torch==2.8.0 --index-url https://download.pytorch.org/whl/cpu
+..\.venv\Scripts\python.exe -m pip install -e ".[dev,semantic]"
+..\.venv\Scripts\python.exe scripts/prepare_semantic_models.py
 ```
 
-## Agent 执行链路
+准备脚本固定 revision 并生成 `manifest.json`，模型默认写到忽略目录 `backend/data/models`。准备阶段需要下载，运行阶段只读本地权重。当前组合见 [`pyproject.toml`](../backend/pyproject.toml)；Docker 使用[Linux 锁定依赖](../backend/requirements-linux.lock)和 CPU 镜像。
 
-```text
-Collector Agent
--> fetch_source_items
--> normalize_raw_items
+| 配置 | 默认／用途 |
+| --- | --- |
+| `SEMANTIC_MODEL_DIR` | 未设置时使用项目 `backend/data/models`；容器为 `/models` |
+| `SEMANTIC_DEVICE` | `cpu`，embedding 设备 |
+| `SEMANTIC_CPU_THREADS` | `4` |
+| `SEMANTIC_CACHE_PATH` | 可配置 reranker SQLite 分数缓存；Docker 为 `/app/data/semantic-cache.db` |
 
-Normalizer Agent
--> build_event_text_for_match
--> build_event_text_for_embedding
+有进程内缓存及可选的跨进程精确文本对分数缓存。缓存只复用同模型、同文本对的模型输出，事件时间、身份、阈值和归并决策每次重新检查，不缓存业务决定。
 
-Event Resolver Agent
--> extract_event_signals
--> hard_match_by_id_url
--> bm25_ngram_retrieve_candidates
--> embed_event_text
--> semantic_retrieve_candidates
--> rerank_event_matches
--> match_event
--> apply_merge_guardrails
--> auto_merge / enqueue_human_review / reject
+分析运行中模型不可用时保留降级标记并回退规则；生产启动在非 `rules` 模式先检查必须的本地模型文件，缺失时拒绝启动。离线模型对照评估要求实际加载并推理成功，不允许静默退化成三次规则测试。
 
-Classification Agent
--> classify_event_priority
--> calculate_category_rank
--> explain_evidence_chain
-```
+## 官媒共用能力与历史修复
 
-Agent 的职责是编排工具、选择降级路径、汇总结构化结果和生成解释。相似度计算、阈值判断、合并写库和复核入队应由确定性工具完成。
+官媒匹配复用比较字段和检索能力，但独立判断“这条报道能否作为该事件依据”，不共用一套自动接受阈值。字段读取、空动作误匹配与来源／时间要求见[官媒证据](official-evidence.md#官媒误匹配的字段与判定规则改动)。
 
-## 工具职责
-
-| 工具 | 作用 | 失败降级 |
-|---|---|---|
-| `hard_match_by_id_url` | 使用平台 ID、URL、知乎 question id、微博 mid 做强匹配 | 无命中时进入下一步 |
-| `bm25_ngram_retrieve_candidates` | 用 `event_text_for_match` 做可解释候选召回 | 无命中时仍可尝试 embedding |
-| `embed_event_text` | 为 `event_text_for_embedding` 生成向量 | embedding 服务不可用时跳过语义召回 |
-| `semantic_retrieve_candidates` | 基于 cosine similarity 召回语义相近候选 | 只作为候选，不直接合并 |
-| `rerank_event_matches` | 综合规则、BM25 / n-gram、embedding、实体和时间进行排序 | 缺少 embedding 时使用规则 + BM25 |
-| `match_event` | 输出 `should_merge`、`confidence`、`reason` 和 `match_features_json` | 中置信度进入复核 |
-| `apply_merge_guardrails` | 阻止实体冲突、时间冲突和单纯 embedding 误合并 | 写入审计和复核队列 |
-
-## 匹配特征
-
-每次匹配必须保存 `match_features_json`：
-
-```json
-{
-  "id_match": false,
-  "url_match": false,
-  "title_containment": false,
-  "keyword_overlap": 0.0,
-  "ngram_overlap": 0.0,
-  "bm25_score": 0.0,
-  "embedding_similarity": null,
-  "entity_overlap": 0.0,
-  "action_overlap": 0.0,
-  "object_overlap": null,
-  "time_distance_hours": null,
-  "source_pair": ["weibo", "zhihu"],
-  "matched_by": ["bm25_ngram", "embedding_rerank"],
-  "hard_constraints_passed": false,
-  "guardrail_flags": []
-}
-```
-
-## ID 与指纹生成
-
-`event_signal_id`、`event_fingerprint` 和 `event_id` 分工不同：
-
-- `event_signal_id`：Day 38 生成，表示某一轮 run 中从某个 `SourceSignal` 抽取出的一条事件信号，只用于溯源、debug 和日志回放。
-- `event_fingerprint`：Day 39 生成 / 派生，表示用于判断两个信号是否属于同一事件的匹配特征组合，用于候选召回、去重、辅助生成新 `event_id` 和解释匹配原因。
-- `event_id`：Day 39 生成或复用，表示聚合后的稳定事件对象，用于最终展示、跨轮次追踪、热度趋势、生命周期管理和日报引用。
-
-`event_fingerprint` 第一版生成规则：
-
-```text
-normalize(
-  sorted(entities)
-  + sorted(action_terms)
-  + core_keywords
-  + event_date_bucket
-  + stable_source_id_or_url_if_available
-)
--> sha256
-```
-
-说明：
-
-- `event_date_bucket` 优先取 `event_time_hint` / `published_at` 的日期；缺失时使用 `first_seen_at` 日期。
-- 同平台稳定 ID 或 URL 命中时，可作为 fingerprint 的强特征。
-- fingerprint 是匹配辅助特征，不是最终展示 ID。
-
-`event_id` 第一版生成规则：
-
-```text
-evt_<YYYYMMDD>_<fingerprint_prefix>
-```
-
-规则：
-
-- 强匹配命中已有事件时，必须复用已有 `event_id`。
-- 新事件创建时生成新的稳定业务 `event_id`。
-- `YYYYMMDD` 优先取 `event_time_hint` / `published_at`，缺失时取 `first_seen_at`。
-- `fingerprint_prefix` 使用 `event_fingerprint` 的短哈希前缀。
-- 数据库自增主键只作为内部存储 ID，不作为展示层 `event_id`。
-
-## 默认阈值
-
-第一版阈值先作为可配置默认值，后续由 Evaluation 根据真实样本调参：
-
-| 参数 | 默认值 | 用途 |
-|---|---:|---|
-| `keyword_overlap_high` | `0.55` | 关键词 / 词片段强重合 |
-| `ngram_overlap_high` | `0.50` | n-gram 强重合 |
-| `bm25_candidate_min_score` | `0.45` | BM25 候选召回下限 |
-| `embedding_candidate_min_similarity` | `0.78` | embedding 候选召回下限 |
-| `embedding_auto_merge_min_similarity` | `0.86` | embedding 参与自动合并的最低相似度 |
-| `time_window_same_event_hours` | `72` | 默认同事件时间窗口 |
-| `auto_merge_confidence_threshold` | `0.85` | 自动合并阈值 |
-| `candidate_review_confidence_threshold` | `0.60` | 进入人工复核阈值 |
-
-阈值约束：
-
-- embedding 达到自动合并相似度也不能单独触发合并，MVP 仍必须满足实体、动作或时间窗口中的硬约束；对象约束留作后续扩展。
-- `confidence < candidate_review_confidence_threshold` 时默认拒绝合并或仅写审计。
-- 泛词、短话题和营销词可提高人工复核要求，不应降低自动合并阈值。
-
-## 决策规则
-
-### 自动合并
-
-满足以下任一条件可以自动合并：
-
-- 同平台稳定 ID 或 URL 命中。
-- 跨平台标题强包含，且实体 / 动作一致，时间窗口合理。
-- BM25 / n-gram 高分、embedding 高相似、实体和时间硬约束均通过。
-
-### 人工复核
-
-以下情况进入 `candidate_review`：
-
-- embedding 高相似，但实体、动作或时间硬约束缺失。
-- BM25 / n-gram 高分，但 embedding 一般或标题存在歧义。
-- 搜索结果相关，但存在历史内容污染风险。
-- 官媒报道与社区话题可能相关，但时间窗口或实体不完整。
-
-### 拒绝合并
-
-以下情况不合并，只写审计：
-
-- 核心实体冲突。
-- 时间窗口明显冲突。
-- 只有泛词相似，例如“苹果 华为”“开学考试”“新能源车”。
-- 只有 embedding 高相似，但没有实体、动作或时间支撑。
-- 搜索结果低相关或明显历史污染。
-
-## embedding 使用边界
-
-embedding 适合：
-
-- 同一事件的不同表述。
-- 官媒新闻标题和社区话题之间的语义差异。
-- 长标题和短话题之间的候选召回。
-- 用户指定事件搜索的语义扩召回。
-
-embedding 不适合单独处理：
-
-- 极短泛词话题。
-- 同名不同事件。
-- 实体相同但时间不同的连续报道。
-- 历史内容污染。
-- 营销词和平台热词。
-
-因此，embedding 只能提升召回和排序，不能绕过实体、时间和来源证据 guardrails。
-
-## 置信度建议
-
-| 置信度 | 条件 | 动作 |
-|---|---|---|
-| high | 硬匹配，或规则强匹配 + BM25 / n-gram + embedding 均支持，且硬约束通过 | 自动合并 |
-| medium | 部分信号支持但存在实体、时间或语义不完整 | 进入人工复核 |
-| low | 只有弱关键词或弱语义相似 | 不合并，写审计 |
-| rejected | 实体冲突、时间冲突、低相关搜索结果 | 拒绝合并 |
-
-## Evaluation 要求
-
-评测集必须单独统计：
-
-- 规则强匹配 precision / recall。
-- BM25 / n-gram 召回带来的新增正确合并和误合并。
-- embedding rerank 带来的新增正确合并和误合并。
-- `candidate_review` 的人工负担。
-- 泛词、短话题、历史内容污染和同名不同事件的误合并率。
-
-只有当 embedding 在真实样本上提升召回且误合并可控时，才允许提高它在自动合并中的权重。
+历史评估显示仍有漏匹配与需人工判断的情况。保守地不自动合并并不总是代码故障；评估必须区分低召回、正确转人工和真正错配，见[评估方法](evaluation.md)。

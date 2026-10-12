@@ -1,4 +1,8 @@
-# Crawl Validation Report v0.1
+# 采集器验收基线 v0.1
+
+[返回项目首页](../README.md) · [文档导航](../README.md#文档导航) · [验证记录](../README.md#验证记录)
+
+> 历史记录：本文保留采集阶段 Day 29–35 的验收口径，并合并原周日志中的采集实现记录。后续功能进展见[更新日志](../CHANGELOG.md)，当前行为见[数据源说明](../docs/data-sources.md)。下文的待办描述属于当时状态。
 
 ## Purpose
 
@@ -128,3 +132,13 @@ Validated command set for this baseline:
 - Add a scheduled low-frequency crawl-validation command for deployment.
 - Feed validation summaries into the future Agent Ops panel.
 - Convert repeated live failures into `source_status` review tasks instead of ad hoc code changes.
+
+## 采集阶段实现记录
+
+原周日志对应的交付顺序为：Day 29 定义 Collector 协议与注册边界；Day 30–31 接入知乎热榜／搜索；Day 32 接入微博 RSSHub 与可选 CLI；Day 33 接入三家官媒 RSS；Day 34 接通采集 Agent；Day 35 验证来源闸门、字段完整性和执行记录。来源清单、测试范围及缺失处理统一保留在本文前述章节。
+
+`CollectorRegistry` 拒绝注册 `postpone` 来源，调度器同时处理 `postponed_source_ids`。验证计划不落正式条目池；普通采集只有显式开启 promotion 且不是 dry run 时才持久化条目。`AgentTaskRunner`／`ToolRegistry` 保存任务与调用记录，`CrawlValidationRun` 保存请求、跳过和不可用来源、字段完整率、贡献角色及样本清单元数据。
+
+下游交接包含来源身份、候选文字、引用、质量标记及平台指标：知乎保留 rank 和搜索互动；微博保留 RSS presence／列表顺序与可选 CLI 样本；官媒保留发布时间、来源和报道依据。Day 36 起的归一化与事件抽取另行处理，不能把当时采集器就绪等同于完整日报已完成。
+
+该阶段的可回放测试还覆盖 CLI 失败保留 RSS 种子、无搜索目标时跳过、缺少凭据时明确失败，以及缺少作者／发布时间时保留质量标记。它们证明协议和降级分支可运行，没有证明外部来源长期可用。阶段交付为 `collector-agent-v0.1`，适合低频 smoke test；后续真实联调和产品验收从[首页验证记录](../README.md#验证记录)进入。

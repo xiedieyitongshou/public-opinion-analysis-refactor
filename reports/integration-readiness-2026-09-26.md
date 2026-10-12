@@ -1,4 +1,6 @@
-# Day 1–Day 47 项目衔接与前端开发就绪度检查
+# 系统集成就绪检查（2026-09-26）
+
+[返回项目首页](../README.md) · [文档导航](../README.md#文档导航) · [验证记录](../README.md#验证记录)
 
 检查日期：2026-09-26。依据为当前工作区的 `实施计划-v0.3.md`、`docs/`、`reports/`、后端源码和现有测试。本文记录检查结论，不代表相关缺口已修复。
 
@@ -14,10 +16,10 @@
 
 | 周 / 日 | 对照交付项 | 当前完成情况与衔接判断 |
 |---|---|---|
-| 第 1 周 Day 1 | 模式 A / B、产品边界 | 有 `docs/product-modes.md`，模式 A 优先、模式 B 预留明确；仍有“综合热度分”等早期描述，与后续分平台口径冲突。 |
+| 第 1 周 Day 1 | 模式 A / B、产品边界 | 有 `docs/product-design.md`，模式 A 优先、模式 B 预留明确；仍有“综合热度分”等早期描述，与后续分平台口径冲突。 |
 | Day 2 | 来源分类、选型与降级 | 有 `docs/data-sources.md`，后续采样和 collector 反映了知乎 API、微博 RSSHub + CLI、官媒证据池的选择。 |
-| Day 3 | 模式 A 工作流与阶段职责 | 有 `docs/workflows.md`；自动分析与人工发布分工明确，但其中综合热度、部分来源范围和阶段名称未完全跟随后续修改。 |
-| Day 4 | 工具清单、输入输出、重试与副作用 | 有 `docs/tools.md` 和工具注册代码；需要将最新 Day 43–47 的 service 编排顺序补回主流程，不能仅凭工具名已注册认定链路已通。 |
+| Day 3 | 模式 A 工作流与阶段职责 | 有 `docs/architecture.md`；自动分析与人工发布分工明确，但其中综合热度、部分来源范围和阶段名称未完全跟随后续修改。 |
+| Day 4 | 工具清单、输入输出、重试与副作用 | 有 `docs/tool-reference.md` 和工具注册代码；需要将最新 Day 43–47 的 service 编排顺序补回主流程，不能仅凭工具名已注册认定链路已通。 |
 | Day 5 | 生命周期、保留与存储策略 | 有 `docs/data-lifecycle.md`，符合本日设计目标；清理和归档等运行机制仍不能按“文档存在”算已实现。此项不阻止组件开发。 |
 | Day 6 | 工作流与 Structured Output 规范 | 有文档和多组 Pydantic schema；草稿阻断状态、旧评分字段与新展示结构需要统一。 |
 | Day 7 | Guardrails / Evaluation 设计、周复盘 | 两类设计文档存在，后续也有规则及样例；未找到计划指定的 `docs/project-log/week-01.md`。周报缺失本身不阻断前端。 |
@@ -41,7 +43,7 @@
 | Day 25 | A–F 分类与字典序排序 | 规则函数和单元用例具备；需与最新分平台趋势排序及展示口径共同冻结契约。 |
 | Day 26 | Guardrails Runtime 与基础 API | 默认规则、违规写库和 Ops API 具备；事件列表返回数据库摘要及自由 JSON，尚非首页聚合响应。 |
 | Day 27 | 采样驱动评测样例 | `day27_evaluation_cases_v0_1.json` 和测试存在；它是样例集，不是运行当前整链的质量报告。 |
-| Day 28 | schema 复盘与 collector 清单 | 对应能力和文档存在；`week-04.md` 实际主要记录 Day 29–35，阶段命名需要整理。 |
+| Day 28 | schema 复盘与 collector 清单 | 对应能力和文档存在；当时的周日志实际主要记录 Day 29–35，阶段命名需要整理。该部分现已并入[采集验收基线](crawl-validation-v0.1.md#采集阶段实现记录)。 |
 | 第 5 周 Day 29 | Collector 基类、注册、验证模式 | 具备 fetch/parse/normalize/save、来源闸门和验证模式；quota 字段有预留，报告明确 live quota 接入仍待完成。 |
 | Day 30 | 知乎 hot_list collector | HTTP client、collector 和故障处理具备；真实 collector 的 rank 在 `raw_metrics/normalized` 内，Day 47 却读顶层 rank，存在实测衔接缺陷。 |
 | Day 31 | zhihu_search 增强 | 查询、过滤、审计基本具备；没有显式 query/candidate 会跳过，默认主流程尚未把热榜候选传入。 |
@@ -110,7 +112,7 @@
 | 官媒 Top5 query 策略 | 展示报告要求 event_id+report_date 每日一次；代码没有该选择和执行记录 | 如保留此策略，增加实际执行与状态，未运行保持 not_checked；不要在前端推断 not_found |
 | 综合热度和第一阶段来源范围 | 第一周部分文档仍提综合热度及 B站等，后续计划收敛为知乎/微博分平台分析 | 依据最新阶段契约展示，更新旧文档的适用版本 |
 
-相关文档：[展示数据结构报告](mvp-display-mode-data-structure-v0.1.md)、[最新趋势说明](../docs/platform-trend.md)、[分类组装说明](../docs/hotspot-classification-assembly.md)、[采集验证基线](crawl-validation-v0.1.md)、[跨源分类采样报告](cross-source-classification-probe-v0.1.md)。历史报告不应因为后续已写单元测试，就被解释为当前完整链路的真实验证报告。
+相关文档：[展示数据结构报告](../docs/product-design.md)、[最新趋势说明](../docs/platform-heat.md)、[分类组装说明](../docs/hotspot-classification.md)、[采集验证基线](crawl-validation-v0.1.md)、[跨源分类采样报告](cross-source-classification-probe-v0.1.md)。历史报告不应因为后续已写单元测试，就被解释为当前完整链路的真实验证报告。
 
 建议把接下来的工作分为可以同步开始的前端工作，以及真实联调前必须完成的后端收尾：
 

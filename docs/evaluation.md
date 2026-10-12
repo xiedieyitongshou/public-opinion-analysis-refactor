@@ -1,574 +1,83 @@
-# Evaluation 设计
+# 评估与验证指南
 
-## 当前可执行评估（2026-09-30）
+[返回项目首页](../README.md) · [验证报告](../README.md#验证记录) · [模型安装](event-matching.md#模型安装与运行)
 
-Day48–49 已接入离线用例执行器及 `run_evaluation_suite` Tool。当前冻结集有 208 条用例，三种配置分别运行实际业务代码；完整神经配置使用本地真实 embedding／reranker，模型失效不允许伪装为成功的消融实验。
+回归测试、离线业务评估和真实运行验收分别回答代码约束是否保持、业务结果是否符合标签、外部来源与投递是否可持续工作，不能混成一个准确率。本文说明用例、标签边界和复现方法。
 
-- [用例构建、标签与复现命令](evaluation-cases-v0.3.md)
-- [本轮同集对照报告](../reports/evaluation-v0.2.md)
-- [升级前基线](../reports/evaluation-v0.1.md)
-- [模型与官媒搜索实现说明](matching-upgrade.md)
+## 用例版本与报告版本
 
-237 项回归测试通过与业务评估 193/208 通过是不同口径：前者检查代码约束，后者保留真实的漏匹配及拟定策略差异。人工复核计为自动合并弃权，不计成功；样本通过率不等于系统生产准确率。
+| 用例集 | 范围 | 对应记录 |
+| --- | --- | --- |
+| [Day27 v0.1](../backend/app/evaluation/cases/day27_evaluation_cases_v0_1.json) | 早期真实采样的分类、匹配及错误案例 | [原始标签说明](../reports/evaluation-labels-v0.1.md)，保留当时口径 |
+| [system v0.2](../backend/app/evaluation/cases/system_cases_v0_2.json) | 134 条，覆盖采集、归一化、事件、官媒、分类、热度、趋势及完整编排 | [评估报告 v0.1](../reports/evaluation-v0.1.md)是改进前结果 |
+| [system v0.3](../backend/app/evaluation/cases/system_cases_v0_3.json) | 保留原 134 条与标签，新增 74 条，共 208 条 | [评估报告 v0.2](../reports/evaluation-v0.2.md)是匹配改进后三组对照 |
 
-以下保留早期日报 Evaluation 设计，不应将其中尚未接入的指标理解为本轮已验证。
+当前执行器默认使用 system v0.3。用例版本与报告版本编号不同，不要按文件后缀误判。
 
-## 文档目标
+v0.2 的 134 条包括：归一化 20、事件匹配 48、官媒 13、分类 8、热度排序 8、时间趋势 18、采集 9、完整编排 10。v0.3 新增：合成匹配 16、合成官媒 16、多候选召回 8、官媒查询真实摘录匹配 17、同批官媒相关性 17。
 
-本文定义模式 A：每日热点简报第一阶段的 Evaluation 指标。
+## 数据与标签边界
 
-第一阶段 Evaluation 的目标不是构建完整评测体系，而是让系统在自动运行后能回答：
+公共集保留真实标题、URL、时间和必要指标，省略正文、用户资料、凭据与原始完整响应。采集 hash 用于追溯原件，不代表摘录与原件内容相同。
 
-```text
-数据有没有采到？
-字段是否够用？
-工具是否稳定？
-简报是否有来源？
-Guardrails 是否触发？
-存储是否可控？
+数据分为 `real_excerpt`、`legacy_title_pair`、`derived`、`synthetic`；语义标签由助手初标，尚待人工复核。原 20 个主题按事件组分为 dev 14／holdout 6，同一事件与变体不能跨分区；规则回归另列。加载器检查泄漏、重复 ID、缺失引用及事件组。
+
+扩充集已用于诊断与修复，holdout 错误已被查看，不能当作未触碰的盲测集。自然跨平台正例仍不足；同 URL 变体和同发布方的文字／视频采访不能替代自然跨平台样本。新增或更正标签需记录理由，不能按当前预测修改 expected。
+
+## 复现命令
+
+在 `backend` 目录执行。普通回归使用模拟响应；不会为了测试主动请求付费采集接口：
+
+```powershell
+..\.venv\Scripts\python.exe -m pytest -q
+..\.venv\Scripts\python.exe -m ruff check app tests
 ```
 
-## 设计原则
+离线业务评估建议输出到临时目录，避免覆盖仓库的历史结果：
 
-- 指标必须能从系统日志、数据库和工具结果中自动计算。
-- 第一阶段不依赖大量人工标注。
-- 指标数量保持有限，后续根据真实运行结果扩展。
-- Evaluation 不阻断自动采集分析链路。
-- Evaluation 失败必须记录，但不影响已经通过发布确认的正式日报。
-
-Day 7 的 Evaluation 定义以“可自动计算”为边界。事件合并准确率需要人工标注样本，因此 Day 7 只定义占位口径，不纳入第一阶段默认启用指标；第一阶段用 `candidate_merge_rate` 和 `async_review_task_count` 先观测事件合并质量风险。
-
-## 指标分组
-
-第一阶段指标分为 5 类：
-
-- 工具稳定性。
-- 数据源质量。
-- 事件处理质量。
-- 简报与 Guardrails 质量。
-- 存储与生命周期质量。
-
-## 工具稳定性指标
-
-### tool_success_rate
-
-定义：
-
-```text
-成功工具调用次数 / 总工具调用次数
+```powershell
+..\.venv\Scripts\python.exe -m app.evaluation --profile rules --output-dir "$env:TEMP/poa-evaluation" --report-name evaluation-local
+..\.venv\Scripts\python.exe -m app.evaluation --split holdout --output-dir "$env:TEMP/poa-holdout"
+..\.venv\Scripts\python.exe -m app.evaluation --case-ids workflow-search-same-question --output-dir "$env:TEMP/poa-case"
 ```
 
-数据来源：
+使用旧集时显式指定 `--cases app/evaluation/cases/system_cases_v0_2.json`。已有完整原始采集响应时，可用 `--raw-replay <collection.json>` 加做结构回放；它保留观测元数据，只报告结构结果，不加入语义准确率分母。公共固定用例不依赖私人原件。
 
-- `agent_tool_calls`
-- `ToolResultMeta.success`
+准备好本地模型后运行同集三组对照：
 
-建议阈值：
-
-```text
->= 0.95 pass
-0.85 - 0.95 warn
-< 0.85 fail
+```powershell
+..\.venv\Scripts\python.exe -m app.evaluation.ablation --output-dir "$env:TEMP/poa-ablation"
 ```
 
-### tool_retry_rate
+对照包含 `rules`、`hybrid`、`hybrid_rerank`。开始时真实加载 embedding 和 reranker 并检查推理，模型缺失或失效中止，不允许静默退化成三遍规则测试。不同 profile 会复用缓存，耗时不能直接当作模型速度对比。
 
-定义：
+单配置评估退出码：0 为全部预期满足，1 为业务预期不符，2 为执行或输入错误。未知用例、空选择和执行异常不能包装为“100% 通过”。
 
-```text
-发生重试的工具调用次数 / 总工具调用次数
-```
+## 隔离与执行范围
 
-用途：
+执行器阻断网络，调用现有 Collector 的模拟传输、Normalizer、规则抽取、匹配、Guardrails、分类、热度和趋势。完整编排使用实际九步 Plan，只替换采集响应，各链路场景使用独立 SQLite 内存库。
 
-- 判断数据源或工具是否不稳定。
+`run_evaluation_suite` Tool 在独立子进程运行，避免评估的网络限制和样本影响宿主任务；提供数据库 Session 时可保存摘要。它不属于每轮热点分析的九步业务链路。
 
-建议阈值：
+[`build_evaluation_cases_v02.py`](../backend/scripts/build_evaluation_cases_v02.py)与 [`build_matching_upgrade_cases.py`](../backend/scripts/build_matching_upgrade_cases.py)用于重建冻结数据，正常评估无需执行。重建真实摘录需要本地原件，标签依据与预测分开。
 
-```text
-<= 0.10 pass
-0.10 - 0.25 warn
-> 0.25 fail
-```
+## 指标解释
 
-### avg_tool_latency_ms
+| 项目 | 口径与限制 |
+| --- | --- |
+| 自动合并 | 只有无需复核的 `merge` 算预测正例；正例转人工计自动召回 FN，人工负担另报 |
+| 官媒相关性 | `supported` 与 `weak_supported` 都计支持，不能把误匹配降为 weak 来掩盖 FP |
+| 分类 | 正确类别与置信度分别检查；给定证据的规则通过不代表上游证据正确 |
+| 热度与排序 | 只比较同平台／适用类别，不使用跨平台总分 |
+| 趋势 | rising／stable／cooling／unknown；unknown 与缺失单列，不能当作正确涨跌 |
+| Tool | 协议执行成功与业务成功分开，来源超时可以被合法返回为 failed |
+| 候选召回 | 新增场景仅 8 条、每例候选很少，验证路径可运行，不能据此声称普遍优于其他方法 |
+| 存储与运行 | 当前可查询请求、任务、日志和投递；业务数据清理、压缩与长期增长指标仍待实现 |
 
-定义：
+不同模块通过数不合成为系统生产准确率。未自动归并既可能是漏召回，也可能是正确拒绝或保守转人工，需要逐例判断。新增自然跨平台样本、人工复核标签和真实多轮观测仍是后续工作。
 
-```text
-工具调用平均耗时
-```
+## 历史结果与修复追踪
 
-用途：
+[2026-09-29 基线](../reports/evaluation-v0.1.md)为 118/134， [2026-09-30 对照](../reports/evaluation-v0.2.md)为 193/208；这些是相应日期的结果，未因之后的代码变化回填。后续同问题增强、榜单完整性和时效修复见 [v0.1 对应问题](../reports/evaluation-v0.1.md#本轮问题定位)和[规则复评 JSON](../reports/evaluation-hotlist-freshness-rules.json)。
 
-- 发现采集、LLM 调用或渲染阶段的性能问题。
-
-## 数据源质量指标
-
-### source_success_rate
-
-定义：
-
-```text
-成功采集的数据源数量 / 本轮计划采集的数据源数量
-```
-
-数据来源：
-
-- `fetch_source_items`
-- `source_results`
-- `SourceFetchResult.success`
-
-建议阈值：
-
-```text
->= 0.80 pass
-0.60 - 0.80 warn
-< 0.60 fail
-```
-
-### item_count_by_source
-
-定义：
-
-```text
-每个数据源本轮采集到的有效条目数
-```
-
-用途：
-
-- 识别某个数据源是否长期无数据或结构变化。
-
-数据来源：
-
-- `SourceFetchResult.item_count`
-
-### field_completeness_rate
-
-定义：
-
-```text
-关键字段完整的 NormalizedItem 数量 / NormalizedItem 总数
-```
-
-关键字段：
-
-```text
-title
-url
-source_id
-source_type
-platform
-fetched_at
-content_hash
-```
-
-建议阈值：
-
-```text
->= 0.95 pass
-0.85 - 0.95 warn
-< 0.85 fail
-```
-
-### source_coverage_rate
-
-定义：
-
-```text
-简报事件中包含至少一个可追踪来源的事件数 / 简报事件总数
-```
-
-正式发布要求：
-
-```text
-必须为 1.0
-```
-
-## 事件处理质量指标
-
-### event_signal_count
-
-定义：
-
-```text
-本轮抽取出的 EventSignal 数量
-```
-
-用途：
-
-- 判断事件抽取是否异常偏少或偏多。
-
-### event_created_count
-
-定义：
-
-```text
-本轮新建事件数量
-```
-
-用途：
-
-- 识别事件拆分是否过细。
-
-### event_updated_count
-
-定义：
-
-```text
-本轮更新已有事件数量
-```
-
-用途：
-
-- 观察事件持续追踪效果。
-
-### candidate_merge_rate
-
-定义：
-
-```text
-候选合并数量 / 事件合并判断总数
-```
-
-用途：
-
-- 评估事件合并不确定性的规模。
-- 该指标过高说明合并规则或事件抽取质量需要优化。
-
-建议阈值：
-
-```text
-<= 0.20 pass
-0.20 - 0.40 warn
-> 0.40 fail
-```
-
-说明：
-
-- 这是第一阶段自动指标，用来替代人工标注不足时的事件合并准确率。
-- 候选合并数量来自 `EventResolution.action = candidate_review`。
-- 事件合并判断总数来自 `EventResolution` 总数，不包含 `skip` 且无可比事件的结果。
-
-### event_merge_accuracy_offline
-
-定义：
-
-```text
-人工标注为正确的合并判断数量 / 已人工标注的合并判断数量
-```
-
-启用阶段：
-
-```text
-第 6 周 Evaluation Runner 和第一批 evaluation cases 建立后启用
-```
-
-第一阶段处理：
-
-- Day 7 只定义该指标口径和数据需求。
-- 不纳入 v0.3 第一阶段默认启用指标。
-- 不作为自动发布门槛。
-
-数据需求：
-
-- `evaluation_cases` 中人工标注的 should_merge / should_not_merge 样例。
-- `EventResolution.action`、`EventResolution.confidence` 和 `reason`。
-- `EventResolution.matched_by` 和 `match_features_json`，用于拆分规则、BM25 / n-gram 和 embedding 的贡献。
-
-### hybrid_match_component_metrics
-
-定义：
-
-```text
-分别统计规则强匹配、BM25 / n-gram 召回、embedding rerank 的 precision / recall / false positive
-```
-
-用途：
-
-- 判断 BM25 / n-gram 是否提升了短文本和关键词相关事件的召回。
-- 判断 embedding 是否提升了跨平台改写和同义表达的召回。
-- 判断 embedding 是否引入短话题泛化、历史内容污染和同名不同事件误合并。
-- 决定是否调整 `embedding_similarity`、`keyword_overlap`、`ngram_overlap`、`bm25_score` 和时间窗口阈值。
-
-数据需求：
-
-- `match_features_json.keyword_overlap`
-- `match_features_json.ngram_overlap`
-- `match_features_json.bm25_score`
-- `match_features_json.embedding_similarity`
-- `match_features_json.entity_overlap`
-- `match_features_json.time_distance_hours`
-- `match_features_json.guardrail_flags`
-- 人工标注的 should_merge / should_not_merge。
-
-建议输出：
-
-| 组件 | 指标 |
-|---|---|
-| 规则强匹配 | precision、recall、误拒绝样例 |
-| BM25 / n-gram | 新增召回数、正确新增合并数、误合并数 |
-| embedding rerank | 新增召回数、正确新增合并数、误合并数 |
-| Guardrails | 实体冲突拦截数、时间冲突拦截数、semantic_false_positive_risk 数 |
-| 人工复核 | candidate_review 数量、复核后确认合并比例 |
-
-第一阶段阈值口径：
-
-- embedding 高相似但缺少实体、动作、对象或时间支撑时，不计入自动合并通过。
-- embedding 高相似但实体 / 时间冲突时，必须计入 guardrail 成功拦截。
-- BM25 / n-gram 与 embedding 结论冲突时，默认进入人工复核，不作为自动合并错误。
-
-### async_review_task_count
-
-定义：
-
-```text
-本轮新增异步复核任务数量
-```
-
-用途：
-
-- 衡量人工成本。
-
-第一阶段目标：
-
-```text
-低频、可集中处理，不阻断自动采集分析
-```
-
-## 简报与 Guardrails 指标
-
-### briefing_duplication_rate
-
-定义：
-
-```text
-疑似重复事件卡片数量 / 简报事件卡片总数
-```
-
-建议阈值：
-
-```text
-0 pass
-0 - 0.10 warn
-> 0.10 fail
-```
-
-### guardrail_violation_count
-
-定义：
-
-```text
-本轮 Guardrail violation 数量
-```
-
-分级统计：
-
-```text
-warn_count
-block_count
-```
-
-用途：
-
-- 观察简报质量和发布风险。
-
-建议阈值：
-
-```text
-block_count = 0 pass
-block_count > 0 fail
-warn_count <= 3 pass
-warn_count > 3 warn
-```
-
-### publish_block_rate
-
-定义：
-
-```text
-被阻断正式发布的草稿数量 / 生成草稿数量
-```
-
-用途：
-
-- 判断草稿质量是否足够进入人工发布确认。
-
-### draft_ready_rate
-
-定义：
-
-```text
-draft_ready_for_review 数量 / 草稿总数
-```
-
-用途：
-
-- 衡量自动草稿的可发布准备度。
-
-## 存储与生命周期指标
-
-### database_size_bytes
-
-定义：
-
-```text
-当前数据库文件大小
-```
-
-建议阈值：
-
-```text
-< 20G ok
-20G - 30G warning
-30G - 35G high_warning
-35G - 38G critical
-> 38G emergency
-```
-
-### cleanup_success_rate
-
-定义：
-
-```text
-成功清理任务数量 / 清理任务总数
-```
-
-用途：
-
-- 判断数据生命周期策略是否实际生效。
-
-### snapshot_compression_count
-
-定义：
-
-```text
-本轮压缩的高频 event_snapshots 数量
-```
-
-用途：
-
-- 判断快照压缩任务是否工作。
-
-### archived_event_count
-
-定义：
-
-```text
-本轮从 active / cooling 转为 archived 的事件数量
-```
-
-用途：
-
-- 判断事件生命周期是否能控制计算范围。
-
-### active_event_count
-
-定义：
-
-```text
-当前 active 事件数量
-```
-
-用途：
-
-- 控制热度重算规模。
-
-## 第一阶段指标清单
-
-v0.3 第一阶段默认启用：
-
-```text
-tool_success_rate
-tool_retry_rate
-source_success_rate
-item_count_by_source
-field_completeness_rate
-source_coverage_rate
-event_signal_count
-event_created_count
-event_updated_count
-candidate_merge_rate
-async_review_task_count
-briefing_duplication_rate
-guardrail_violation_count
-publish_block_rate
-draft_ready_rate
-database_size_bytes
-cleanup_success_rate
-snapshot_compression_count
-archived_event_count
-active_event_count
-```
-
-其中最核心的 MVP 指标是：
-
-```text
-tool_success_rate
-source_success_rate
-field_completeness_rate
-source_coverage_rate
-guardrail_violation_count
-database_size_bytes
-```
-
-Day 7 只需要完成这些指标的定义、数据来源和阈值口径；第 6 周再实现完整 Evaluation Runner 和离线标注类指标。
-
-## 后续扩展指标
-
-以下指标后续再做，不作为第一阶段硬要求：
-
-- 事件合并准确率，即 `event_merge_accuracy_offline`。
-- 事件漏合并率。
-- 事件误合并率。
-- 摘要事实一致性。
-- 热度排序人工相关性。
-- 用户点击率。
-- 用户订阅主题命中率。
-- 模式 B 查询命中率。
-
-这些指标通常需要人工标注、用户行为数据或更长时间运行样本，不适合在 v0.3 初期重压。
-
-## Evaluation 输出
-
-每次 Evaluation 输出 `EvaluationRun`，结构见 `docs/structured-outputs.md`。
-
-建议输出摘要：
-
-```text
-run_id
-evaluation_run_id
-created_at
-metrics
-warn_metrics
-fail_metrics
-summary
-```
-
-## 与 Guardrails 的区别
-
-Guardrails 负责边界和发布风险控制：
-
-```text
-这条内容能不能发布？
-这个事件能不能自动合并？
-这个社区信号能不能写成事实？
-```
-
-Evaluation 负责运行质量评估：
-
-```text
-工具是否稳定？
-数据是否完整？
-来源是否充足？
-人工成本是否过高？
-存储是否可控？
-```
-
-Evaluation 不替代 Guardrails，Guardrails 也不替代 Evaluation。
-
-## 第一阶段结论
-
-v0.3 Evaluation 应保持有限、自动化、可计算。
-
-第一阶段先评估系统是否能稳定运行、稳定采集、稳定生成带来源的草稿，并控制存储增长。事件合并准确率和摘要事实一致性等更复杂指标，等真实数据和人工样本积累后再加入。
+最近功能回归与 UI／邮件验收见[邮箱管理报告](../reports/email-management-acceptance-v0.1.md)。真实采样、Docker、本地 Mailpit 和尚待完成的服务器／真实邮箱验收统一从[验证记录](../README.md#验证记录)进入；本次文档整理不重新生成这些历史测试成绩。

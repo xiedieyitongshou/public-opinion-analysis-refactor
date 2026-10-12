@@ -12,7 +12,7 @@ import json
 import re
 import xml.etree.ElementTree as ET
 from dataclasses import asdict, dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from email.utils import parsedate_to_datetime
 from pathlib import Path
 from typing import Any
@@ -21,7 +21,6 @@ from urllib.parse import urlparse
 import httpx
 
 USER_AGENT = "public-opinion-analysis-smoke-test/0.1 (+low-frequency)"
-UTC = timezone.utc
 INVALID_XML_CHARS = re.compile(
     "[^\u0009\u000a\u000d\u0020-\ud7ff\ue000-\ufffd\U00010000-\U0010ffff]"
 )
@@ -381,6 +380,8 @@ def render_report(results: list[ProbeResult], sample_limit: int, link_checks: in
         )
 
     return f"""# Source Probe v0.1
+
+[项目首页](../README.md) · [验证记录](../README.md#验证记录)
 
 Generated at: `{generated_at}`
 

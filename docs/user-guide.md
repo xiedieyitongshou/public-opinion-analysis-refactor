@@ -1,6 +1,8 @@
-# 每日简报 MVP 运行说明
+# 每日简报与后台使用指南
 
-第八周的交付入口是 `app.briefing_cli` 和 `app.main:app`。一轮任务复用原有九步分析，再执行日报生成、质量检查和保存。网页、HTML 邮件、纯文本邮件和 JSON 导出读取同一份已保存版本。
+[返回项目首页](../README.md) · [产品与展示](product-design.md) · [Docker 部署](deployment.md)
+
+完整系统由 `app.main:app` 提供后台页面与接口，`app.briefing_cli` 支持命令行操作。一轮任务先执行九步分析，再生成、检查和保存日报。网页、HTML 邮件、纯文本邮件和 JSON 导出读取同一份已保存版本。
 
 ## 本地启动
 
@@ -20,7 +22,7 @@ cd backend
 
 页面使用 HttpOnly 会话 cookie；`/api/*` 和 `/ops/*` 也接受 `Authorization: Bearer <ADMIN_TOKEN>`。未配置管理员令牌时接口关闭访问。浏览器修改操作校验同源请求；令牌不存入 localStorage。部署到 HTTPS 时设置 `ADMIN_COOKIE_SECURE=true`。本阶段按 SQLite、单服务进程使用，不开多个 Uvicorn worker。
 
-来源配置沿用 `.env.example`：知乎需要 `ZHIHU_ACCESS_SECRET`，微博需要本地 RSSHub；官媒 RSS 自动接入。微博 CLI 默认关闭，可按已有采集说明启用同平台增强。
+来源配置沿用 `.env.example`：知乎需要 `ZHIHU_ACCESS_SECRET`，微博需要本地 RSSHub；官媒 RSS 自动接入。基础配置的微博 CLI 默认关闭，Docker 部署模板则开启；启用后默认覆盖本轮全部入选 RSS 话题，配置、预算和降级见[数据源说明](data-sources.md)。本地语义匹配需要先[准备模型](event-matching.md#模型安装与运行)，也可显式使用 `MATCHING_PROFILE=rules`。
 
 ```powershell
 docker compose -f ..\docker-compose.weibo.yml up -d rsshub
@@ -112,4 +114,4 @@ BRIEFING_TIMEZONE="Asia/Shanghai"
 ..\.venv\Scripts\python.exe scripts/verify_briefing_ui.py
 ```
 
-版本验收范围、真实采集结果和仍待完成的实测见 [briefing-v0.1](../reports/briefing-v0.1.md)。
+版本验收范围、真实采集结果和仍待完成的实测见 [briefing-v0.1](../reports/briefing-acceptance-v0.1.md)。

@@ -1,5 +1,7 @@
 # 官媒 query 与议程能力检测报告 v0.1
 
+[返回项目首页](../README.md) · [文档导航](../README.md#文档导航) · [验证记录](../README.md#验证记录)
+
 生成时间：2026-09-23
 
 ## 检测目标
@@ -431,4 +433,3 @@ official_pool_empty          # 本地官媒 evidence pool 为空
 4. 人民网 `searchRank` 官媒议程列表。
 5. 中国新闻网 RSS evidence pool。
 6. 人民网 RSS evidence pool。
-
