@@ -2,7 +2,7 @@
 
 从知乎热榜、微博 RSSHub 热搜和官媒 RSS 中发现事件，判断不同来源是否在讨论同一件事，生成过去 **24 小时的每日简报**。简报同时展示各平台关注的事件、A–F 来源分类，以及知乎／微博各自的热度变化，可在网页查看，或通过 HTML／纯文本邮件推送。
 
-[项目逻辑](#项目逻辑) · [工作流程](#工作流程) · [设计思路](#设计思路) · [技术栈](#技术栈) · [运行入口](#运行入口) · [文档导航](#文档导航) · [验证记录](#验证记录)
+[项目逻辑](#项目逻辑) · [工作流程](#工作流程) · [设计思路](#设计思路) · [技术栈](#技术栈) · [运行入口](#运行入口) · [邮件推送](#邮件推送) · [文档导航](#文档导航) · [验证记录](#验证记录)
 
 当前已实现分析链路、管理后台、邮箱管理和 Docker 定时日报。本地容器与测试邮箱已验证；阿里云连续一天运行、真实收件箱验收仍待完成。长图导出、指定事件检索（Mode B）和 LLM 抽取增强尚未实现。
 
@@ -90,6 +90,12 @@ cd backend
 
 这组测试使用固定数据与规则配置，不调用真实来源。完整采集需要配置来源凭据；默认语义匹配还需按[模型安装指南](docs/event-matching.md#模型安装与运行)准备本地权重。
 
+## 邮件推送
+
+日报支持通过 SMTP 发送 HTML／纯文本邮件。管理员在后台维护收件人，发件账号和授权码通过环境变量配置；可以先手动确认并发送，再开启每天定时采集、生成与投递。系统保存逐地址回执，按版本与收件人去重，对发送结果未知的邮件保留人工核实入口。
+
+接入步骤、环境配置和排查方法见[邮箱配置与日报投递](docs/email-delivery.md)。真实收件须单独验收，本地 Mailpit 仅用于隔离测试。
+
 ## 文档导航
 
 本 README 是项目的统一阅读入口。先看产品与架构，再按需要进入设计、操作或验证文档；详细规则只在对应正文维护。
@@ -99,7 +105,7 @@ cd backend
 | 产品与架构 | [产品设计](docs/product-design.md)：输出和边界；[系统架构](docs/architecture.md)：任务编排、数据交接、失败与回放 |
 | 采集与证据 | [数据源](docs/data-sources.md)、[字段映射](docs/source-fields.md)、[搜索增强](docs/search-enrichment.md)、[官媒证据](docs/official-evidence.md) |
 | 事件与热度 | [信号抽取](docs/event-extraction.md)、[事件匹配](docs/event-matching.md)、[A–F 分类](docs/hotspot-classification.md)、[平台热度与趋势](docs/platform-heat.md) |
-| 使用与部署 | [后台及邮件操作](docs/user-guide.md)、[Docker 部署](docs/deployment.md)、[数据生命周期](docs/data-lifecycle.md) |
+| 使用与部署 | [后台操作](docs/user-guide.md)、[邮箱配置与日报投递](docs/email-delivery.md)、[Docker 部署](docs/deployment.md)、[数据生命周期](docs/data-lifecycle.md) |
 | 开发与验证 | [工具参考](docs/tool-reference.md)、[数据契约](docs/data-contracts.md)、[Guardrails](docs/guardrails.md)、[评估方法与复现](docs/evaluation.md) |
 | 维护与演进 | [文档命名与维护](docs/documentation.md)、[更新日志](CHANGELOG.md)、[历史验证记录](#验证记录) |
 
