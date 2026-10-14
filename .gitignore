@@ -218,6 +218,8 @@ __marimo__/
 .streamlit/secrets.toml
 
 # Local app data
+# Local server SSH credentials
+/key/
 backend/data/*.db
 backend/data/*.sqlite
 backend/data/*.sqlite3
@@ -226,6 +228,7 @@ backend/data/models/
 backend/data/briefing-mvp/
 backend/data/deployment-test/
 backend/data/email-management/
+backend/data/email-settings/
 backend/logs/
 backend/artifacts/
 deploy/.env*

@@ -128,3 +128,11 @@ class DailyBriefingJob(Base):
     status: Mapped[str] = mapped_column(String(30), default="queued")
     report_id: Mapped[int | None] = mapped_column(ForeignKey("daily_reports.id"))
     error: Mapped[str | None] = mapped_column(Text)
+
+
+class EmailConfiguration(Base):
+    __tablename__ = "email_configuration"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    values_json: Mapped[dict[str, Any]] = mapped_column(JSON)
+    password_encrypted: Mapped[str | None] = mapped_column(Text)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))

@@ -26,6 +26,7 @@ from app.services.briefing_email import (
 from app.services.briefing_jobs import default_analysis_input, queue_analysis
 from app.services.briefing_render import render_report, render_text
 from app.services.email_recipients import active_recipients
+from app.services.email_settings import get_email_settings
 from app.services.human_review import task_record
 from app.services.request_usage import usage_summary
 
@@ -65,6 +66,7 @@ def dashboard(db: Db, request: Request):
         .where(AnalysisRun.window_end.is_not(None))
         .order_by(AnalysisRun.window_end.desc())
     )
+    mail_config = get_email_settings(db, decrypt=False)
     coordinator = getattr(request.app.state, "coordinator", None)
     return {
         "latest_run": latest.run_id if latest else None,
@@ -80,12 +82,12 @@ def dashboard(db: Db, request: Request):
         },
         "email": {
             "configured": email_ready(db),
-            "smtp_configured": smtp_ready(),
-            "scheduled": settings.email_schedule_enabled,
-            "time": settings.email_send_time,
-            "timezone": settings.briefing_timezone,
+            "smtp_configured": smtp_ready(db),
+            "scheduled": mail_config.email_schedule_enabled,
+            "time": mail_config.email_send_time,
+            "timezone": mail_config.briefing_timezone,
             "recipient_count": len(active_recipients(db)),
-            "auto_generate": settings.daily_briefing_enabled,
+            "auto_generate": mail_config.daily_briefing_enabled,
         },
         "request_limits": settings.request_limits,
     }
@@ -93,10 +95,18 @@ def dashboard(db: Db, request: Request):
 
 @router.get("/daily-jobs")
 def daily_jobs(db: Db):
-    return [{"date": row.local_date, "run_id": row.run_id, "report_id": row.report_id,
-             "status": row.status, "error": row.error}
-            for row in db.scalars(select(DailyBriefingJob)
-                                  .order_by(DailyBriefingJob.local_date.desc()).limit(30))]
+    return [
+        {
+            "date": row.local_date,
+            "run_id": row.run_id,
+            "report_id": row.report_id,
+            "status": row.status,
+            "error": row.error,
+        }
+        for row in db.scalars(
+            select(DailyBriefingJob).order_by(DailyBriefingJob.local_date.desc()).limit(30)
+        )
+    ]
 
 
 @router.get("/usage")
@@ -187,8 +197,9 @@ class SendReportInput(BaseModel):
 @router.post("/reports/{report_id}/send")
 def send(report_id: int, db: Db, data: SendReportInput | None = None):
     try:
-        rows = send_report(db, get_report(db, report_id),
-                           recipient_ids=data.recipient_ids if data else None)
+        rows = send_report(
+            db, get_report(db, report_id), recipient_ids=data.recipient_ids if data else None
+        )
     except ValueError as exc:
         raise HTTPException(409, str(exc)) from exc
     return [
@@ -219,7 +230,9 @@ def refresh(report_id: int, db: Db):
         raise HTTPException(409, "采集分析正在运行，请稍后刷新草稿")
     try:
         row = save_briefing(
-            db, generate_briefing(db, latest.run_id, refresh=True), supersedes_id=report_id,
+            db,
+            generate_briefing(db, latest.run_id, refresh=True),
+            supersedes_id=report_id,
         )
         latest.report_id = row.id
         db.commit()
@@ -269,8 +282,9 @@ def review_queue(db: Db, limit: int = Query(50, ge=1, le=200)):
         HumanReviewTask.status == "pending",
         HumanReviewTask.payload_json["refresh"]["status"].as_string() == "failed",
     )
-    rows = db.scalars(select(HumanReviewTask).where(active)
-                      .order_by(HumanReviewTask.id).limit(limit))
+    rows = db.scalars(
+        select(HumanReviewTask).where(active).order_by(HumanReviewTask.id).limit(limit)
+    )
     return {
         "total": db.scalar(select(func.count(HumanReviewTask.id)).where(active)),
         "items": [task_record(task) for task in rows],

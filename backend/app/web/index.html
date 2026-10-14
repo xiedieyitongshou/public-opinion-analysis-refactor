@@ -53,8 +53,8 @@
           ><button data-tab="reviews">
             人工复核 <span id="review-count" class="badge">0</span>
           </button>
-          <button data-tab="deliveries">邮件管理</button
-          ><button id="refresh" class="quiet refresh">刷新数据 ↻</button>
+          <button data-tab="deliveries">收件人管理</button
+          ><button data-tab="mail-settings">邮件设置</button><button id="refresh" class="quiet refresh">刷新数据 ↻</button>
         </nav>
         <section id="briefings" class="tab-panel">
           <div class="section-heading">
@@ -103,6 +103,28 @@
             <p class="muted small">未确认的候选关系不会参与跨平台分类。</p>
           </div>
           <div id="review-list"></div>
+        </section>
+        <section id="mail-settings" class="tab-panel" hidden>
+          <div class="panel">
+            <h2>邮件设置</h2>
+            <p id="mail-settings-source" class="muted"></p>
+            <p class="small muted">先保存，再检查连接或发送测试邮件。保存不等于认证成功；开启自动发送后，调度器将按设置执行。</p>
+            <form id="mail-settings-form" class="recipient-form">
+              <div id="mail-settings-fields" class="recipient-form"></div>
+              <label>新授权码（留空保留原值）<input id="mail-password" type="password" autocomplete="new-password" maxlength="4096" /></label>
+              <label class="check-label"><input id="mail-clear-password" type="checkbox" />清除已保存授权码</label>
+              <button type="submit" class="primary">保存邮件设置</button>
+            </form>
+          </div>
+          <div class="panel">
+            <h2>验证已保存的配置</h2>
+            <button id="mail-check" type="button">检查连接与认证（不发邮件）</button>
+            <form id="mail-test-form" class="recipient-form">
+              <label>测试收件邮箱<input id="mail-test-recipient" type="email" required /></label>
+              <button type="submit">发送测试邮件</button>
+            </form>
+            <p id="mail-test-result" role="status"></p>
+          </div>
         </section>
         <section id="deliveries" class="tab-panel" hidden>
           <div class="section-heading">

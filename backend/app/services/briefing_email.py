@@ -14,7 +14,6 @@ from zoneinfo import ZoneInfo
 from sqlalchemy import func, select, update
 from sqlalchemy.exc import IntegrityError
 
-from app.core.config import settings
 from app.models import DailyReport
 from app.models.briefing import DailyBriefingJob, DailyDispatch, DailyEmailAudience, EmailDelivery
 from app.schemas.display import DailyBriefing
@@ -26,6 +25,7 @@ from app.services.email_recipients import (
     freeze_daily_audience,
     selected_recipients,
 )
+from app.services.email_settings import get_email_settings
 
 
 def valid_address(address):
@@ -39,18 +39,17 @@ def valid_address(address):
     )
 
 
-def smtp_ready():
-    return bool(
-        settings.smtp_host
-        and valid_address(settings.email_from)
-    )
+def smtp_ready(db=None, *, config=None):
+    settings = config or get_email_settings(db, decrypt=False)
+    return bool(settings.smtp_host and valid_address(settings.email_from))
 
 
 def email_ready(db):
-    return smtp_ready() and bool(active_recipients(db))
+    return smtp_ready(db) and bool(active_recipients(db))
 
 
-def build_message(report, recipient, message_id):
+def build_message(report, recipient, message_id, *, config=None):
+    settings = config or get_email_settings()
     briefing = DailyBriefing.model_validate(report.briefing_json)
     message = EmailMessage(policy=SMTP)
     message["Subject"] = report.title
@@ -62,27 +61,39 @@ def build_message(report, recipient, message_id):
     return message
 
 
-def smtp_send(message, recipient):
-    """Only a final successful DATA reply means accepted by the SMTP server."""
-    connection, phase = None, "connect"
+def smtp_connect(config):
+    connection = None
     try:
-        if settings.smtp_security == "ssl":
+        if config.smtp_security == "ssl":
             connection = smtplib.SMTP_SSL(
-                settings.smtp_host,
-                settings.smtp_port,
-                timeout=settings.smtp_timeout_seconds,
+                config.smtp_host,
+                config.smtp_port,
+                timeout=config.smtp_timeout_seconds,
                 context=ssl.create_default_context(),
             )
         else:
             connection = smtplib.SMTP(
-                settings.smtp_host, settings.smtp_port, timeout=settings.smtp_timeout_seconds
+                config.smtp_host, config.smtp_port, timeout=config.smtp_timeout_seconds
             )
         connection.ehlo()
-        if settings.smtp_security == "starttls":
+        if config.smtp_security == "starttls":
             connection.starttls(context=ssl.create_default_context())
             connection.ehlo()
-        if settings.smtp_username:
-            connection.login(settings.smtp_username, settings.smtp_password or "")
+        if config.smtp_username:
+            connection.login(config.smtp_username, config.smtp_password or "")
+        return connection
+    except Exception:
+        if connection:
+            connection.close()
+        raise
+
+
+def smtp_send(message, recipient, *, config=None):
+    """Only a final successful DATA reply means accepted by the SMTP server."""
+    settings = config or get_email_settings()
+    connection, phase = None, "connect"
+    try:
+        connection = smtp_connect(settings)
         code, _ = connection.mail(settings.email_from)
         if code != 250:
             return "failed", f"SMTP MAIL rejected ({code})"
@@ -102,6 +113,7 @@ def smtp_send(message, recipient):
 
 
 def recover_interrupted_deliveries(db, now=None):
+    settings = get_email_settings(db, decrypt=False)
     now = now or datetime.now(UTC)
     db.execute(
         update(EmailDelivery)
@@ -121,29 +133,38 @@ def reconcile_sent_report(db, report_id):
         report = db.get(DailyReport, report_id)
         report.status = "sent"
     by_address = {row.recipient.casefold(): row.status for row in rows}
-    for job in db.scalars(select(DailyBriefingJob).where(
-        DailyBriefingJob.report_id == report_id,
-    )):
+    for job in db.scalars(
+        select(DailyBriefingJob).where(
+            DailyBriefingJob.report_id == report_id,
+        )
+    ):
         audience = db.get(DailyEmailAudience, job.local_date)
         if audience is None:
             continue  # A manual send must not complete an unstarted daily audience.
         targets = eligible_audience(db, audience.recipients_json)
-        if targets and all(by_address.get(entry["email"].casefold()) == "sent"
-                           for entry in targets):
+        if targets and all(
+            by_address.get(entry["email"].casefold()) == "sent" for entry in targets
+        ):
             job.status, job.error = "sent", None
     db.commit()
 
 
-def send_report(db, report, *, sender=None, automatic=False, recipient_ids=None, audience=None):
+def send_report(
+    db, report, *, sender=None, automatic=False, recipient_ids=None, audience=None, config=None
+):
+    settings = config or get_email_settings(db)
     if report.status not in {"approved", "sent"}:
         raise ValueError("只有已确认的日报版本可以发送")
     if review_briefing(DailyBriefing.model_validate(report.briefing_json))["blocks_publish"]:
         raise ValueError("日报质量检查阻断发送")
-    if not smtp_ready():
+    if not smtp_ready(config=settings):
         raise ValueError("尚未配置 SMTP 和发件人；仍可管理收件人、预览邮件")
-    targets = (selected_recipients(db, recipient_ids) if audience is None
-               else eligible_audience(db, audience))
-    sender = sender or smtp_send
+    targets = (
+        selected_recipients(db, recipient_ids)
+        if audience is None
+        else eligible_audience(db, audience)
+    )
+    sender = sender or (lambda message, recipient: smtp_send(message, recipient, config=settings))
     recover_interrupted_deliveries(db)
     deliveries = []
     for entry in targets:
@@ -200,7 +221,7 @@ def send_report(db, report, *, sender=None, automatic=False, recipient_ids=None,
         db.refresh(row)
         try:
             row.status, row.error = sender(
-                build_message(report, recipient, row.message_id), recipient
+                build_message(report, recipient, row.message_id, config=settings), recipient
             )
         except Exception as exc:
             row.status, row.error = "unknown", type(exc).__name__
@@ -213,7 +234,8 @@ def send_report(db, report, *, sender=None, automatic=False, recipient_ids=None,
     return deliveries
 
 
-def dispatch_daily(db, *, now=None, sender=smtp_send):
+def dispatch_daily(db, *, now=None, sender=None):
+    settings = get_email_settings(db)
     now = now or datetime.now(UTC)
     local = now.astimezone(ZoneInfo(settings.briefing_timezone))
     if local.strftime("%H:%M") < settings.email_send_time or not email_ready(db):
@@ -240,4 +262,6 @@ def dispatch_daily(db, *, now=None, sender=smtp_send):
             db.rollback()
             report = db.get(DailyReport, db.get(DailyDispatch, day).report_id)
     audience = freeze_daily_audience(db, day, report.id)
-    return send_report(db, report, sender=sender, automatic=True, audience=audience)
+    return send_report(
+        db, report, sender=sender, automatic=True, audience=audience, config=settings
+    )

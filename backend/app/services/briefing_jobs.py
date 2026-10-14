@@ -345,11 +345,14 @@ class JobCoordinator:
                 self._fail_run(db, row.run_id, "interrupted_worker")
             # Daily generation takes priority over the ordinary sampling schedule.
             scheduling_open = settings.scheduler_until is None or now < settings.scheduler_until
-            if settings.daily_briefing_enabled:
+            from app.services.email_settings import get_email_settings
+
+            mail_config = get_email_settings(db, decrypt=False)
+            if mail_config.daily_briefing_enabled:
                 from app.services.daily_schedule import tick_daily
 
                 tick_daily(db, now=now, allow_queue=scheduling_open)
-            elif settings.email_schedule_enabled:
+            elif mail_config.email_schedule_enabled:
                 from app.services.briefing_email import dispatch_daily
 
                 dispatch_daily(db, now=now)

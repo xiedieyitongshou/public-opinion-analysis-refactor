@@ -4,6 +4,7 @@ version = "0.1.0"
 description = "Backend skeleton for a workflow-driven public opinion analysis agent system."
 requires-python = ">=3.11"
 dependencies = [
+    "cryptography==50.0.2",
     "tzdata>=2025.1",
     "fastapi>=0.115.0",
     "uvicorn[standard]>=0.30.0",

@@ -14,9 +14,10 @@ from app.models import DailyReport
 from app.models.briefing import AnalysisRun, DailyBriefingJob, DailyDispatch
 from app.schemas.display import DailyBriefing
 from app.services.briefing import approve_report, as_utc, review_briefing
-from app.services.briefing_email import email_ready, send_report, smtp_ready, smtp_send
+from app.services.briefing_email import email_ready, send_report, smtp_ready
 from app.services.briefing_render import render_report, render_text
 from app.services.email_recipients import freeze_daily_audience
+from app.services.email_settings import get_email_settings
 
 logger = logging.getLogger(__name__)
 
@@ -38,9 +39,10 @@ def archive_report(report):
         temporary.replace(path)
 
 
-def tick_daily(db, *, now=None, sender=smtp_send, allow_queue=True):
+def tick_daily(db, *, now=None, sender=None, allow_queue=True):
     from app.services.briefing_jobs import default_analysis_input, queue_analysis
 
+    settings = get_email_settings(db)
     now = now or datetime.now(UTC)
     local = now.astimezone(ZoneInfo(settings.briefing_timezone))
     if local.strftime("%H:%M") < settings.email_send_time:
@@ -51,9 +53,9 @@ def tick_daily(db, *, now=None, sender=smtp_send, allow_queue=True):
         if not allow_queue:
             return None
         # Let an existing sampling run finish before queuing today's fresh daily snapshot.
-        if db.scalar(select(AnalysisRun.run_id).where(
-            AnalysisRun.status.in_(["queued", "running"])
-        )):
+        if db.scalar(
+            select(AnalysisRun.run_id).where(AnalysisRun.status.in_(["queued", "running"]))
+        ):
             return None
         job = DailyBriefingJob(local_date=day, run_id=f"daily-{day}", status="queued")
         db.add(job)
@@ -79,9 +81,11 @@ def tick_daily(db, *, now=None, sender=smtp_send, allow_queue=True):
     report = db.get(DailyReport, row.report_id)
     job.report_id = report.id
     briefing = DailyBriefing.model_validate(report.briefing_json)
-    if (report.report_date != local.date()
-            or as_utc(briefing.window_end) > now
-            or (now - as_utc(briefing.window_end)).total_seconds() > 6 * 3600):
+    if (
+        report.report_date != local.date()
+        or as_utc(briefing.window_end) > now
+        or (now - as_utc(briefing.window_end)).total_seconds() > 6 * 3600
+    ):
         job.status, job.error = "blocked", "daily_snapshot_outside_current_window"
     elif review_briefing(briefing)["blocks_publish"]:
         job.status, job.error = "blocked", "quality_review_blocked"
@@ -95,7 +99,7 @@ def tick_daily(db, *, now=None, sender=smtp_send, allow_queue=True):
         return job
     if not email_ready(db):
         job.status = "awaiting_email"
-        job.error = "发件服务尚未配置" if not smtp_ready() else "没有启用的收件邮箱"
+        job.error = "发件服务尚未配置" if not smtp_ready(db) else "没有启用的收件邮箱"
         db.commit()
         return job
     dispatch = db.get(DailyDispatch, day)
@@ -111,19 +115,23 @@ def tick_daily(db, *, now=None, sender=smtp_send, allow_queue=True):
         db.commit()
         return job
     audience = freeze_daily_audience(db, day, report.id)
-    deliveries = send_report(db, report, sender=sender, automatic=True, audience=audience)
+    deliveries = send_report(
+        db, report, sender=sender, automatic=True, audience=audience, config=settings
+    )
     if not deliveries:
         job.status, job.error = "awaiting_email", "本次投递名单中的邮箱均已停用或删除"
     elif all(row.status == "sent" for row in deliveries):
         job.status, job.error = "sent", None
     elif any(row.status == "unknown" for row in deliveries):
         job.status, job.error = "needs_review", "smtp_delivery_unknown"
-    elif any(row.attempts >= settings.email_max_attempts and row.status == "failed"
-             for row in deliveries):
+    elif any(
+        row.attempts >= settings.email_max_attempts and row.status == "failed" for row in deliveries
+    ):
         job.status, job.error = "failed", "smtp_attempts_exhausted"
     else:
         job.status = "sending"
     db.commit()
-    logger.info("daily_delivery date=%s run=%s report=%s status=%s",
-                day, job.run_id, report.id, job.status)
+    logger.info(
+        "daily_delivery date=%s run=%s report=%s status=%s", day, job.run_id, report.id, job.status
+    )
     return job

@@ -589,6 +589,7 @@ $("collect").addEventListener("click", () =>
 $("refresh").addEventListener("click", () => busy($("refresh"), load));
 document.querySelectorAll("[data-tab]").forEach((b) =>
   b.addEventListener("click", () => {
+    if (b.dataset.tab === "mail-settings") loadMailSettings().catch(e => show(e.message, true));
     document
       .querySelectorAll(".tab-panel")
       .forEach((p) => (p.hidden = p.id !== b.dataset.tab));
@@ -613,4 +614,71 @@ window.addEventListener("resize", resizePreview);
 load().catch((error) => {
   if (!$("login").hidden) show(error.message);
   else show(error.message, true);
+});
+
+
+const mailFields = [
+  ["smtp_host", "SMTP 主机", "text"], ["smtp_port", "端口", "number"],
+  ["smtp_security", "加密方式", "select"], ["smtp_username", "发件账号", "text"],
+  ["email_from", "发件邮箱地址", "email"],
+  ["daily_briefing_enabled", "每天自动生成并确认日报", "checkbox"],
+  ["email_schedule_enabled", "每天自动发送", "checkbox"],
+  ["email_send_time", "每日触发时间", "time"], ["briefing_timezone", "时区", "text"],
+  ["smtp_timeout_seconds", "连接超时（秒，1～60）", "number"],
+  ["email_max_attempts", "最多尝试次数（1～5）", "number"],
+];
+for (const [key, label, type] of mailFields) {
+  const wrap = node("label", label);
+  const input = document.createElement(type === "select" ? "select" : "input");
+  input.id = `mail-${key}`;
+  if (type === "select") {
+    for (const value of ["ssl", "starttls", "plain"]) {
+      const option = node("option", value); option.value = value; input.append(option);
+    }
+  } else input.type = type;
+  if (type === "checkbox") wrap.className = "check-label";
+  if (type === "number") {
+    input.min = "1";
+    input.max = key === "smtp_port" ? "65535" : key === "email_max_attempts" ? "5" : "60";
+  }
+  wrap.append(input); $("mail-settings-fields").append(wrap);
+}
+async function loadMailSettings() {
+  const config = await api("/api/email-settings");
+  for (const [key, , type] of mailFields) {
+    const input = $(`mail-${key}`);
+    if (type === "checkbox") input.checked = config[key];
+    else input.value = config[key] ?? "";
+  }
+  $("mail-password").value = "";
+  $("mail-clear-password").checked = false;
+  $("mail-settings-source").textContent = `配置来源：${config.source === "database" ? "管理页面（数据库）" : "部署环境"} · 授权码${config.password_set ? "已设置" : "未设置"} · ${config.encryption_ready ? "加密密钥已配置" : "保存授权码前需配置 EMAIL_SETTINGS_KEY"}`;
+}
+$("mail-settings-form").addEventListener("submit", event => {
+  event.preventDefault();
+  busy(event.submitter, async () => {
+    const data = {};
+    for (const [key, , type] of mailFields) {
+      const input = $(`mail-${key}`);
+      data[key] = type === "checkbox" ? input.checked : type === "number" ? Number(input.value) : input.value;
+    }
+    if ($("mail-password").value) data.smtp_password = $("mail-password").value;
+    data.clear_password = $("mail-clear-password").checked;
+    await api("/api/email-settings", data, "PUT");
+    await loadMailSettings();
+    show("邮件设置已保存，后续任务使用新配置。未发送测试邮件。");
+  });
+});
+$("mail-check").addEventListener("click", () => busy($("mail-check"), async () => {
+  const result = await api("/api/email-settings/check", {});
+  $("mail-test-result").textContent = `${result.status}：${result.message}`;
+}));
+$("mail-test-form").addEventListener("submit", event => {
+  event.preventDefault();
+  busy(event.submitter, async () => {
+    const recipient = $("mail-test-recipient").value;
+    if (!confirm(`向 ${recipient} 发送一封真实测试邮件？使用已保存配置。`)) return;
+    const result = await api("/api/email-settings/test", {recipient});
+    $("mail-test-result").textContent = `${result.status}：${result.message}`;
+  });
 });

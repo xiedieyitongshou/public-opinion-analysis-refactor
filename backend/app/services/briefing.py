@@ -12,13 +12,13 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app.core.config import settings
 from app.guardrails import default_guardrail_registry
 from app.models import DailyReport, Event, HumanReviewTask, Item
 from app.models.briefing import AnalysisRun, ReportRevision
 from app.schemas.analysis import HotspotAnalysisOutput
 from app.schemas.display import BriefingSection, DailyBriefing, EventCard, SourceCitation
 from app.schemas.guardrails import GuardrailCheckInput
+from app.services.email_settings import get_email_settings
 from app.services.hotspot_freshness import official_publication_exclusion
 
 CATEGORIES = {
@@ -53,8 +53,14 @@ def source_health(collection: dict, window_end: datetime) -> list[dict]:
         observed = result.get("observed_at")
         stale = bool(observed and window_end - as_utc(observed) > timedelta(hours=6))
         status = result.get("status", "unknown")
-        harmless = {"missing_summary", "missing_author", "html_summary", "no_raw_metrics",
-                    "rss_order_not_official_rank", "missing_hot_value"}
+        harmless = {
+            "missing_summary",
+            "missing_author",
+            "html_summary",
+            "no_raw_metrics",
+            "rss_order_not_official_rank",
+            "missing_hot_value",
+        }
         degraded_flags = set(result.get("quality_flags", [])) - harmless
         if stale:
             status = "stale"
@@ -180,14 +186,16 @@ def generate_briefing(db: Session, run_id: str, *, refresh=False) -> DailyBriefi
                 cross_platform_match_type=classification.cross_platform_match_type,
                 official_support_status=classification.official_support_status,
                 confidence_level=classification.confidence_level,
-                evidence_summary=assembly.evidence_summary.model_copy(update={
-                    "lead": summary,
-                    "discussion_evidence": [
-                        f"{PLATFORMS[platform]}平台讨论来源"
-                        for platform in ("zhihu", "weibo")
-                        if any(citation.platform == platform for citation in citations)
-                    ],
-                }),
+                evidence_summary=assembly.evidence_summary.model_copy(
+                    update={
+                        "lead": summary,
+                        "discussion_evidence": [
+                            f"{PLATFORMS[platform]}平台讨论来源"
+                            for platform in ("zhihu", "weibo")
+                            if any(citation.platform == platform for citation in citations)
+                        ],
+                    }
+                ),
                 source_citations=citations,
                 platform_heat_analysis=heat.get(event.event_id),
                 classification_detail=assembly.classification_detail_json,
@@ -233,7 +241,9 @@ def generate_briefing(db: Session, run_id: str, *, refresh=False) -> DailyBriefi
             )
         )
     pending = list(db.scalars(select(HumanReviewTask).where(HumanReviewTask.status == "pending")))
-    report_date = end.astimezone(ZoneInfo(settings.briefing_timezone)).date()
+    report_date = end.astimezone(
+        ZoneInfo(get_email_settings(db, decrypt=False).briefing_timezone)
+    ).date()
     health = source_health(run.collection_json or {}, end)
     risks = []
     if any(value["status"] != "succeeded" for value in health):
@@ -253,7 +263,7 @@ def generate_briefing(db: Session, run_id: str, *, refresh=False) -> DailyBriefi
         created_at=datetime.now(UTC),
         window_start=start,
         window_end=end,
-        timezone=settings.briefing_timezone,
+        timezone=get_email_settings(db, decrypt=False).briefing_timezone,
         source_health=health,
         risk_notes=risks,
         pending_review_count=len(pending),
@@ -313,8 +323,11 @@ def review_briefing(briefing: DailyBriefing) -> dict:
             for citation in card.source_citations:
                 if not safe_url(citation.url):
                     errors.append(f"{card.event_id}: 来源链接无效")
-                if citation.source_type != "official_news" and start and end and (
-                    not start < as_utc(citation.fetched_at) <= end
+                if (
+                    citation.source_type != "official_news"
+                    and start
+                    and end
+                    and (not start < as_utc(citation.fetched_at) <= end)
                 ):
                     errors.append(f"{card.event_id}: 引用采集时间超出窗口")
                 if as_utc(citation.fetched_at) > as_utc(briefing.created_at):

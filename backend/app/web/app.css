@@ -509,3 +509,10 @@ pre {
     font-size: 33px;
   }
 }
+
+/* Keep mail settings controls compact, including nested field groups. */
+#mail-settings-form, #mail-settings-fields, #mail-test-form { align-items: start; }
+#mail-settings-fields { grid-column: 1 / -1; }
+#mail-settings-form label, #mail-test-form label { align-content: start; }
+#mail-settings select { width: 100%; padding: 12px; border: 1px solid var(--line); border-radius: 5px; font: inherit; background: white; }
+#mail-settings-form button, #mail-test-form button { align-self: end; }

@@ -152,6 +152,7 @@ class Settings(BaseSettings):
     email_send_time: str = Field(default="08:00", pattern=r"^(?:[01]\d|2[0-3]):[0-5]\d$")
     email_recipients: list[str] = Field(default_factory=list)
     email_from: str | None = None
+    email_settings_key: str | None = None
     smtp_host: str | None = None
     smtp_port: int = Field(default=587, ge=1, le=65535)
     smtp_username: str | None = None
