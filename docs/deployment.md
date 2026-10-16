@@ -63,6 +63,34 @@ SSH 密钥只在连接端使用，不拷入镜像或容器。首次连接核对�
 
 ## 一天试运行
 
+### 阿里云服务器的 RSSHub 镜像来源
+
+2026-10-14 服务器实测 Docker Hub 不可达，国内代理的原 RSSHub 镜像层下载不完整，使用[GHCR 覆盖文件](../deploy/compose.rsshub-ghcr.yml)部署了官方 Chromium 镜像的另一固定版本。健康检查及微博热搜路由通过，版本差异与资源观测见[服务器准备记录](../reports/server-environment-2026-10-14.md#当日晚间-rsshub-部署完成)。
+
+在该服务器执行 Compose 启动、更新、状态或日志命令时，均使用 `docker compose -f compose.yml -f deploy/compose.rsshub-ghcr.yml`，避免切回根配置中的原镜像地址。单独启动 RSSHub 可执行：
+
+```bash
+docker compose -f compose.yml -f deploy/compose.rsshub-ghcr.yml up -d --no-deps --pull never --wait rsshub
+```
+
+该覆盖文件只改变 RSSHub 镜像，不公开端口，也不替代后端模型、凭据和邮件配置。以下步骤用于完整应用准备好之后的试运行。
+
+如果 Debian 软件源下载缓慢，可在构建时额外加 `-f deploy/compose.aliyun-build.yml`，用阿里云 Debian 镜像源安装系统依赖，仍保留包签名校验。Python 与 Node 基础镜像需要事先准备，Python 包仍按固定依赖安装。
+
+### 资源观测与 SSH 访问
+
+服务器上可用 `deploy/monitor-trial.py --until <带时区的截止时间> --output <记录目录>` 每分钟记录主机可用内存、swap、CPU 累计计数、负载、磁盘，以及各项目容器的 CPU、内存、网络与块设备 I/O。输出按北京时间自然日分为 `resources-YYYY-MM-DD.jsonl`。它是采样值，不能保证捕获瞬间峰值；API 请求数仍以后台“API 使用情况”和试运行审计为准，实际费用需核对平台账单。
+
+将监测进程交给服务器的 systemd 管理，可避免 SSH 断开后停止记录。给采集截止后留出任务收尾时间，再导出审计。`SCHEDULER_UNTIL` 只限制新增自动任务，后台页面与手动操作继续可用。低内存机器可用 swap 缓冲模型加载，但需要结合 swap 使用量和耗时判断是否应扩容，不能将 swap 当作物理内存性能。
+
+本机端口已占用时可改用 18000，例如 Windows PowerShell：
+
+```powershell
+ssh -N -T -i .\key\public-opinion-analysis.pem -o ExitOnForwardFailure=yes -o ServerAliveInterval=30 -L 127.0.0.1:18000:127.0.0.1:8000 root@8.133.237.88
+```
+
+保持该终端运行，在浏览器打开 `http://127.0.0.1:18000`，使用**服务器** `deploy/.env` 的 `ADMIN_TOKEN` 登录。它可能与本地开发口令不同。关闭隧道或本机休眠只会断开页面访问，不会停止服务器采集。
+
 1. 固定代码、镜像和模型版本；设置 `SCHEDULER_UNTIL` 为开始时间后的 24 小时，例如 `2026-10-10T08:00:00+08:00`，以实际启动时间填写。到期不再创建自动采集／日报任务，已在途的任务仍在时限内收尾，后台继续可查看。手动任务不受此开关限制。
 2. 启动后观察第一轮：知乎、微博及各官媒来源状态，实际请求数、分类降级、待审核事件，以及平台内趋势。首次运行缺乏历史点时，趋势不足会明确保留。
 3. 在后台“收件人管理”添加并启用收件邮箱，再确认每日任务生成、质量检查和真实邮箱投递。该页同时显示收件人、每日任务状态与逐地址投递回执；日报页面可勾选收件人手动发送已确认版本。专用每日轮次可能额外增加一次采集，因此不要机械要求恰好 8 轮。
@@ -92,6 +120,26 @@ docker compose -p opinion-local-test -f compose.yml -f compose.test.yml up -d --
 `scripts/container_smoke.py` 校验本地语义模型、使用预先导入的有效日报快照驱动每日流程、实际投递到 Mailpit 并重复执行以验证去重。它只允许测试收件地址。`scripts/profile_classification.py` 在独立数据库备份中回放指定分类任务，禁用 HTTP 请求，不改变原始业务库。
 
 ## 备份与更新
+
+### 独立容器中的微博 CLI 授权
+
+后端镜像尚未构建时，可以用[CLI 专用 Dockerfile](../deploy/Dockerfile.weibo-auth)与[授权容器配置](../deploy/compose.weibo-auth.yml)完成登录。它使用与后端相同的 `@weibo-ai/weibo-cli@0.9.1`、用户 UID 10001、家目录 `/home/app`，复用 `opinion_cli-home` 持久卷，不加载模型、不启动分析服务。
+
+在服务器项目目录以有 Docker 权限的用户执行（Workbench 的 `admin` 用户可先 `sudo -i`）：
+
+```bash
+cd /opt/public-opinion-analysis/app
+docker compose -f deploy/compose.weibo-auth.yml build weibo-auth
+docker compose -f deploy/compose.weibo-auth.yml run --rm --no-deps weibo-auth auth login --device --name aliyun-opinion-server
+docker compose -f deploy/compose.weibo-auth.yml run --rm --no-deps weibo-auth auth whoami
+docker compose -f deploy/compose.weibo-auth.yml run --rm --no-deps weibo-auth doctor
+```
+
+该配置使用外部卷 `opinion_cli-home`，先确认它存在；新环境可用 `docker volume create opinion_cli-home` 创建。执行登录后，按终端给出的官方链接和设备码在浏览器确认。授权码会过期，不保存到文档；首次登录通过后无需每次运行都重新授权。
+
+授权容器退出时删除容器，保留登录卷。后端使用相同卷读取凭据，无需把令牌抄进 `.env`。环境中的 `WEIBO_CLI_TOKEN`／`WEIBO_CLI_REFRESH_TOKEN` 优先于文件凭据；使用卷登录时避免配置旧的非空令牌。不要删除登录卷或使用 `--remove-orphans` 清理仍在运行的项目服务。
+
+2026-10-14 已验证：浏览器确认后，新建独立容器仍能读取登录，`doctor` 的账号、开发者认证、正式服务三项通过；按项目参数执行一次 `statuses/limited` 搜索返回 10 条样本。完整后端分析链路尚未启动，见[服务器记录](../reports/server-environment-2026-10-14.md)。
 
 停后端后备份 SQLite，避免复制到不一致的文件；不需要删除持久卷：
 

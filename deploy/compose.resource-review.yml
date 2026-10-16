@@ -1,0 +1,11 @@
+# Local review UI for the 2026-10-16 profiling database.
+# Use after compose.resource-test.yml; requires the local-review snapshot image.
+services:
+  backend:
+    image: opinion-backend:local-review
+    command: ["python", "-m", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "1"]
+    environment:
+      DATABASE_URL: sqlite:////app/data/20261016-direct.db
+      SEMANTIC_CACHE_PATH: /app/data/20261016-direct-cache.db
+    ports:
+      - "127.0.0.1:18000:8000"

@@ -1,0 +1,17 @@
+# Independent helper project; credential volume is shared with the backend.
+name: opinion-cli-auth
+services:
+  weibo-auth:
+    image: opinion-weibo-auth:0.9.1
+    build:
+      context: .
+      dockerfile: Dockerfile.weibo-auth
+    init: true
+    environment:
+      HOME: /home/app
+    volumes:
+      - cli-home:/home/app/.weibo-cli
+volumes:
+  cli-home:
+    external: true
+    name: opinion_cli-home

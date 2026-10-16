@@ -42,3 +42,32 @@ DaoCloud 最初能返回清单，但下载镜像层出现 502；轩辕免费入�
 | Node 22 bookworm slim | `sha256:c3de60bf2f9dd0ac6370e6117950ff62d6e339527e7472301c9c78a017978392` |
 
 RSSHub 仍使用项目固定摘要 `sha256:3c5f0b37a54223c4735b5d6428d2886d97ae24e04297a619fb211a2bc9e174aa`，本次有多个镜像层下载并解包，但在 240 秒限时尝试内未获得完整拉取成功结果。不能认定 RSSHub 已就绪。没有修改 Docker 全局镜像源、启动业务容器或执行应用构建。
+
+## 当日晚间 RSSHub 部署完成
+
+继续尝试原摘要后，国内代理部分 blob 下载仍卡住，镜像配置文件的跳转目标也返回 403。改用 RSSHub 官方 GHCR 的 Chromium 镜像，完整下载并锁定为 `ghcr.io/diygod/rsshub@sha256:f4ff60ff6cb19290ba7a3cfa0c81abe657b778c17fac5303457970edf3fc52a4`。这是不同于原摘要的新版本，源码 revision 为 `66411e5503c001ebcfe7e25e9d5ec2d01bbf0dfa`，构建时间为 `2026-10-14T13:36:36.130Z`。
+
+服务器使用[GHCR 覆盖配置](../deploy/compose.rsshub-ghcr.yml)，与根 `compose.yml` 一起执行：
+
+```bash
+cd /opt/public-opinion-analysis/app
+docker compose -f compose.yml -f deploy/compose.rsshub-ghcr.yml up -d --no-deps --pull never --wait --wait-timeout 90 rsshub
+```
+
+- 容器 `opinion-rsshub-1` 启动成功，状态 `healthy`，`/healthz` 返回 HTTP 200。
+- 容器内请求 `/weibo/search/hot` 返回 HTTP 200、XML 和 52 条 RSS item，响应约 24 KB。项目仍按自身配置限制采样条数，不因上游返回 52 条而扩大采样预算。
+- 此次观测内存约 389.2 MiB，仅为 RSSHub 路由验证时的值，不代表整个项目的峰值内存。
+- 未发布公网端口；后端使用 Docker 内部地址 `http://rsshub:1200`。Docker 日志按 Compose 中的大小策略轮转。
+- 根 Compose 的默认镜像保持原值；后续服务器启动／更新也必须带上 GHCR 覆盖文件，避免切回不可下载的原仓库。
+- 后端镜像尚未构建，微博 CLI 尚未授权，自动采集和邮件发送尚未开启。已停止本任务原先卡住的镜像拉取。
+
+## 微博 CLI 授权与搜索验证
+
+后续构建专用授权镜像 `opinion-weibo-auth:0.9.1`，固定 CLI 版本为项目使用的 0.9.1。用户在微博官方页面确认 `aliyun-opinion-server` 设备会话后，CLI 登录成功。设备码、访问令牌和刷新令牌不写入报告。
+
+- 新建临时容器执行 `auth whoami` 与 `doctor`，确认登录、开发者认证和正式服务均就绪。
+- 登录凭据保存在 `opinion_cli-home` 卷；容器 UID 10001、家目录 `/home/app` 与后端一致，新建容器可复用凭据。未导出令牌到 `.env`。
+- 执行一次 `search statuses/limited --q 人工智能 --type 1 --sort time --count 10 --output json`，返回有效 JSON 和 10 条 `statuses`。仅此一次搜索，未执行全话题增强。
+- 原始测试响应位于服务器 `/opt/public-opinion-analysis/setup/weibo-cli-search-smoke.json`，受 `umask 077` 保护，不提交 Git，也不展示原始微博正文。
+- 专用 Compose 使用独立项目名 `opinion-cli-auth` 和外部凭据卷，不影响正在运行的 RSSHub。登录容器退出即删除，凭据卷保留。
+- 后端镜像构建、模型上传、完整业务采集及邮件联调仍待完成；CLI 授权和单次搜索成功不等于完整分析链路已部署。

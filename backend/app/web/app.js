@@ -165,6 +165,25 @@ function listReports(reports) {
     const actions = node("div", null, "actions");
     actions.append(button("预览与确认 →", () => preview(r.id)));
     card.append(actions);
+    const history = node("div");
+    history.hidden = true;
+    let loaded = false;
+    const toggle = button("查看历史版本", async () => {
+      if (!loaded) {
+        const versions = await api(`/api/reports/${r.id}/history`);
+        if (!versions.length) empty(history, "暂无历史版本");
+        for (const version of versions) {
+          const entry = node("p");
+          entry.append(badge(version.status), document.createTextNode(" "),
+            button(`#${version.id} · ${time(version.created_at)} · 查看`, () => preview(version.id), "quiet"));
+          history.append(entry);
+        }
+        loaded = true;
+      }
+      history.hidden = !history.hidden;
+      toggle.textContent = history.hidden ? "查看历史版本" : "收起历史版本";
+    }, "quiet");
+    card.append(toggle, history);
     root.append(card);
   });
   if (!reports.length) empty(root, "第一份简报将在采集完成后出现。");
@@ -269,6 +288,56 @@ function citationList(citations) {
   });
   return ul;
 }
+function reviewEvidence(payload, context) {
+  const root = node("div", null, "review-evidence");
+  const features = payload.match_features_json || {};
+  const incoming = payload.event_signal || {};
+  const existing = context.existing?.detail?.match_features || {};
+  const missing = new Set(features.missing_features || []);
+  const flags = [...new Set([...(payload.guardrail_flags || []), ...(features.guardrail_flags || [])])];
+  const flagLabels = {
+    low_confidence: "匹配置信度不足", weak_signal_only: "线索缺少明确的事件信息",
+    entity_conflict: "实体冲突", time_conflict: "时间冲突", action_conflict: "动作冲突",
+    cluster_conflict: "已有事件内部证据不一致",
+    embedding_only_without_hard_constraint: "仅有语义相似，缺少身份或事实依据",
+    semantic_false_positive_risk: "存在语义误匹配风险",
+  };
+  const score = value => typeof value === "number" ? value.toFixed(3) : "未计算";
+  const terms = value => Array.isArray(value) && value.length ? value.join("、") : "未提取";
+  const conflict = (name, absent) => flags.includes(`${name}_conflict`) ? "存在冲突"
+    : absent ? "信息不足，无法判断" : "未检测到冲突";
+  root.append(node("h4", "匹配依据"), node("p",
+    flags.length ? flags.map(flag => flagLabels[flag] || `其他检查项：${flag}`).join("；")
+      : "需结合两侧来源判断是否为同一事件。", "quality"));
+  const scores = node("div");
+  table(scores, ["指标", "数值"], [
+    ["综合匹配置信度", score(payload.confidence)],
+    ["重排模型分数（reranker）", score(features.rerank_score)],
+    ["语义相似度（embedding）", score(features.embedding_similarity)],
+    ["同一身份 ID / 同一链接", `${features.id_match ? "是" : "否"} / ${features.url_match ? "是" : "否"}`],
+  ]);
+  root.append(scores, node("p", "分数是匹配指标，不是事实真实性的概率；未提取信息不等于存在冲突。", "small muted"));
+  const comparison = node("div");
+  table(comparison, ["对比项", "新线索", "已有事件", "结果"], [
+    ["实体", terms(incoming.entities), terms(existing.entities),
+      conflict("entity", missing.has("entities") || !incoming.entities?.length || !existing.entities?.length)],
+    ["动作", terms(incoming.action_terms), terms(existing.action_terms),
+      conflict("action", missing.has("action_terms") || !incoming.action_terms?.length || !existing.action_terms?.length)],
+    ["事件时间", incoming.event_time_hint ? time(incoming.event_time_hint) : "未提取",
+      existing.event_time_hint ? time(existing.event_time_hint) : "未提取",
+      conflict("time", missing.has("event_time") || !incoming.event_time_hint || !existing.event_time_hint)],
+    ["实体 / 动作重合度", "—", "—", `${score(features.entity_overlap)} / ${score(features.action_overlap)}`],
+  ]);
+  root.append(comparison);
+  const details = node("details");
+  details.append(node("summary", "技术详情（原始数据）"), node("pre", JSON.stringify({
+    matched_by: payload.matched_by, confidence: payload.confidence,
+    features, flags,
+  }, null, 2)));
+  root.append(details);
+  return root;
+}
+
 async function listReviews(tasks) {
   const root = $("review-list");
   root.replaceChildren();
@@ -306,25 +375,7 @@ async function listReviews(tasks) {
           node("h3", context.existing?.title || "没有匹配目标"),
           citationList(context.existing?.citations),
         );
-        const details = node("details"),
-          summary = node("summary", "匹配分数、实体与时间冲突详情");
-        details.append(
-          summary,
-          node(
-            "pre",
-            JSON.stringify(
-              {
-                matched_by: payload.matched_by,
-                confidence: payload.confidence,
-                features: payload.match_features_json,
-                flags: payload.guardrail_flags,
-              },
-              null,
-              2,
-            ),
-          ),
-        );
-        existing.append(details);
+        existing.append(reviewEvidence(payload, context));
       }),
     );
     if (task.status !== "pending") {

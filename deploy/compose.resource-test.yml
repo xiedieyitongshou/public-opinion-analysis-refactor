@@ -1,0 +1,60 @@
+name: opinion-resource-test
+services:
+  backend:
+    image: opinion-backend:week09
+    init: true
+    command: ["sleep", "infinity"]
+    env_file: .env.resource-test
+    environment:
+      HOME: /home/app
+      APP_ENV: production
+      DATABASE_URL: sqlite:////app/data/app.db
+      WEIBO_RSSHUB_BASE_URL: http://rsshub:1200
+      SEMANTIC_MODEL_DIR: /models
+      SEMANTIC_CACHE_PATH: /app/data/semantic-cache.db
+      RUNTIME_LOG_DIR: /app/profiles/logs
+      SCHEDULER_ENABLED: "false"
+      DAILY_BRIEFING_ENABLED: "false"
+      EMAIL_SCHEDULE_ENABLED: "false"
+      SEMANTIC_CPU_THREADS: "2"
+      WEIBO_CLI_ENABLED: "true"
+      WEIBO_CLI_TOPIC_LIMIT: "50"
+      WEIBO_CLI_SEARCH_COUNT: "10"
+      JOB_TIMEOUT_SECONDS: "1800"
+      HTTP_PROXY: ""
+      HTTPS_PROXY: ""
+      ALL_PROXY: ""
+    cpus: 2
+    mem_limit: 4g
+    memswap_limit: 4g
+    volumes:
+      - profile-data:/app/data
+      - profile-cli:/home/app/.weibo-cli
+      - ../backend/app:/app/app:ro
+      - ../backend/scripts:/app/profile-scripts:ro
+      - ../backend/data/models:/models:ro
+      - ../backend/data/resource-test:/app/profiles
+    depends_on:
+      rsshub:
+        condition: service_healthy
+  rsshub:
+    image: diygod/rsshub@sha256:3c5f0b37a54223c4735b5d6428d2886d97ae24e04297a619fb211a2bc9e174aa
+    init: true
+    cpus: 1
+    mem_limit: 768m
+    memswap_limit: 768m
+    shm_size: 128mb
+    environment:
+      NODE_ENV: production
+      CACHE_TYPE: memory
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:1200/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+    logging:
+      driver: json-file
+      options: {max-size: 5m, max-file: "2"}
+volumes:
+  profile-data:
+  profile-cli:

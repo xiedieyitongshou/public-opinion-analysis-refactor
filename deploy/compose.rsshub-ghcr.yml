@@ -1,0 +1,5 @@
+# Server fallback: official RSSHub Chromium image, pinned after registry inspection.
+# docker compose -f compose.yml -f deploy/compose.rsshub-ghcr.yml up -d --no-deps rsshub
+services:
+  rsshub:
+    image: ghcr.io/diygod/rsshub@sha256:f4ff60ff6cb19290ba7a3cfa0c81abe657b778c17fac5303457970edf3fc52a4

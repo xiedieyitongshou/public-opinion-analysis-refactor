@@ -20,6 +20,10 @@ cd backend
 
 打开 <http://127.0.0.1:8000>。`init` 在尚未配置时生成随机 `ADMIN_TOKEN`，保存在 `backend/.env`，不会打印到日志；用该值登录。已有的来源密钥和配置不会被覆盖。修改环境变量后重启服务。
 
+人工复核的“查看对比依据”展示匹配分数和实体、动作、时间对照，区分缺少信息与明确冲突。原始 JSON 收在“技术详情”中。
+
+简报列表每个采集轮次只展示当前版本，审核后的更新回到同一个轮次卡片；点击“查看历史版本”可查看此前草稿及已确认、已投递版本。底层仍保留修订记录，不覆盖已确认或已发送内容；不同采集轮次分别展示。
+
 页面使用 HttpOnly 会话 cookie；`/api/*` 和 `/ops/*` 也接受 `Authorization: Bearer <ADMIN_TOKEN>`。未配置管理员令牌时接口关闭访问。浏览器修改操作校验同源请求；令牌不存入 localStorage。部署到 HTTPS 时设置 `ADMIN_COOKIE_SECURE=true`。本阶段按 SQLite、单服务进程使用，不开多个 Uvicorn worker。
 
 来源配置沿用 `.env.example`：知乎需要 `ZHIHU_ACCESS_SECRET`，微博需要本地 RSSHub；官媒 RSS 自动接入。基础配置的微博 CLI 默认关闭，Docker 部署模板则开启；启用后默认覆盖本轮全部入选 RSS 话题，配置、预算和降级见[数据源说明](data-sources.md)。本地语义匹配需要先[准备模型](event-matching.md#模型安装与运行)，也可显式使用 `MATCHING_PROFILE=rules`。

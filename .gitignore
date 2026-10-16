@@ -229,6 +229,7 @@ backend/data/briefing-mvp/
 backend/data/deployment-test/
 backend/data/email-management/
 backend/data/email-settings/
+backend/data/resource-test/
 backend/logs/
 backend/artifacts/
 deploy/.env*

@@ -1,0 +1,7 @@
+# Optional build acceleration; package signature verification stays enabled.
+services:
+  backend:
+    build:
+      args:
+        DEBIAN_MIRROR: https://mirrors.aliyun.com
+        PIP_INDEX_URL: https://mirrors.aliyun.com/pypi/simple

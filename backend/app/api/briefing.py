@@ -52,6 +52,7 @@ def report_info(db, row, *, full=False):
         "window_end": row.briefing_json.get("window_end"),
         "event_count": row.briefing_json.get("event_count", 0),
         "supersedes_id": revision.supersedes_id if revision else None,
+        "run_id": revision.run_id if revision else None,
         "quality": row.quality_review_json,
     }
     if full:
@@ -149,9 +150,15 @@ def create_job(db: Db, data: JobInput):
 
 @router.get("/reports")
 def reports(db: Db, limit: int = Query(30, ge=1, le=200)):
+    # Limit editions, not revisions: repeated reviews must not hide older rounds.
+    latest_ids = select(func.max(ReportRevision.report_id)).group_by(ReportRevision.run_id)
+    versioned_ids = select(ReportRevision.report_id)
+    query = select(DailyReport).where(or_(
+        DailyReport.id.in_(latest_ids), DailyReport.id.not_in(versioned_ids),
+    )).order_by(DailyReport.id.desc()).limit(limit)
     return [
         report_info(db, row)
-        for row in db.scalars(select(DailyReport).order_by(DailyReport.id.desc()).limit(limit))
+        for row in db.scalars(query)
     ]
 
 
@@ -166,6 +173,19 @@ def latest_report(db: Db):
 @router.get("/reports/{report_id}")
 def report_detail(report_id: int, db: Db):
     return report_info(db, get_report(db, report_id), full=True)
+
+
+@router.get("/reports/{report_id}/history")
+def report_history(db: Db, report_id: int):
+    get_report(db, report_id)
+    revision = db.get(ReportRevision, report_id)
+    if revision is None:
+        return []
+    return [report_info(db, row) for row in db.scalars(
+        select(DailyReport).join(ReportRevision, ReportRevision.report_id == DailyReport.id)
+        .where(ReportRevision.run_id == revision.run_id, DailyReport.id != report_id)
+        .order_by(DailyReport.id.desc())
+    )]
 
 
 @router.get("/reports/{report_id}/html", response_class=HTMLResponse)

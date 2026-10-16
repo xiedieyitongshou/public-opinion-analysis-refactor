@@ -137,6 +137,8 @@ reports/         # 有版本或日期的验证证据
 | 每日简报，2026-10-07 | 291 项测试通过；固定版本、人工复核、页面及 SMTP 协议验证 | [简报验收](reports/briefing-acceptance-v0.1.md) |
 | 本地 Docker，2026-10-08～09 | 容器采集、定时任务、日志、Mailpit 与重启去重验证；CLI 全话题覆盖回归 | [Docker 验收](reports/docker-acceptance-v0.1.md) |
 | 邮箱管理，2026-10-10 | 323 项测试通过；浏览器操作、指定发送、名单持久化与去重验证 | [邮箱管理验收](reports/email-management-acceptance-v0.1.md) |
+| 阿里云部署，2026-10-14～15 | 部署与 CLI 验证通过；低内存导致试运行中断，未通过连续 24 小时验收 | [服务器准备](reports/server-environment-2026-10-14.md)、[一天试运行](reports/server-trial-2026-10-15.md) |
+| 本机资源测试，2026-10-16 | 两轮采集、38 次微博搜索成功，本地日报已生成；审核详情表格化，草稿按轮次折叠历史 | [资源与质量记录](reports/local-resource-profile-2026-10-16.md) |
 | 离线匹配，2026-09-29～30 | 134 条基线与 208 条扩充集；完整匹配配置 193/208，保留失败案例 | [基线与修复跟踪](reports/evaluation-v0.1.md)、[模型对照](reports/evaluation-v0.2.md) |
 
 离线扩充集参与过诊断，标签仍待人工复核，193/208 不代表生产准确率。真实 SMTP 收件与阿里云连续 24 小时运行仍待验收。

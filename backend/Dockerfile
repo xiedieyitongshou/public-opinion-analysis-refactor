@@ -5,15 +5,18 @@ FROM python:3.11-slim-bookworm
 ENV PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1 TZ=Asia/Shanghai \
     TOKENIZERS_PARALLELISM=false HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1
 WORKDIR /app
-RUN apt-get update && apt-get install -y --no-install-recommends libgomp1 ca-certificates \
+ARG DEBIAN_MIRROR=https://deb.debian.org
+RUN sed -i "s|http://deb.debian.org|${DEBIAN_MIRROR}|g" /etc/apt/sources.list.d/debian.sources \
+    && apt-get update && apt-get install -y --no-install-recommends libgomp1 ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 COPY --from=weibo /usr/local/bin/node /usr/local/bin/node
 COPY --from=weibo /opt/weibo /opt/weibo
 RUN ln -s /opt/weibo/node_modules/.bin/weibo-cli /usr/local/bin/weibo-cli
 # Explicit CPU wheel avoids pulling the Linux CUDA runtime into the MVP image.
-RUN pip install --no-cache-dir torch==2.8.0+cpu --index-url https://download.pytorch.org/whl/cpu
+RUN pip install --no-cache-dir --no-deps torch==2.8.0+cpu --index-url https://download.pytorch.org/whl/cpu
 COPY backend/requirements-linux.lock ./
-RUN pip install --no-cache-dir -r requirements-linux.lock
+ARG PIP_INDEX_URL=https://pypi.org/simple
+RUN pip install --no-cache-dir -r requirements-linux.lock && pip check
 COPY backend/pyproject.toml ./
 COPY backend/app ./app
 RUN pip install --no-cache-dir --no-deps --no-build-isolation .
