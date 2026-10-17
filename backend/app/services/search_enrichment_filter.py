@@ -67,6 +67,22 @@ def evaluate_search_enrichment(
             audit_only=True,
         )
 
+    if source == "weibo_cli":
+        from app.services.weibo_relevance import classify_body
+
+        # Content and title often contain identical CLI text. Do not score it twice.
+        text = enrichment_item.content_text or enrichment_item.content or enrichment_item.summary or enrichment_title
+        decision, score, matches, reasons = classify_body(parent_title, text)
+        return SearchEnrichmentRelation(
+            source=source, parent_candidate_id=parent_candidate_id,
+            parent_signal_id=parent_signal_id, user_query_id=user_query_id,
+            parent_title=parent_title, enrichment_title=enrichment_title,
+            decision=decision, confidence=score, matched_by=matches,
+            rejected_by=reasons if decision == "rejected" else [],
+            quality_flags=_dedupe([*quality_flags, *reasons]),
+            audit_only=decision != "accepted",
+        )
+
     if _same_zhihu_question(parent_item.url, enrichment_item.url):
         matched_by.append("same_zhihu_question_id")
 

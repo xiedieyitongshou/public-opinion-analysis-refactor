@@ -188,7 +188,7 @@ def test_zhihu_search_accepts_same_question_id() -> None:
     assert relation.audit_only is False
 
 
-def test_weibo_cli_accepts_hashtag_match() -> None:
+def test_weibo_cli_hashtag_does_not_bypass_disabled_model() -> None:
     relation = evaluate_search_enrichment(
         normalized_item(
             source_id="weibo_rsshub_hot_search",
@@ -212,8 +212,9 @@ def test_weibo_cli_accepts_hashtag_match() -> None:
         parent_candidate_id="candidate-1",
     )
 
-    assert relation.decision == "accepted"
-    assert "hashtag_match" in relation.matched_by
+    assert relation.decision == "audit_only"
+    assert "hashtag_match" not in relation.matched_by
+    assert "weibo_relevance_reranker_disabled" in relation.quality_flags
 
 
 def test_low_relevance_search_result_is_audit_only() -> None:
@@ -242,7 +243,7 @@ def test_low_relevance_search_result_is_audit_only() -> None:
 
     assert relation.decision == "audit_only"
     assert relation.audit_only is True
-    assert "low_relevance_search_result" in relation.quality_flags
+    assert "weibo_relevance_reranker_disabled" in relation.quality_flags
 
 
 def test_search_query_itself_does_not_prove_result_relevance() -> None:

@@ -23,7 +23,6 @@ from pydantic import BaseModel, ConfigDict
 
 from app.core.config import settings
 from app.schemas.signals import SearchEnrichmentRelation
-from app.services.event_constraints import title_conflicts
 from app.services.request_usage import RequestBudgetExceeded, http_request, measured_call
 from app.services.search_enrichment_filter import evaluate_search_enrichment
 
@@ -575,8 +574,6 @@ def _cli_sample_relation(
     text = plain_text(sample.text)
     if not text:
         flags.append("unrelated_result")
-    else:
-        flags.extend(title_conflicts(topic.title or "", text))
     if sample.created_at:
         created_at = _parsed_cli_created_at(sample.created_at)
         observed_at = datetime.fromisoformat(fetched_at.replace("Z", "+00:00"))

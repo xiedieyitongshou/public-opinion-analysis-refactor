@@ -6,6 +6,7 @@ from collections.abc import Sequence
 from typing import Any
 
 from app.collectors.base import BaseCollector
+from app.core.config import settings
 from app.schemas import CollectorMetadata, CollectorRunConfig, NormalizedItem
 from app.services.weibo_heat_client import (
     CLI_SEARCH_SORT,
@@ -60,7 +61,10 @@ class WeiboHeatCollector(BaseCollector):
         # These describe the actual client command, not caller-supplied display metadata.
         params["cli_search_count"] = getattr(client_config, "cli_requested_count", 10)
         params["cli_search_sort"] = CLI_SEARCH_SORT
-        params["cli_sampling_version"] = "all-returned-v1"
+        params["cli_sampling_version"] = (
+            f"body-rerank-v2:{settings.matching_profile}:"
+            f"{settings.weibo_relevance_reject_below}:{settings.weibo_relevance_accept_at}"
+        )
         # A valid RSS response is our observable list, including a short or empty feed.
         # HTTP/XML failures still return failed; CLI failure does not invalidate RSS.
         params.setdefault("list_complete", True)

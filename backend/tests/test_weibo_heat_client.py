@@ -5,6 +5,7 @@ import httpx
 import pytest
 
 from app.schemas import NormalizedItem
+from app.core.config import settings
 from app.services.weibo_heat_client import (
     CLIProcessResult,
     WeiboCLIEnrichment,
@@ -15,6 +16,16 @@ from app.services.weibo_heat_client import (
     normalize_heat_topic,
     parse_rsshub_items,
 )
+
+
+@pytest.fixture(autouse=True)
+def local_relevance_model(monkeypatch):
+    """Collector tests control semantic scores; real inference is tested separately."""
+    monkeypatch.setattr(settings, "matching_profile", "hybrid_rerank")
+    class Model:
+        def rerank(self, pairs):
+            return [0.01 if "抽奖" in body else 0.9 for _, body in pairs]
+    monkeypatch.setattr("app.services.weibo_relevance.get_semantic_models", lambda: Model())
 
 RSS_XML = """<?xml version="1.0" encoding="UTF-8"?>
 <rss version="2.0">
@@ -139,7 +150,7 @@ def test_cli_metrics_only_use_relevant_recent_statuses() -> None:
     statuses = [
         normalize_cli_status({
             "id": 1,
-            "text": "#太子奶创始人李途纯去世# 后续消息",
+            "text": "#太子奶创始人李途纯去世# 太子奶创始人李途纯去世，后续消息公布。",
             "url": "https://m.weibo.cn/status/1",
             "created_at": "2026-09-09T10:00:00+00:00",
             "comments_count": 7,
@@ -200,7 +211,7 @@ def test_all_paid_records_are_filtered_including_relevant_results_after_first_fi
         return CLIProcessResult(returncode=0, stderr="", stdout=json.dumps({
             "statuses": [{
                 "id": index + 1,
-                "text": "今日抽奖送手机" if index < 5 else f"#{query}# 后续消息",
+                "text": "今日抽奖送手机" if index < 5 else f"#{query}# {query}，相关后续消息正在报道。",
                 "created_at": datetime.now(UTC).isoformat(),
                 "attitudes_count": 9999 if index < 5 else 12,
             } for index in range(10)],

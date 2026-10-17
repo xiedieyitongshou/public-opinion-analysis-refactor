@@ -3,6 +3,7 @@ from datetime import UTC, datetime
 
 import httpx
 import pytest
+from test_weibo_heat_client import local_relevance_model as local_relevance_model
 
 import app.tools.default_tools as default_tools
 from app.collectors import CollectorRegistry, WeiboHeatCollector
@@ -160,7 +161,7 @@ def test_weibo_sampling_signature_records_actual_count_and_invalidates_older_sam
         assert result.status == "succeeded"
         sampling = json.loads(result.sampling_signature)
         assert sampling["cli_search_count"] == max(10, count)
-        assert sampling["cli_sampling_version"] == "all-returned-v1"
+        assert sampling["cli_sampling_version"] == "body-rerank-v2:hybrid_rerank:0.1:0.8"
         signatures.append(result.sampling_signature)
     assert signatures[0] == signatures[1]
     assert signatures[1] != signatures[2]
@@ -297,7 +298,7 @@ def _full_list_collector(limit, *, fail_at=None):
         return CLIProcessResult(returncode=0, stderr="", stdout=json.dumps({
             "statuses": [{
                 "id": len(queries) * 100 + index,
-                "text": f"#{query}# 最新消息",
+                "text": f"#{query}# {query}的详细后续消息已公布",
                 "created_at": datetime.now(UTC).isoformat(),
                 "comments_count": index,
                 "reposts_count": index,
@@ -344,7 +345,7 @@ def _successful_cli_runner(command: list[str], timeout_seconds: float) -> CLIPro
                     {
                         "id": 123,
                         "mid": "456",
-                        "text": "话题一 相关微博",
+                        "text": "话题一的详细后续消息已公布",
                         "created_at": datetime.now(UTC).strftime("%a %b %d %H:%M:%S +0000 %Y"),
                         "comments_count": 7,
                         "reposts_count": 3,
