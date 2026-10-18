@@ -53,7 +53,9 @@ def run_report(environment, run_id="brief-1", **kwargs):
     assert row.status != "failed", row.error
     assert row.report_id, row.error
     report = db.get(DailyReport, row.report_id)
-    assert report.status == "draft", report.quality_review_json
+    assert report.status == ("draft" if report.briefing_json["event_count"] else "blocked"), (
+        report.quality_review_json
+    )
     return report
 
 
@@ -165,7 +167,6 @@ def test_review_recomputes_original_observation_and_new_draft(environment):
     client.titles = ["热议"]
     report = run_report(environment)
     assert report.briefing_json["event_count"] == 0
-    approve_report(db, report)
     original = deepcopy(report.briefing_json)
     task = db.scalar(select(HumanReviewTask).where(HumanReviewTask.status == "pending"))
     decision = decide_human_review_task(
@@ -186,7 +187,7 @@ def test_review_recomputes_original_observation_and_new_draft(environment):
     new_report = db.get(DailyReport, decision.report_id)
     assert new_report.briefing_json["event_count"] == 1
     assert new_report.briefing_json["pending_review_count"] == 0
-    assert report.status == "approved"
+    assert report.status == "blocked"
     assert report.briefing_json == original
 
 
@@ -230,11 +231,21 @@ def test_review_keeps_original_cached_query_evidence_without_new_requests(enviro
         calls.append(request)
         if request.method == "POST":
             return httpx.Response(200, json={"code": 0, "data": {"records": []}})
-        return httpx.Response(200, text="var docArr = " + json.dumps([{
-            "title": TITLE, "content_without_tag": TITLE,
-            "url": "https://www.chinanews.com.cn/cj/current.shtml",
-            "pubtime": (START - timedelta(hours=1)).isoformat(),
-        }]) + ";")
+        return httpx.Response(
+            200,
+            text="var docArr = "
+            + json.dumps(
+                [
+                    {
+                        "title": TITLE,
+                        "content_without_tag": TITLE,
+                        "url": "https://www.chinanews.com.cn/cj/current.shtml",
+                        "pubtime": (START - timedelta(hours=1)).isoformat(),
+                    }
+                ]
+            )
+            + ";",
+        )
 
     search = OfficialSearchClient(httpx.Client(transport=httpx.MockTransport(transport)))
     monkeypatch.setattr("app.services.official_search.OfficialSearchClient", lambda: search)
@@ -252,7 +263,9 @@ def test_review_keeps_original_cached_query_evidence_without_new_requests(enviro
     assert not review_briefing(DailyBriefing.model_validate(report.briefing_json))["blocks_publish"]
     task = db.scalar(select(HumanReviewTask).where(HumanReviewTask.status == "pending"))
     result = decide_human_review_task(
-        db, task, HumanReviewDecisionInput(decision="ignore", reviewer="tester"),
+        db,
+        task,
+        HumanReviewDecisionInput(decision="ignore", reviewer="tester"),
     )
     assert result.refresh_status == "refreshed", result.message
     updated = db.get(DailyReport, result.report_id)
@@ -268,11 +281,15 @@ def test_failed_review_refresh_remains_actionable_and_retry_clears_queue(environ
     run_report(environment)
     task = db.scalar(select(HumanReviewTask))
     with monkeypatch.context() as patch:
+
         def fail(*args):
             raise RuntimeError("simulated refresh failure")
+
         patch.setattr("app.services.review_refresh.refresh_after_review", fail)
         result = decide_human_review_task(
-            db, task, HumanReviewDecisionInput(decision="create_new_event", reviewer="tester"),
+            db,
+            task,
+            HumanReviewDecisionInput(decision="create_new_event", reviewer="tester"),
         )
     assert result.status == "succeeded" and result.refresh_status == "failed"
     assert task.status == "resolved"

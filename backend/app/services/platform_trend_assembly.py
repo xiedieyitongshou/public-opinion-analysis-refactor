@@ -48,8 +48,7 @@ def record_collection_round(
     if collection.validate_only or collection.dry_run:
         return 0
     if not collection.run_id and any(
-        not result.run_id for result in collection.results
-        if result.source_id in SOURCE_PLATFORMS
+        not result.run_id for result in collection.results if result.source_id in SOURCE_PLATFORMS
     ):
         raise ValueError("a stable collection run_id is required")
     events = {event.event_id: event for event in tracked_events if event.event_id}
@@ -57,9 +56,9 @@ def record_collection_round(
         return 0
     result_count = 0
     config = score_config or PlatformHeatConfig()
-    config_version = "day44-v1:" + hashlib.sha256(
-        config.model_dump_json().encode("utf-8")
-    ).hexdigest()[:12]
+    config_version = (
+        "day44-v1:" + hashlib.sha256(config.model_dump_json().encode("utf-8")).hexdigest()[:12]
+    )
     for result in collection.results:
         platform = SOURCE_PLATFORMS.get(result.source_id)
         if platform is None or result.validate_only or result.dry_run:
@@ -68,8 +67,7 @@ def record_collection_round(
             raise ValueError("collection must provide observed_at and observation_id")
         hashes = [item.get("content_hash") for item in result.normalized_items]
         linked = (
-            db.scalars(select(Item).where(Item.content_hash.in_(hashes))).all()
-            if hashes else []
+            db.scalars(select(Item).where(Item.content_hash.in_(hashes))).all() if hashes else []
         )
         by_hash = {
             item.content_hash: item.event.event_id
@@ -88,48 +86,48 @@ def record_collection_round(
             if not is_main and not hit_items:
                 continue
             prior = (
-                _last_main_observation(db, event, platform, result.observed_at)
-                if is_main else None
+                _last_main_observation(db, event, platform, result.observed_at) if is_main else None
             )
-            scope_changed = bool(
-                prior is not None and prior.topn_scope != result.topn_scope
-            )
+            scope_changed = bool(prior is not None and prior.topn_scope != result.topn_scope)
             if is_main and hit_items and result.status == "succeeded":
                 present = True
             elif (
-                is_main and result.status == "succeeded"
-                and result.list_complete and not scope_changed
+                is_main
+                and result.status == "succeeded"
+                and result.list_complete
+                and not scope_changed
             ):
                 present = False
             else:
                 present = None
             rank = None
             if platform == "zhihu" and present is True:
-                ranks = [item_to_platform_heat_signal(item, event_id=event_id).rank
-                         for item in hit_items]
                 ranks = [
-                    int(value) for value in ranks
-                    if isinstance(value, int | float) and value > 0
+                    item_to_platform_heat_signal(item, event_id=event_id).rank for item in hit_items
+                ]
+                ranks = [
+                    int(value) for value in ranks if isinstance(value, int | float) and value > 0
                 ]
                 rank = min(ranks) if ranks else None
             heat = None
             component_signature = None
             if hit_items and result.status == "succeeded":
-                signals = [item_to_platform_heat_signal(item, event_id=event_id)
-                           for item in hit_items]
-                heat = score_platform_signals(
-                    signals, config, observed_at=result.observed_at
-                )[0]
+                signals = [
+                    item_to_platform_heat_signal(item, event_id=event_id) for item in hit_items
+                ]
+                heat = score_platform_signals(signals, config, observed_at=result.observed_at)[0]
                 if platform == "weibo":
-                    heat = heat.model_copy(update={
-                        "primary_platform_rank": None,
-                        "quality_flags": list(dict.fromkeys(
-                            [*heat.quality_flags, "rss_order_not_official_rank"]
-                        )),
-                    })
-                component_signature = ",".join(sorted(
-                    key for key, value in heat.sub_scores.items() if value is not None
-                ))
+                    heat = heat.model_copy(
+                        update={
+                            "primary_platform_rank": None,
+                            "quality_flags": list(
+                                dict.fromkeys([*heat.quality_flags, "rss_order_not_official_rank"])
+                            ),
+                        }
+                    )
+                component_signature = ",".join(
+                    sorted(key for key, value in heat.sub_scores.items() if value is not None)
+                )
             flags = list(result.quality_flags)
             if scope_changed:
                 flags.append("incomparable_scope")
@@ -153,8 +151,9 @@ def record_collection_round(
                 score_config_version=config_version if heat else None,
                 sampling_signature=result.sampling_signature,
                 score_component_signature=component_signature,
-                source_refs=[str(item.get("url") or item.get("content_hash"))
-                             for item in hit_items],
+                source_refs=[
+                    str(item.get("url") or item.get("content_hash")) for item in hit_items
+                ],
                 quality_flags=flags,
             )
             result_count += record_platform_observations(
@@ -169,10 +168,13 @@ def _last_main_observation(
     if before is None:
         return None
     rows = db.scalars(
-        select(EventSnapshot).where(
+        select(EventSnapshot)
+        .where(
             EventSnapshot.event_id == event.id,
             EventSnapshot.snapshot_at < before,
-        ).order_by(EventSnapshot.snapshot_at.desc()).limit(50)
+        )
+        .order_by(EventSnapshot.snapshot_at.desc())
+        .limit(50)
     ).all()
     for row in rows:
         entries = (row.metrics_json or {}).get("platform_observations", {}).get(platform) or []
@@ -209,8 +211,7 @@ def record_platform_observations(
         for existing in existing_snapshots:
             for entries in (existing.metrics_json or {}).get("platform_observations", {}).values():
                 if any(
-                    entry.get("observation_id") == observation.observation_id
-                    for entry in entries
+                    entry.get("observation_id") == observation.observation_id for entry in entries
                 ):
                     existing_time = existing.snapshot_at
                     if existing_time.tzinfo is None:
@@ -244,16 +245,17 @@ def record_platform_observations(
             payload["platform_score_id"] = score.id
         else:
             payload["platform_score_id"] = None
-            old_score = db.scalar(select(PlatformScore).where(
-                PlatformScore.event_id == event.id,
-                PlatformScore.platform == observation.platform,
-                PlatformScore.observation_id == observation.observation_id,
-            ))
+            old_score = db.scalar(
+                select(PlatformScore).where(
+                    PlatformScore.event_id == event.id,
+                    PlatformScore.platform == observation.platform,
+                    PlatformScore.observation_id == observation.observation_id,
+                )
+            )
             if old_score is not None:
                 db.delete(old_score)
         stored = [
-            entry for entry in stored
-            if entry.get("observation_id") != observation.observation_id
+            entry for entry in stored if entry.get("observation_id") != observation.observation_id
         ]
         stored.append(payload)
         stored.sort(key=lambda entry: (entry["observed_at"], entry["observation_id"]))
@@ -265,9 +267,7 @@ def record_platform_observations(
     return count
 
 
-def _upsert_score(
-    db: Session, event: Event, observation: PlatformHeatObservation
-) -> PlatformScore:
+def _upsert_score(db: Session, event: Event, observation: PlatformHeatObservation) -> PlatformScore:
     score = db.scalar(
         select(PlatformScore).where(
             PlatformScore.event_id == event.id,
@@ -331,31 +331,39 @@ def assemble_event_heat_analysis_from_db(
     window_end: datetime | None = None,
     configs: dict[str, PlatformTrendConfig] | None = None,
     persist: bool = True,
+    window_start: datetime | None = None,
+    allowed_observation_ids: set[str] | None = None,
 ) -> EventHeatAnalysis:
     """Read real snapshots and overwrite only Day 47's analysis JSON."""
 
+    explicit_window = window_start is not None
     detail = dict(event.event_detail_json or {})
     classification = detail.get("classification_detail") or {}
-    if classification.get("run_id") == run_id and classification.get("window_end"):
-        classified_end = datetime.fromisoformat(
-            classification["window_end"].replace("Z", "+00:00")
-        )
+    if (
+        not explicit_window
+        and classification.get("run_id") == run_id
+        and classification.get("window_end")
+    ):
+        classified_end = datetime.fromisoformat(classification["window_end"].replace("Z", "+00:00"))
         if window_end is not None and not _same_time(window_end, classified_end):
             raise ValueError("Day 47 must reuse the Day 46 window for this run")
         window_end = classified_end
     window_end = (window_end or datetime.now(UTC)).astimezone(UTC)
-    window_start = window_end - timedelta(hours=24)
+    window_start = window_start or window_end - timedelta(hours=24)
     previous = detail.get("platform_heat_analysis") or {}
-    if previous.get("run_id") == run_id and not _same_time(
-        previous.get("window_end"), window_end
-    ):
+    if previous.get("run_id") == run_id and not _same_time(previous.get("window_end"), window_end):
         raise ValueError("the same run_id must reuse its original window")
     observations = load_platform_observations(
         db, event=event, window_start=window_start, window_end=window_end
     )
+    if allowed_observation_ids is not None:
+        observations = [o for o in observations if o.observation_id in allowed_observation_ids]
     platform_results = {}
     for platform in ("zhihu", "weibo"):
         config = (configs or {}).get(platform) or _source_trend_config(db, platform)
+        config = config.model_copy(
+            update={"window_hours": (window_end - window_start).total_seconds() / 3600}
+        )
         platform_results[platform] = analyze_platform_trend(
             PlatformTrendInput(
                 event_id=event.event_id,
@@ -368,10 +376,12 @@ def assemble_event_heat_analysis_from_db(
             )
         )
         if not any(item.platform == platform for item in observations):
-            old_scores = db.scalars(select(PlatformScore).where(
-                PlatformScore.event_id == event.id,
-                PlatformScore.platform == platform,
-            )).all()
+            old_scores = db.scalars(
+                select(PlatformScore).where(
+                    PlatformScore.event_id == event.id,
+                    PlatformScore.platform == platform,
+                )
+            ).all()
             if any(
                 not (score.score_detail_json or {}).get("observation_id")
                 or not (score.score_detail_json or {}).get("observed_at")
@@ -382,7 +392,8 @@ def assemble_event_heat_analysis_from_db(
                     "Old platform scores have no traceable source observation."
                 )
     usable = [
-        item for item in platform_results.values()
+        item
+        for item in platform_results.values()
         if item.latest_platform_heat is not None or item.duration_status != "unknown"
     ]
     complete = all(
@@ -391,16 +402,20 @@ def assemble_event_heat_analysis_from_db(
         and item.trend_status != "unknown"
         for item in platform_results.values()
     )
-    flags = list(dict.fromkeys(
-        flag for item in platform_results.values() for flag in item.quality_flags
-    ))
-    if classification and (
-        classification.get("run_id") != run_id
-        or not _same_time(classification.get("window_start"), window_start)
-        or not _same_time(classification.get("window_end"), window_end)
+    flags = list(
+        dict.fromkeys(flag for item in platform_results.values() for flag in item.quality_flags)
+    )
+    if (
+        not explicit_window
+        and classification
+        and (
+            classification.get("run_id") != run_id
+            or not _same_time(classification.get("window_start"), window_start)
+            or not _same_time(classification.get("window_end"), window_end)
+        )
     ):
         flags.append("classification_window_mismatch")
-    elif not classification:
+    elif not explicit_window and not classification:
         flags.append("missing_classification")
     analysis = EventHeatAnalysis(
         event_id=event.event_id,
@@ -449,8 +464,7 @@ def _same_time(left: str | datetime | None, right: datetime) -> bool:
         return False
     try:
         parsed = (
-            datetime.fromisoformat(left.replace("Z", "+00:00"))
-            if isinstance(left, str) else left
+            datetime.fromisoformat(left.replace("Z", "+00:00")) if isinstance(left, str) else left
         )
         return parsed.astimezone(UTC) == right.astimezone(UTC)
     except (ValueError, TypeError):
@@ -465,7 +479,8 @@ def rank_events_within_platform(
     if platform not in {"zhihu", "weibo"}:
         raise ValueError("platform must be zhihu or weibo")
     candidates = [
-        event for event in events
+        event
+        for event in events
         if (event.event_detail_json or {}).get("priority_category") == category
     ]
 

@@ -98,16 +98,18 @@ def _citations(db, event, assembly, start, end):
         select(Item).where(Item.id.in_([int(value) for value in member_ids if value.isdigit()]))
     ).all()
     citations = []
+    observed_times = detail.get("citation_observed_at", {})
     for item in rows:
         signal = (item.normalized_json or {}).get("source_signal", {})
         if signal.get("audit_only") or signal.get("contributes_to_classification") is False:
             continue
         is_official = item.source.source_type == "official_news"
-        if not item.fetched_at:
+        observed_at = observed_times.get(str(item.id)) or item.fetched_at
+        if not observed_at:
             continue
-        if not is_official and not start < as_utc(item.fetched_at) <= end:
+        if not is_official and not start < as_utc(observed_at) <= end:
             continue
-        if is_official and official_publication_exclusion(item.published_at, end):
+        if is_official and official_publication_exclusion(item.published_at, end, start):
             continue
         flags = list(item.quality_flags_json or [])
         if not item.url:
@@ -123,7 +125,7 @@ def _citations(db, event, assembly, start, end):
                 source_status=item.source_status,
                 source_origin=item.source_origin,
                 platform=item.source.platform,
-                fetched_at=as_utc(item.fetched_at),
+                fetched_at=as_utc(observed_at),
                 published_at=item.published_at,
                 quality_flags=flags,
                 raw_metrics_used=item.raw_metrics_json or {},
@@ -143,7 +145,9 @@ def generate_briefing(db: Session, run_id: str, *, refresh=False) -> DailyBriefi
     if result.window_end is None:
         raise ValueError("分析缺少截止时间")
     end = as_utc(result.window_end)
-    start = end - timedelta(hours=24)
+    scope = run.input_json.get("report_window") or {}
+    start = as_utc(scope["start"]) if scope else end - timedelta(hours=24)
+    window_label = scope.get("label", "过去24小时")
     heat = {value.event_id: value for value in result.analyses}
     cards, excluded = [], []
     seen = set()
@@ -171,7 +175,7 @@ def generate_briefing(db: Session, run_id: str, *, refresh=False) -> DailyBriefi
             for key, name in PLATFORMS.items()
             if (presence.official_source if key == "official" else getattr(presence, key + "_topn"))
         ]
-        summary = "过去 24 小时见于" + "、".join(platforms or ["待确认来源"]) + "。"
+        summary = window_label + "见于" + "、".join(platforms or ["待确认来源"]) + "。"
         if not presence.official_source:
             summary += "话题信息来自平台讨论，暂无已接纳的官媒依据。"
         cards.append(
@@ -224,7 +228,7 @@ def generate_briefing(db: Session, run_id: str, *, refresh=False) -> DailyBriefi
                 notes=(
                     ["展示报道与来源覆盖，不计算公众热度。"]
                     if platform == "official"
-                    else ["按本平台观测排序；当前离榜仍可保留在 24 小时关注窗口内。"]
+                    else ["按本平台观测排序；当前离榜仍可保留在所选关注窗口内。"]
                 ),
             )
         )
@@ -246,6 +250,13 @@ def generate_briefing(db: Session, run_id: str, *, refresh=False) -> DailyBriefi
     ).date()
     health = source_health(run.collection_json or {}, end)
     risks = []
+    if scope:
+        risks.append("仅使用所选范围内真实采集并已接纳的证据；未采集的来源不代表没有报道。")
+        if (run.collection_json or {}).get("window_failures"):
+            risks.append(
+                f"窗口内有 {len(run.collection_json['window_failures'])} 次来源采集异常，"
+                "最后一轮状态不能代表全程。"
+            )
     if any(value["status"] != "succeeded" for value in health):
         risks.append("部分来源数据不完整或不可用；已保留其他来源的有效结果。")
     if pending:
@@ -257,7 +268,7 @@ def generate_briefing(db: Session, run_id: str, *, refresh=False) -> DailyBriefi
         report_date=report_date,
         title=f"每日关注 · {report_date}",
         summary=(
-            f"过去 24 小时，共 {len(cards)} 个已接纳事件。分类按事件去重，热度分别在平台内比较。"
+            f"{window_label}，共 {len(cards)} 个已接纳事件。分类按事件去重，热度分别在平台内比较。"
         ),
         sections=sections,
         created_at=datetime.now(UTC),
@@ -299,8 +310,8 @@ def review_briefing(briefing: DailyBriefing) -> dict:
     ).model_dump(mode="json")
     errors = []
     start, end = briefing.window_start, briefing.window_end
-    if not start or not end or end - start != timedelta(hours=24):
-        errors.append("日报必须使用固定的 24 小时窗口")
+    if not start or not end or not start < end:
+        errors.append("简报必须使用有效且固定的起止时间")
     for section in briefing.sections:
         ids = [card.event_id for card in section.event_cards]
         if len(set(ids)) != len(ids):
@@ -335,11 +346,11 @@ def review_briefing(briefing: DailyBriefing) -> dict:
                 if (
                     citation.source_type == "official_news"
                     and end
-                    and (official_publication_exclusion(citation.published_at, end))
+                    and (official_publication_exclusion(citation.published_at, end, start))
                 ):
                     errors.append(f"{card.event_id}: 官媒发布时间不符合窗口")
-    if any(value["reason"] == "missing_current_citation" for value in briefing.excluded_events):
-        errors.append("存在缺少有效引用的分类事件")
+    if not any(section.event_cards for section in briefing.sections):
+        errors.append("没有具备有效引用的事件，无法发布空简报")
     if not briefing.source_health or not any(
         value["status"] in {"succeeded", "partial"} for value in briefing.source_health
     ):

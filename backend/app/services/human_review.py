@@ -52,6 +52,28 @@ def create_human_review_tasks(
             created_count += 1
         else:
             task = existing
+            old = task.payload_json or {}
+            payload["run_ids"] = list(
+                dict.fromkeys([*old.get("run_ids", []), old.get("run_id"), payload.get("run_id")])
+            )
+            payload["item_ids"] = list(
+                dict.fromkeys([*old.get("item_ids", []), *payload.get("item_ids", [])])
+            )
+            payload["source_signal_ids"] = list(
+                dict.fromkeys(
+                    [*old.get("source_signal_ids", []), *payload.get("source_signal_ids", [])]
+                )
+            )
+            citations = {
+                str(c.get("item_id") or c.get("url")): c for c in old.get("source_citations", [])
+            }
+            citations.update(
+                {
+                    str(c.get("item_id") or c.get("url")): c
+                    for c in payload.get("source_citations", [])
+                }
+            )
+            payload["source_citations"] = list(citations.values())
             task.payload_json = payload
             task.priority = input_data.priority
             db.add(task)
@@ -82,7 +104,8 @@ def decide_human_review_task(
     owner = str(uuid4())
     if not acquire_lease(db, "analysis", owner, seconds=900):
         return HumanReviewDecisionOutput(
-            status="failed", human_review_task=task_record(task),
+            status="failed",
+            human_review_task=task_record(task),
             message="采集分析正在运行，请完成后再处理候选。",
         )
     try:
@@ -96,8 +119,11 @@ def decide_human_review_task(
                 result.refresh_status = "failed"
                 result.message = f"审核已保存，重算失败：{type(exc).__name__}"
             payload = dict(task.payload_json or {})
-            payload["refresh"] = {"status": result.refresh_status, "report_id": result.report_id,
-                                  "error": result.message}
+            payload["refresh"] = {
+                "status": result.refresh_status,
+                "report_id": result.report_id,
+                "error": result.message,
+            }
             task.payload_json = payload
             db.commit()
         return result
@@ -126,7 +152,9 @@ def _decide_human_review_task(
     except ValueError as exc:
         db.rollback()
         return HumanReviewDecisionOutput(
-            status="failed", human_review_task=task_record(task), message=str(exc),
+            status="failed",
+            human_review_task=task_record(task),
+            message=str(exc),
         )
     task.status = "ignored" if input_data.decision == "ignore" else "resolved"
     task.reviewer = input_data.reviewer
@@ -196,8 +224,9 @@ def _review_payload(
         payload["event_signal"] = signal
         payload["title"] = signal.get("title")
     if sources:
-        related = [sources[key] for key in candidate_review.get("source_signal_ids", [])
-                   if key in sources]
+        related = [
+            sources[key] for key in candidate_review.get("source_signal_ids", []) if key in sources
+        ]
         payload["item_ids"] = [source["item_id"] for source in related if source.get("item_id")]
         payload["source_citations"] = [
             source.get("classification_features", {}).get("source_citation", {})
@@ -227,7 +256,7 @@ def _find_pending_duplicate(
         )
     ).all()
     for row in rows:
-        if (row.payload_json or {}).get("idempotency_key") == target_key:
+        if _idempotency_key(review_type, row.payload_json or {}) == target_key:
             return row
     return None
 
@@ -238,10 +267,45 @@ def _idempotency_key(review_type: str, payload: dict[str, Any]) -> str:
             review_type,
             str(payload.get("event_signal_id") or ""),
             str(payload.get("candidate_event_id") or ""),
-            str(payload.get("run_id") or ""),
+            str(sorted((payload.get("match_features_json") or {}).get("guardrail_flags", []))),
         ]
     )
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+
+def reuse_reviewed_merge(db, signal, resolution):
+    """Reuse explicit decisions for the same relation, unless new facts conflict."""
+    if resolution.action not in {"candidate_review", "merge"} or any(
+        flag.endswith("_conflict") for flag in resolution.match_features_json.guardrail_flags
+    ):
+        return resolution
+    rows = db.scalars(
+        select(HumanReviewTask)
+        .where(
+            HumanReviewTask.status.in_(["resolved", "ignored"]),
+            HumanReviewTask.decision.in_(["merge_to_existing", "reject", "ignore"]),
+        )
+        .order_by(HumanReviewTask.id.desc())
+    )
+    for row in rows:
+        payload = row.payload_json or {}
+        if (
+            payload.get("event_signal_id") == signal.event_signal_id
+            and payload.get("candidate_event_id") == resolution.event_id
+        ):
+            return resolution.model_copy(
+                update={
+                    "action": "merge" if row.decision == "merge_to_existing" else "reject",
+                    "confidence": 0.98,
+                    "review_required": False,
+                    "blocks_auto_analysis": False,
+                    "blocks_publish": False,
+                    "guardrail_status": "pass",
+                    "candidate_review": None,
+                    "reason": f"reused explicit human {row.decision} decision {row.id}",
+                }
+            )
+    return resolution
 
 
 def _apply_decision_side_effect(
@@ -253,9 +317,10 @@ def _apply_decision_side_effect(
 ) -> str | None:
     candidate_event_id = payload.get("candidate_event_id")
     if input_data.decision == "merge_to_existing":
-        if not candidate_event_id or db.scalar(
-            select(Event).where(Event.event_id == str(candidate_event_id))
-        ) is None:
+        if (
+            not candidate_event_id
+            or db.scalar(select(Event).where(Event.event_id == str(candidate_event_id))) is None
+        ):
             raise ValueError("The target event for this review does not exist")
         _append_event_review_detail(db, str(candidate_event_id), payload, input_data, now=now)
         return str(candidate_event_id)
@@ -268,7 +333,7 @@ def _apply_decision_side_effect(
         event_id = _new_event_id(payload, now)
         event = Event(
             event_id=event_id,
-            title=input_data.event_title or _event_title(payload, event_id),
+            title=(input_data.event_title or "").strip() or _event_title(payload, event_id),
             event_type=None,
             lifecycle_status="active",
             confidence_score=payload.get("confidence"),
@@ -308,9 +373,9 @@ def _associate_review_items(db: Session, event_id: str, payload: dict[str, Any])
             citations[str(row.id)] = row.source_citation_json
     event.source_citations_json = list(citations.values())
     detail = dict(event.event_detail_json or {})
-    detail["source_signal_ids"] = list(dict.fromkeys(
-        [*detail.get("source_signal_ids", []), *payload.get("source_signal_ids", [])]
-    ))
+    detail["source_signal_ids"] = list(
+        dict.fromkeys([*detail.get("source_signal_ids", []), *payload.get("source_signal_ids", [])])
+    )
     event.event_detail_json = detail
 
 
@@ -341,9 +406,10 @@ def _append_event_review_detail(
     observed = _original_observed_times(db, payload)
     if observed:
         from app.services.briefing import as_utc
-        event.last_seen_at = max([*observed, *(
-            [as_utc(event.last_seen_at)] if event.last_seen_at else []
-        )])
+
+        event.last_seen_at = max(
+            [*observed, *([as_utc(event.last_seen_at)] if event.last_seen_at else [])]
+        )
     db.add(event)
 
 
@@ -382,18 +448,26 @@ def _new_event_id(payload: dict[str, Any], now: datetime) -> str:
 def _original_observed_times(db, payload):
     from app.services.briefing import as_utc
 
-    values = [as_utc(citation["fetched_at"]) for citation in payload.get("source_citations", [])
-              if citation.get("fetched_at")]
+    values = [
+        as_utc(citation["fetched_at"])
+        for citation in payload.get("source_citations", [])
+        if citation.get("fetched_at")
+    ]
     if not values:
-        rows = db.scalars(select(Item).where(Item.id.in_(
-            [int(value) for value in payload.get("item_ids", [])]
-        )))
+        rows = db.scalars(
+            select(Item).where(Item.id.in_([int(value) for value in payload.get("item_ids", [])]))
+        )
         values = [as_utc(row.fetched_at) for row in rows if row.fetched_at]
     return values
 
 
 def _event_title(payload: dict[str, Any], event_id: str) -> str:
+    for value in (payload.get("title"), (payload.get("event_signal") or {}).get("title")):
+        if isinstance(value, str) and value.strip():
+            return value.strip()
     citations = payload.get("source_citations") or []
-    if citations and isinstance(citations[0], dict) and citations[0].get("title"):
-        return str(citations[0]["title"])
-    return f"Human reviewed event {event_id}"
+    for citation in citations:
+        title = citation.get("title") if isinstance(citation, dict) else None
+        if isinstance(title, str) and title.strip():
+            return title.strip()
+    return "待命名事件"

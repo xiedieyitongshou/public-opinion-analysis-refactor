@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from typing import Literal
 
 from pydantic import BaseModel, Field, model_validator
@@ -55,9 +55,7 @@ class PlatformHeatObservation(BaseModel):
         ):
             raise ValueError("rank is only valid for the Zhihu official hot list")
         if self.topn_present is False and (
-            not self.list_complete
-            or self.collection_status != "succeeded"
-            or not self.topn_scope
+            not self.list_complete or self.collection_status != "succeeded" or not self.topn_scope
         ):
             raise ValueError("absence requires a successful, complete list")
         if self.topn_present is True and self.collection_status in {"failed", "skipped"}:
@@ -69,7 +67,7 @@ class PlatformHeatObservation(BaseModel):
 
 class PlatformTrendConfig(BaseModel):
     version: str = "day47-v1"
-    window_hours: Literal[24] = 24
+    window_hours: float = Field(default=24, gt=0, le=8760)
     expected_interval_minutes: float | None = Field(default=None, gt=0)
     max_gap_minutes: float | None = Field(default=None, gt=0)
     rank_delta_threshold: int = Field(default=1, ge=1)
@@ -95,7 +93,13 @@ class PlatformTrendInput(BaseModel):
     def validate_window_and_identity(self) -> PlatformTrendInput:
         self.window_start = utc(self.window_start)
         self.window_end = utc(self.window_end)
-        if self.window_end - self.window_start != timedelta(hours=self.config.window_hours):
+        if (
+            abs(
+                (self.window_end - self.window_start).total_seconds()
+                - self.config.window_hours * 3600
+            )
+            > 0.01
+        ):
             raise ValueError("trend window must match configured window_hours")
         if any(
             item.event_id != self.event_id or item.platform != self.platform

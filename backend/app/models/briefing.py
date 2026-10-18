@@ -19,6 +19,19 @@ from sqlalchemy.orm import Mapped, mapped_column
 from app.db.session import Base
 
 
+class OvernightTest(Base):
+    __tablename__ = "overnight_tests"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    config_json: Mapped[dict] = mapped_column(JSON, default=dict)
+    token: Mapped[str] = mapped_column(String(40))
+    status: Mapped[str] = mapped_column(String(30))
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    ends_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    rounds_json: Mapped[list] = mapped_column(JSON, default=list)
+    report_id: Mapped[int | None] = mapped_column(Integer)
+    error: Mapped[str | None] = mapped_column(Text)
+
+
 class AnalysisRun(Base):
     __tablename__ = "analysis_runs"
     run_id: Mapped[str] = mapped_column(String(100), primary_key=True)

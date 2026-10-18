@@ -69,12 +69,28 @@ def refresh_after_review(db, task, event_id):
                 )
         if _has_current_attention(event, end) and event_id not in result.event_ids:
             result.event_ids.append(event_id)
+    if run.input_json.get("report_window"):
+        from app.services.report_window import rebuild_window
+
+        return rebuild_window(db, run)
+    # Legacy overnight summaries did not preserve sampling configuration.
+    if run.run_id.startswith("overnight-") and run.run_id.endswith("-summary"):
+        from app.models.briefing import OvernightTest
+        from app.services.overnight_test import summarize
+
+        trial = db.get(OvernightTest, 1)
+        if trial and run.run_id == f"overnight-{trial.token}-summary":
+            return summarize(db, trial, end)
     collection = FetchSourceItemsOutput.model_validate(run.collection_json)
-    original_classify = db.scalar(select(AgentTask).where(
-        AgentTask.plan_id == result.plan_id, AgentTask.task_type == "classify_events",
-    ))
-    profile = ((original_classify.input_json or {}).get("matching_profile")
-               if original_classify else None) or settings.matching_profile
+    original_classify = db.scalar(
+        select(AgentTask).where(
+            AgentTask.plan_id == result.plan_id,
+            AgentTask.task_type == "classify_events",
+        )
+    )
+    profile = (
+        (original_classify.input_json or {}).get("matching_profile") if original_classify else None
+    ) or settings.matching_profile
     classified = classify_events(
         db,
         ClassifyEventsInput(
@@ -104,7 +120,9 @@ def refresh_after_review(db, task, event_id):
     run.output_json = result.model_dump(mode="json")
     db.commit()
     report = save_briefing(
-        db, generate_briefing(db, run.run_id, refresh=True), supersedes_id=run.report_id,
+        db,
+        generate_briefing(db, run.run_id, refresh=True),
+        supersedes_id=run.report_id,
     )
     run.report_id = report.id
     db.commit()

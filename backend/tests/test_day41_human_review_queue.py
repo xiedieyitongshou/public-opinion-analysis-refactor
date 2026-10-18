@@ -211,6 +211,31 @@ def test_create_new_event_generates_stable_business_event_id() -> None:
     assert task.decision == "create_new_event"
 
 
+@pytest.mark.parametrize(
+    "title_payload", [{"title": "重阳节"}, {"event_signal": {"title": "重阳节"}}]
+)
+def test_create_event_defaults_to_review_title_without_citation_title(title_payload):
+    session_factory = make_session_factory()
+    with session_factory() as session:
+        created = create_review_task(session, candidate_event_id=None, event_signal_id="holiday")
+        task_id = created["human_review_tasks"][0]["id"]
+        task = session.get(HumanReviewTask, task_id)
+        task.payload_json = {
+            **task.payload_json,
+            **title_payload,
+            "source_citations": [{"url": "https://example.test/holiday"}],
+        }
+        session.commit()
+    response = client_for(session_factory).post(
+        f"/ops/human-review/tasks/{task_id}/decide",
+        json={"decision": "create_new_event", "reviewer": "tester"},
+    )
+    assert response.status_code == 200
+    with session_factory() as session:
+        event = session.scalar(select(Event).where(Event.event_id == response.json()["event_id"]))
+        assert event.title == "重阳节"
+
+
 def test_ignore_marks_task_ignored() -> None:
     session_factory = make_session_factory()
     session = session_factory()

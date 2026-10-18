@@ -26,6 +26,7 @@ def title_facts(text: str) -> dict[str, set[str]]:
             for s in re.findall(r"(?<![A-Za-z0-9])[A-Za-z]+-?\d+[A-Za-z]*(?![A-Za-z0-9])", text)
         },
         "model_year": set(re.findall(r"(20\d{2})款", text)),
+        "episode": set(re.findall(r"第\s*(\d+)\s*[话期集章]", text)),
     }
     # A short named city/province at a clause start is much safer than any occurrence of 市.
     places = re.findall(r"(?:^|[，,：:。；;]|位于|来自)([\u4e00-\u9fff]{2,5}?)(?:全市|市|省)", text)

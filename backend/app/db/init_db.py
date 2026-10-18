@@ -22,6 +22,13 @@ def init_db(bind: Engine = engine) -> None:
         if bind.url.database not in {None, "", ":memory:"}:
             Path(bind.url.database).parent.mkdir(parents=True, exist_ok=True)
         inspector = inspect(bind)
+        if "overnight_tests" in inspector.get_table_names() and not any(
+            c["name"] == "config_json" for c in inspector.get_columns("overnight_tests")
+        ):
+            with bind.begin() as connection:
+                connection.exec_driver_sql(
+                    "ALTER TABLE overnight_tests ADD COLUMN config_json JSON DEFAULT '{}'"
+                )
         if "platform_scores" in inspector.get_table_names() and not any(
             column["name"] == "observation_id"
             for column in inspector.get_columns("platform_scores")

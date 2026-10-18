@@ -16,6 +16,7 @@ from app.schemas import (
     GuardrailRunResult,
     MatchFeatures,
 )
+from app.services.topic_discovery_policy import can_create_hotlist_topic
 
 
 def apply_merge_guardrails(
@@ -179,8 +180,12 @@ def check_event_merge_embedding_conflict(input_data: GuardrailCheckInput) -> Gua
 
 
 def check_event_merge_embedding_only(input_data: GuardrailCheckInput) -> GuardrailCheckResult:
+    if _independent_hotlist_topic(input_data):
+        return _pass("event_merge.embedding_only", input_data)
     features = _features(input_data.payload)
     config = _config(input_data.payload)
+    if features.semantic_event_support:
+        return _pass("event_merge.embedding_only", input_data)
     embedding_only = (
         features.embedding_similarity is not None
         and features.embedding_similarity >= config.embedding_auto_merge_min_similarity
@@ -200,10 +205,13 @@ def check_event_merge_embedding_only(input_data: GuardrailCheckInput) -> Guardra
 
 
 def check_event_merge_weak_signal_only(input_data: GuardrailCheckInput) -> GuardrailCheckResult:
+    if _independent_hotlist_topic(input_data):
+        return _pass("event_merge.weak_signal_only", input_data)
     signal = _signal(input_data.payload)
     features = _features(input_data.payload)
     if signal.get("is_weak_signal") and not (
-        features.id_match
+        features.semantic_event_support
+        or features.id_match
         or features.url_match
         or features.entity_overlap > 0
         or features.action_overlap > 0
@@ -217,6 +225,15 @@ def check_event_merge_weak_signal_only(input_data: GuardrailCheckInput) -> Guard
             review_required=True,
         )
     return _pass("event_merge.weak_signal_only", input_data)
+
+
+def _independent_hotlist_topic(input_data: GuardrailCheckInput) -> bool:
+    resolution = _resolution(input_data.payload)
+    return (
+        resolution.get("action") == "create"
+        and not resolution.get("matched_candidate_event_id")
+        and can_create_hotlist_topic(_signal(input_data.payload))
+    )
 
 
 def _event_merge_result(

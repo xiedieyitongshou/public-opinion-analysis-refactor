@@ -32,20 +32,32 @@ logger = logging.getLogger(__name__)
 def finish_interrupted_tasks(db, run_id, reason):
     """A worker cannot finish its own tool rows after being killed by its supervisor."""
     plans = select(AgentTask.plan_id).where(
-        or_(AgentTask.input_json["run_id"].as_string() == run_id,
-            AgentTask.input_json["briefing"]["run_id"].as_string() == run_id)
+        or_(
+            AgentTask.input_json["run_id"].as_string() == run_id,
+            AgentTask.input_json["briefing"]["run_id"].as_string() == run_id,
+        )
     )
-    ids = db.scalars(select(AgentTask.id).where(
-        AgentTask.plan_id.in_(plans), AgentTask.status.in_(["pending", "running"])
-    )).all()
+    ids = db.scalars(
+        select(AgentTask.id).where(
+            AgentTask.plan_id.in_(plans), AgentTask.status.in_(["pending", "running"])
+        )
+    ).all()
     now = datetime.now(UTC)
     if ids:
-        db.execute(update(AgentTask).where(AgentTask.id.in_(ids)).values(
-            status="failed", error_message=reason, finished_at=now,
-        ))
-        db.execute(update(AgentToolCall).where(
-            AgentToolCall.task_id.in_(ids), AgentToolCall.status.in_(["pending", "running"])
-        ).values(status="failed", error_message=reason, finished_at=now))
+        db.execute(
+            update(AgentTask)
+            .where(AgentTask.id.in_(ids))
+            .values(
+                status="failed",
+                error_message=reason,
+                finished_at=now,
+            )
+        )
+        db.execute(
+            update(AgentToolCall)
+            .where(AgentToolCall.task_id.in_(ids), AgentToolCall.status.in_(["pending", "running"]))
+            .values(status="failed", error_message=reason, finished_at=now)
+        )
     db.commit()
 
 
@@ -199,7 +211,13 @@ def execute_analysis(db, data, *, agent=None, sink=None):
                 row.collection_json = capture_collection(db, output)
                 row.error = "; ".join(output.errors)[:1000] or None
                 db.commit()
-                if output.window_end and output.status != "failed":
+                from app.services.overnight_test import is_trial_run
+
+                if (
+                    output.window_end
+                    and output.status != "failed"
+                    and not is_trial_run(db, data.run_id)
+                ):
                     from app.agents.planning import Planner
                     from app.agents.runner import AgentTaskRunner
                     from app.tools import default_tool_registry
@@ -231,20 +249,27 @@ def execute_analysis(db, data, *, agent=None, sink=None):
         finish_interrupted_tasks(db, data.run_id, row.error)
     finally:
         release_lease(db, "analysis", owner)
-    logger.info("analysis_finished run=%s status=%s report=%s", data.run_id,
-                row.status, row.report_id)
+    logger.info(
+        "analysis_finished run=%s status=%s report=%s", data.run_id, row.status, row.report_id
+    )
     return row
 
 
 def run_worker(run_id):
     configure_logging(f"worker-{run_id}")
+
     def sink(value):
         with SessionLocal() as usage_db:
             usage_db.add(RequestLog(**value))
             usage_db.commit()
-        logger.info("request run=%s source=%s operation=%s status=%s ms=%s",
-                    run_id, value["source_id"], value["operation"], value["status"],
-                    value["duration_ms"])
+        logger.info(
+            "request run=%s source=%s operation=%s status=%s ms=%s",
+            run_id,
+            value["source_id"],
+            value["operation"],
+            value["status"],
+            value["duration_ms"],
+        )
 
     with SessionLocal() as db:
         row = db.get(AnalysisRun, run_id)
@@ -282,9 +307,9 @@ class JobCoordinator:
 
     def start(self):
         with self.factory() as db:
-            for run_id in db.scalars(select(AnalysisRun.run_id).where(
-                AnalysisRun.status == "failed"
-            )).all():
+            for run_id in db.scalars(
+                select(AnalysisRun.run_id).where(AnalysisRun.status == "failed")
+            ).all():
                 finish_interrupted_tasks(db, run_id, "previous_worker_interrupted")
         self.thread = threading.Thread(target=self._loop, name="briefing-scheduler", daemon=True)
         self.thread.start()
@@ -325,6 +350,9 @@ class JobCoordinator:
         with self.factory() as db:
             if not acquire_lease(db, "coordinator", self.owner, seconds=120, now=now):
                 return
+            from app.services.overnight_test import record_resources
+
+            record_resources(db)
             if self.process:
                 if self.process.poll() is None:
                     if monotonic() - self.process_started <= settings.job_timeout_seconds:
@@ -348,15 +376,18 @@ class JobCoordinator:
             from app.services.email_settings import get_email_settings
 
             mail_config = get_email_settings(db, decrypt=False)
-            if mail_config.daily_briefing_enabled:
+            from app.services.overnight_test import tick as tick_overnight
+
+            overnight_active = tick_overnight(db, now)
+            if mail_config.daily_briefing_enabled and not overnight_active:
                 from app.services.daily_schedule import tick_daily
 
                 tick_daily(db, now=now, allow_queue=scheduling_open)
-            elif mail_config.email_schedule_enabled:
+            elif mail_config.email_schedule_enabled and not overnight_active:
                 from app.services.briefing_email import dispatch_daily
 
                 dispatch_daily(db, now=now)
-            if settings.scheduler_enabled and scheduling_open:
+            if settings.scheduler_enabled and scheduling_open and not overnight_active:
                 latest = db.scalar(select(AnalysisRun).order_by(AnalysisRun.started_at.desc()))
                 if latest is None or now - as_utc(latest.started_at) >= timedelta(
                     minutes=settings.sampling_interval_minutes
@@ -384,7 +415,8 @@ class JobCoordinator:
                 )
                 if getattr(self.process, "stdout", None) is not None:
                     self.output_thread = threading.Thread(
-                        target=self._capture_output, args=(self.process, queued.run_id),
+                        target=self._capture_output,
+                        args=(self.process, queued.run_id),
                         daemon=True,
                     )
                     self.output_thread.start()

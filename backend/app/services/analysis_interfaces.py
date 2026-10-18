@@ -67,24 +67,29 @@ def prepare_source_signals(
             continue
         exclusion = (
             official_publication_exclusion(item.published_at, window_end)
-            if item.source_type == "official_news" else None
+            if item.source_type == "official_news"
+            else None
         )
         if item.source_type == "official_news":
-            item = item.model_copy(update={
-                "normalized": {
-                    **item.normalized,
-                    "hotspot_freshness": {
-                        "eligible": exclusion is None,
-                        "basis": "published_at",
-                        "window_start": (window_end - timedelta(hours=24)).isoformat(),
-                        "window_end": window_end.isoformat(),
-                        "exclusion_reason": exclusion,
+            item = item.model_copy(
+                update={
+                    "normalized": {
+                        **item.normalized,
+                        "hotspot_freshness": {
+                            "eligible": exclusion is None,
+                            "basis": "published_at",
+                            "window_start": (window_end - timedelta(hours=24)).isoformat(),
+                            "window_end": window_end.isoformat(),
+                            "exclusion_reason": exclusion,
+                        },
                     },
-                },
-                "quality_flags": list(dict.fromkeys([
-                    *item.quality_flags, *([exclusion, "audit_only"] if exclusion else [])
-                ])),
-            })
+                    "quality_flags": list(
+                        dict.fromkeys(
+                            [*item.quality_flags, *([exclusion, "audit_only"] if exclusion else [])]
+                        )
+                    ),
+                }
+            )
         source = db.scalar(select(Source).where(Source.name == item.source_name))
         if source is None:
             source = Source(
@@ -310,8 +315,12 @@ def resolve_and_persist_events(
         result.quality_flags.extend(resolved.quality_flags)
         if resolved.event_resolutions:
             rejected = resolved.event_resolutions[0]
-            if not automatic_enrichment and rejected.action == "reject" and not (
-                rejected.match_features_json.id_match or rejected.match_features_json.url_match
+            if (
+                not automatic_enrichment
+                and rejected.action == "reject"
+                and not (
+                    rejected.match_features_json.id_match or rejected.match_features_json.url_match
+                )
             ):
                 # A conflicting existing event rejects that association, not the new observation.
                 # Keep the guardrail audit produced above, then create a separate event.
@@ -325,6 +334,13 @@ def resolve_and_persist_events(
         if not resolved.event_resolutions:
             continue
         resolution = resolved.event_resolutions[0]
+        from app.services.human_review import reuse_reviewed_merge
+
+        resolution = reuse_reviewed_merge(db, signal, resolution)
+        if resolution.action == "reject" and resolution.reason.startswith("reused explicit human"):
+            result.event_resolutions.append(resolution)
+            result.rejected_event_count += 1
+            continue
         if automatic_enrichment and (
             parent_event_id is None
             or resolution.action != "merge"
@@ -438,7 +454,8 @@ def resolve_and_persist_events(
         )
     ).all()
     result.event_ids = sorted(
-        event.event_id for event in tracked
+        event.event_id
+        for event in tracked
         if data.discovery_mode != "automatic" or _has_current_attention(event, window_end)
     )
     result.review_payload = {
@@ -480,7 +497,8 @@ def _resolved_discovery_parent(
         parent_key = enrichment.parent_candidate_id
         parent_signal_id = enrichment.parent_signal_id
         possible_parents = [
-            source for source in sources.values()
+            source
+            for source in sources.values()
             if source.source_id == expected_source_id
             and source.platform == enrichment.platform
             and source.source_signal_id in accepted_discovery_sources
@@ -523,14 +541,16 @@ def _review_unattached_enrichment(
         guardrail_flags=resolution.match_features_json.guardrail_flags,
         source_signal_ids=signal.source_signal_ids,
     )
-    return resolution.model_copy(update={
-        "action": "candidate_review",
-        "event_id": parent_event_id or resolution.event_id,
-        "matched_candidate_event_id": parent_event_id,
-        "reason": reason,
-        "review_required": True,
-        "candidate_review": review,
-    })
+    return resolution.model_copy(
+        update={
+            "action": "candidate_review",
+            "event_id": parent_event_id or resolution.event_id,
+            "matched_candidate_event_id": parent_event_id,
+            "reason": reason,
+            "review_required": True,
+            "candidate_review": review,
+        }
+    )
 
 
 def classify_events(db: Session, data: ClassifyEventsInput) -> ClassifyEventsOutput:
@@ -557,8 +577,11 @@ def classify_events(db: Session, data: ClassifyEventsInput) -> ClassifyEventsOut
         for value in data.event_resolutions
         if value.action in {"create", "merge"} and not value.review_required
     }
-    budget = [min(settings.official_search_max_events, data.official_search_budget)
-              if data.official_search_budget is not None else settings.official_search_max_events]
+    budget = [
+        min(settings.official_search_max_events, data.official_search_budget)
+        if data.official_search_budget is not None
+        else settings.official_search_max_events
+    ]
     for event in db.scalars(
         select(Event).where(Event.event_id.in_(data.event_ids)).order_by(Event.id)
     ).all():
@@ -567,7 +590,12 @@ def classify_events(db: Session, data: ClassifyEventsInput) -> ClassifyEventsOut
         community = any(item.source.platform in {"zhihu", "weibo"} for item in event.items)
         if data.official_search_enabled and community:
             support = enrich_event_support(
-                db, event, pool, run_id=data.run_id, config=config, budget=budget,
+                db,
+                event,
+                pool,
+                run_id=data.run_id,
+                config=config,
+                budget=budget,
                 window_end=data.window_end,
             )
         else:
@@ -600,7 +628,8 @@ def classify_events(db: Session, data: ClassifyEventsInput) -> ClassifyEventsOut
         )
         if event.items and all(item.source.source_type == "official_news" for item in event.items):
             current_items = [
-                item for item in event.items
+                item
+                for item in event.items
                 if official_publication_exclusion(item.published_at, data.window_end) is None
             ]
             event.event_detail_json = {

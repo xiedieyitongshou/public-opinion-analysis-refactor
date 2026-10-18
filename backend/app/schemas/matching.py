@@ -41,6 +41,7 @@ class EventMatchConfig(BaseModel):
     use_reranker: bool = False
     retrieval_limit: int = Field(default=20, ge=1, le=100)
     rerank_auto_merge_min_score: float = Field(default=0.85, ge=0.0, le=1.0)
+    rerank_reject_below: float = Field(default=0.10, ge=0.0, le=1.0)
     keyword_overlap_high: float = Field(default=0.55, ge=0.0, le=1.0)
     ngram_overlap_high: float = Field(default=0.50, ge=0.0, le=1.0)
     bm25_candidate_min_score: float = Field(default=0.45, ge=0.0, le=1.0)
@@ -69,6 +70,7 @@ class MatchFeatures(BaseModel):
     action_overlap: float = Field(default=0.0, ge=0.0, le=1.0)
     object_overlap: float | None = None
     time_distance_hours: float | None = Field(default=None, ge=0.0)
+    semantic_event_support: bool = False
     hard_constraints_passed: bool = False
     guardrail_flags: list[str] = Field(default_factory=list)
     matched_by: list[MatchMethod] = Field(default_factory=list)

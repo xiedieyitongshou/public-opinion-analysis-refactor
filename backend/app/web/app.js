@@ -401,6 +401,12 @@ async function listReviews(tasks) {
     reason.placeholder = "处理理由（可选）";
     reason.setAttribute("aria-label", "处理理由");
     actions.append(reason);
+    const eventTitle = node("input");
+    eventTitle.value = payload.title || payload.event_signal?.title || "";
+    eventTitle.placeholder = "独立事件名称（可修改）";
+    eventTitle.setAttribute("aria-label", "独立事件名称");
+    eventTitle.maxLength = 500;
+    actions.append(eventTitle);
     const choices = [
       ["merge_to_existing", "确认归并"],
       ["create_new_event", "单独建事件"],
@@ -415,6 +421,7 @@ async function listReviews(tasks) {
           decision,
           decision_reason: reason.value,
           reviewer: "admin",
+          ...(decision === "create_new_event" ? { event_title: eventTitle.value.trim() || null } : {}),
         });
         show(
           result.status === "failed" || result.refresh_status === "failed"
@@ -512,6 +519,18 @@ function listDeliveries(rows) {
     }),
   );
 }
+function renderOvernight(night) {
+  night = night || {status: "idle", rounds: []};
+  const activeNight = ["running", "stopping"].includes(night.status);
+  $("overnight-start").disabled = activeNight;
+  $("overnight-stop").hidden = !activeNight;
+  $("collect").disabled = activeNight;
+  const nightLabels = {idle:"尚未启动",running:"运行中",stopping:"等待当前轮次完成后汇总",completed:"已完成",stopped:"已停止",failed:"失败"};
+  $("overnight-status").textContent = `${nightLabels[night.status] || night.status} · ${night.rounds.length}/${night.planned_rounds ?? "持续"} 轮已安排${night.ends_at && night.config?.duration_hours !== null ? ` · 计划结束 ${time(night.ends_at)}` : ""}${night.error ? ` · ${night.error}` : ""}`;
+  if (night.report_id) $("overnight-status").append(" · ", link("打开测试简报", `/api/reports/${night.report_id}/html`));
+  table($("overnight-rounds"), ["轮次", "状态", "异常"], night.rounds.map(r => [r.slot + 1, labels[r.status] || r.status, r.error || "—"]));
+}
+
 async function load() {
   const responses = await Promise.all([
     api("/api/dashboard"),
@@ -525,6 +544,7 @@ async function load() {
   ]);
   const [dash, reports, usage, jobs, reviews, deliveries, dailyJobs, recipients] = responses;
   dashboard = dash;
+  renderOvernight(dash.overnight);
   $("login").hidden = true;
   $("workspace").hidden = false;
   $("logout").hidden = false;
@@ -638,6 +658,21 @@ $("collect").addEventListener("click", () =>
   }),
 );
 $("refresh").addEventListener("click", () => busy($("refresh"), load));
+$("overnight-start").addEventListener("click", () => busy($("overnight-start"), async () => {
+  await api("/api/overnight-test", {
+      duration_hours: $("session-duration").value ? Number($("session-duration").value) : null,
+      interval_minutes: Number($("session-interval").value),
+      generate_report: $("session-finish").value !== "none",
+      report_scope: $("session-finish").value === "last24h" ? "last24h" : "session"
+    });
+  show("采集任务已启动，按所选配置运行，不发送邮件。");
+  await load();
+}));
+$("overnight-stop").addEventListener("click", () => busy($("overnight-stop"), async () => {
+  await api("/api/overnight-test/stop", {});
+  show("已请求结束，当前轮次完成后汇总。");
+  await load();
+}));
 document.querySelectorAll("[data-tab]").forEach((b) =>
   b.addEventListener("click", () => {
     if (b.dataset.tab === "mail-settings") loadMailSettings().catch(e => show(e.message, true));
@@ -733,3 +768,29 @@ $("mail-test-form").addEventListener("submit", event => {
     $("mail-test-result").textContent = `${result.status}：${result.message}`;
   });
 });
+
+setInterval(async () => {
+  if ($("workspace").hidden || document.hidden) return;
+  try { renderOvernight(await api("/api/overnight-test")); } catch (_) {}
+}, 30000);
+
+function sessionEstimate() {
+  const hours = Number($("session-duration").value), minutes = Number($("session-interval").value);
+  $("session-estimate").textContent = hours && minutes ? "计划 " + (Math.floor(hours * 60 / minutes) + 1) + " 轮；每轮采集两个平台并调用增强接口，实际用量取决于话题数与重试。启动检查另调用一次微博搜索。" : "持续运行，直到手动停止；会持续消耗接口额度。";
+}
+["session-duration","session-interval"].forEach(id => $(id).addEventListener("input", sessionEstimate));
+$("session-preset").addEventListener("click", () => {
+  $("session-duration").value = 8; $("session-interval").value = 60;
+  $("session-finish").value = "session"; sessionEstimate();
+});
+$("report-window").addEventListener("click", () => busy($("report-window"), async () => {
+  const data = {scope: $("report-scope").value};
+  if (data.scope === "custom") {
+    if (!$("report-start").value || !$("report-end").value) throw new Error("请选择完整起止时间");
+    data.window_start = new Date($("report-start").value).toISOString();
+    data.window_end = new Date($("report-end").value).toISOString();
+  }
+  await api("/api/reports/window", data);
+  show("已生成本地简报，没有发送邮件。"); await load();
+}));
+sessionEstimate();

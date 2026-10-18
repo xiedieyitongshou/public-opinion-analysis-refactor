@@ -14,8 +14,15 @@ from app.core.config import settings
 from app.db.session import get_db
 from app.models import DailyReport, Event, HumanReviewTask
 from app.models.briefing import AnalysisRun, DailyBriefingJob, EmailDelivery, ReportRevision
+from app.schemas.collection_session import CollectionSessionConfig, ReportWindowInput
 from app.schemas.display import DailyBriefing
-from app.services.briefing import approve_report, generate_briefing, save_briefing, source_health
+from app.services.briefing import (
+    approve_report,
+    as_utc,
+    generate_briefing,
+    save_briefing,
+    source_health,
+)
 from app.services.briefing_email import (
     email_ready,
     reconcile_sent_report,
@@ -28,6 +35,7 @@ from app.services.briefing_render import render_report, render_text
 from app.services.email_recipients import active_recipients
 from app.services.email_settings import get_email_settings
 from app.services.human_review import task_record
+from app.services.overnight_test import describe as describe_overnight
 from app.services.request_usage import usage_summary
 
 router = APIRouter(prefix="/api", dependencies=[Depends(require_admin)], tags=["briefing"])
@@ -70,6 +78,7 @@ def dashboard(db: Db, request: Request):
     mail_config = get_email_settings(db, decrypt=False)
     coordinator = getattr(request.app.state, "coordinator", None)
     return {
+        "overnight": describe_overnight(db),
         "latest_run": latest.run_id if latest else None,
         "sources": source_health(latest.collection_json or {}, datetime.now(UTC)) if latest else [],
         "pending_reviews": db.scalar(
@@ -139,8 +148,94 @@ class JobInput(BaseModel):
     )
 
 
+@router.get("/overnight-test")
+def overnight_status(db: Db):
+    from app.services.overnight_test import describe
+
+    return describe(db)
+
+
+@router.post("/overnight-test", status_code=202)
+def overnight_start(db: Db, data: CollectionSessionConfig | None = None):
+    from app.services.overnight_test import describe, start
+
+    try:
+        start(db, config=data)
+    except ValueError as exc:
+        raise HTTPException(409, str(exc)) from exc
+    return describe(db)
+
+
+@router.post("/reports/window", status_code=201)
+def create_window_report(db: Db, data: ReportWindowInput):
+    from datetime import timedelta
+    from uuid import uuid4
+
+    from app.services.briefing_jobs import acquire_lease, release_lease
+    from app.services.overnight_test import ACTIVE, current
+    from app.services.report_window import build_window
+
+    trial = current(db)
+    if trial and trial.status in ACTIVE:
+        raise HTTPException(409, "请先结束采集，再生成汇总简报")
+    owner = "report-window:" + uuid4().hex
+    if not acquire_lease(db, "analysis", owner, seconds=900):
+        raise HTTPException(409, "采集或审核正在运行，请稍后重试")
+    try:
+        end = data.window_end or datetime.now(UTC)
+        run_ids = None
+        interval = 60
+        rid = None
+        if data.scope == "session":
+            if not trial:
+                raise ValueError("尚无采集任务")
+            start = as_utc(trial.started_at) - timedelta(microseconds=1)
+            ids = [s["run_id"] for s in trial.rounds_json if s.get("run_id")]
+            run_ids = ids
+            ends = [
+                as_utc(r.finished_at)
+                for key in ids
+                if (r := db.get(AnalysisRun, key)) and r.finished_at
+            ]
+            end = max(ends) if ends else end
+            rid = f"overnight-{trial.token}-summary"
+            interval = (trial.config_json or {}).get("interval_minutes", 60)
+        else:
+            start = data.window_start if data.scope == "custom" else end - timedelta(hours=24)
+            if trial:
+                interval = (trial.config_json or {}).get("interval_minutes", 60)
+        report_id = build_window(
+            db,
+            start=start,
+            end=end,
+            run_ids=run_ids,
+            interval_minutes=interval,
+            run_id=rid,
+            label={"session": "本次运行", "last24h": "过去24小时", "custom": "自定义窗口"}[
+                data.scope
+            ],
+        )
+        return report_info(db, get_report(db, report_id))
+    except ValueError as exc:
+        raise HTTPException(409, str(exc)) from exc
+    finally:
+        release_lease(db, "analysis", owner)
+
+
+@router.post("/overnight-test/stop")
+def overnight_stop(db: Db):
+    from app.services.overnight_test import stop
+
+    return stop(db)
+
+
 @router.post("/jobs", status_code=202)
 def create_job(db: Db, data: JobInput):
+    from app.services.overnight_test import ACTIVE, current
+
+    trial = current(db)
+    if trial and trial.status in ACTIVE:
+        raise HTTPException(409, "夜间测试运行中，请等待结束或先停止测试")
     try:
         row = queue_analysis(db, default_analysis_input(data.run_id))
     except ValueError as exc:
@@ -153,13 +248,18 @@ def reports(db: Db, limit: int = Query(30, ge=1, le=200)):
     # Limit editions, not revisions: repeated reviews must not hide older rounds.
     latest_ids = select(func.max(ReportRevision.report_id)).group_by(ReportRevision.run_id)
     versioned_ids = select(ReportRevision.report_id)
-    query = select(DailyReport).where(or_(
-        DailyReport.id.in_(latest_ids), DailyReport.id.not_in(versioned_ids),
-    )).order_by(DailyReport.id.desc()).limit(limit)
-    return [
-        report_info(db, row)
-        for row in db.scalars(query)
-    ]
+    query = (
+        select(DailyReport)
+        .where(
+            or_(
+                DailyReport.id.in_(latest_ids),
+                DailyReport.id.not_in(versioned_ids),
+            )
+        )
+        .order_by(DailyReport.id.desc())
+        .limit(limit)
+    )
+    return [report_info(db, row) for row in db.scalars(query)]
 
 
 @router.get("/reports/latest")
@@ -181,11 +281,15 @@ def report_history(db: Db, report_id: int):
     revision = db.get(ReportRevision, report_id)
     if revision is None:
         return []
-    return [report_info(db, row) for row in db.scalars(
-        select(DailyReport).join(ReportRevision, ReportRevision.report_id == DailyReport.id)
-        .where(ReportRevision.run_id == revision.run_id, DailyReport.id != report_id)
-        .order_by(DailyReport.id.desc())
-    )]
+    return [
+        report_info(db, row)
+        for row in db.scalars(
+            select(DailyReport)
+            .join(ReportRevision, ReportRevision.report_id == DailyReport.id)
+            .where(ReportRevision.run_id == revision.run_id, DailyReport.id != report_id)
+            .order_by(DailyReport.id.desc())
+        )
+    ]
 
 
 @router.get("/reports/{report_id}/html", response_class=HTMLResponse)

@@ -34,13 +34,14 @@ def assemble_hotspot_classification(
     official_support_result: OfficialSupportResult | None = None,
     event_resolution: EventResolution | None = None,
     window_end: datetime | None = None,
+    window_start: datetime | None = None,
     persist: bool = True,
     require_observation_metadata: bool = False,
 ) -> HotspotClassificationAssembly:
     """Assemble and optionally persist the Day 46 classification for one event."""
 
     effective_window_end = window_end or datetime.now(UTC)
-    window_start = effective_window_end - timedelta(hours=WINDOW_HOURS)
+    window_start = window_start or effective_window_end - timedelta(hours=WINDOW_HOURS)
     current_scores = [
         score
         for score in platform_scores
@@ -135,7 +136,9 @@ def assemble_hotspot_classification_from_db(
     official_support_result: OfficialSupportResult | None = None,
     event_resolution: EventResolution | None = None,
     window_end: datetime | None = None,
+    window_start: datetime | None = None,
     persist: bool = True,
+    allowed_observation_ids: set[str] | None = None,
 ) -> HotspotClassificationAssembly:
     """Read the current rolling 24h PlatformScore rows and assemble classification."""
 
@@ -143,6 +146,10 @@ def assemble_hotspot_classification_from_db(
     platform_scores = db.scalars(
         select(PlatformScore).where(PlatformScore.event_id == event.id)
     ).all()
+    if allowed_observation_ids is not None:
+        platform_scores = [
+            s for s in platform_scores if s.observation_id in allowed_observation_ids
+        ]
     result = assemble_hotspot_classification(
         run_id=run_id,
         event=event,
@@ -151,6 +158,7 @@ def assemble_hotspot_classification_from_db(
         official_support_result=official_support_result,
         event_resolution=event_resolution,
         window_end=effective_window_end,
+        window_start=window_start,
         persist=persist,
         require_observation_metadata=True,
     )
@@ -214,10 +222,10 @@ def _derive_platform_presence(
             presence.official_source = True
             reasons.append(f"source_signal:{signal.source_signal_id}:official_source")
 
-    if (
-        official_support_result is not None
-        and official_support_result.official_support_status in {"supported", "weak_supported"}
-    ):
+    if official_support_result is not None and official_support_result.official_support_status in {
+        "supported",
+        "weak_supported",
+    }:
         presence.official_source = True
         reasons.append("official_support_result:official_source")
 
@@ -299,9 +307,7 @@ def _classification_detail_json(
         "evidence_summary": evidence_summary.model_dump(mode="json"),
         "matched_by": list(event_resolution.matched_by) if event_resolution else [],
         "match_features_json": (
-            event_resolution.match_features_json.model_dump(mode="json")
-            if event_resolution
-            else {}
+            event_resolution.match_features_json.model_dump(mode="json") if event_resolution else {}
         ),
         "missing_fields": missing_fields,
         "rejected_reasons": _rejected_reasons(event_resolution),
@@ -379,7 +385,7 @@ def _accepted_source_signals(
         if signal_time is None or not _in_window(signal_time, window_start, window_end):
             continue
         if signal.source_type == "official_news" and official_publication_exclusion(
-            signal.published_at, window_end
+            signal.published_at, window_end, window_start
         ):
             continue
         accepted.append(signal)

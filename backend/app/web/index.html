@@ -47,6 +47,25 @@
           </div>
           <button id="collect" class="primary">采集新一期 ↗</button>
         </section>
+        <section class="panel">
+          <h2>采集任务</h2>
+<p class="muted">立即采集，再按间隔运行。请保持电脑唤醒、Docker 运行及微博国内直连。不会自动发送邮件。</p>
+<div class="actions">
+<label>时长（小时，留空持续）<input id="session-duration" type="number" min="1" max="168" value="8"></label>
+<label>间隔（分钟）<input id="session-interval" type="number" min="30" max="180" value="60"></label>
+<label>结束后<select id="session-finish"><option value="session">生成本次运行简报</option><option value="last24h">生成过去24小时简报</option><option value="none">仅保存数据</option></select></label>
+</div>
+<p id="session-estimate" class="muted"></p>
+<div class="actions"><button id="session-preset">夜间8小时预设</button><button id="overnight-start" class="primary">开始采集</button><button id="overnight-stop" hidden>结束任务</button></div>
+<div class="actions">
+<label>简报范围<select id="report-scope"><option value="session">本次运行</option><option value="last24h">过去24小时</option><option value="custom">自定义</option></select></label>
+<label>起始时间<input id="report-start" type="datetime-local"></label>
+<label>截止时间<input id="report-end" type="datetime-local"></label>
+<button id="report-window">根据已有数据生成简报</button>
+</div>
+<p id="overnight-status" role="status">尚未启动</p>
+          <div id="overnight-rounds" class="table-wrap"></div>
+        </section>
         <nav class="tabs" aria-label="工作台导航">
           <button data-tab="briefings" class="active">简报</button>
           <button data-tab="operations">运行与用量</button

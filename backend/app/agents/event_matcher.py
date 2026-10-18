@@ -23,6 +23,7 @@ from app.schemas import (
 )
 from app.services.match_documents import MatchDocument, canonical_ids, event_document
 from app.services.matching_engine import Comparison, bm25_scores, compare_many, retrieve
+from app.services.topic_discovery_policy import can_create_hotlist_topic
 
 TOKEN_RE = re.compile(r"[\w\u4e00-\u9fff]+", re.UNICODE)
 
@@ -143,6 +144,18 @@ class EventMatcher:
         if ranked:
             best = ranked[0]
             action, reason, review_required = self._decide(best, signal=signal, config=config)
+            if (
+                action == "merge"
+                and not (best.features.id_match or best.features.url_match)
+                and len(ranked) > 1
+                and ranked[1].confidence >= config.auto_merge_confidence_threshold
+                and best.confidence - ranked[1].confidence < 0.03
+            ):
+                action, reason, review_required = (
+                    "candidate_review",
+                    "multiple similarly strong event candidates",
+                    True,
+                )
             event_id = (
                 best.candidate.event_id
                 if action in {"merge", "candidate_review", "reject"}
@@ -157,7 +170,8 @@ class EventMatcher:
                 reason=reason,
                 matched_by=best.features.matched_by,
                 match_features_json=best.features,
-                matched_candidate_event_id=best.candidate.event_id,
+                # A rejected association is not a target for a new topic's review.
+                matched_candidate_event_id=best.candidate.event_id if action != "create" else None,
                 review_required=review_required,
             )
 
@@ -170,7 +184,8 @@ class EventMatcher:
             reason="no acceptable existing event candidate; create stable event_id",
             matched_by=[],
             match_features_json=MatchFeatures(semantic_quality_flags=retrieval["quality_flags"]),
-            review_required=signal.is_weak_signal,
+            review_required=signal.is_weak_signal
+            and not can_create_hotlist_topic(signal.model_dump(mode="json")),
         )
 
     def rerank_candidate(
@@ -218,10 +233,22 @@ class EventMatcher:
             return "reject", "explicit event facts conflict", False
         if features.id_match or features.url_match:
             return "merge", "hard ID or URL match reuses existing event_id", False
-        if features.title_containment and signal.is_weak_signal:
+        if (
+            features.rerank_score is not None
+            and features.rerank_score < config.rerank_reject_below
+            and not features.title_containment
+        ):
+            return "create", "reranker below rejection threshold; keep separate topic", False
+        if (
+            features.title_containment
+            and signal.is_weak_signal
+            and not features.semantic_event_support
+        ):
             return "candidate_review", "weak title match needs event-specific evidence", True
         if result.confidence >= config.auto_merge_confidence_threshold:
-            if signal.is_weak_signal and not _has_entity_or_time_support(features):
+            if signal.is_weak_signal and not (
+                features.semantic_event_support or _has_entity_or_time_support(features)
+            ):
                 return "candidate_review", "weak signal requires human review", True
             return "merge", result.reason, False
         if result.confidence >= config.candidate_review_confidence_threshold:
@@ -360,6 +387,31 @@ def build_match_features(
         entity_overlap=entity_overlap,
         action_overlap=action_overlap,
         time_distance_hours=time_distance,
+        semantic_event_support=bool(
+            comparison.rerank_score is not None
+            and comparison.rerank_score >= 0.95
+            and len(normalize_text(signal.title)) >= 8
+            and len(normalize_text(candidate.title)) >= 8
+            and (
+                title_containment
+                or char_ngram_overlap(signal.title, candidate.title) >= 0.30
+                or (
+                    char_ngram_overlap(signal.title, candidate.title) >= 0.10
+                    and len(
+                        set(re.findall(r"\d{2,}", signal.title))
+                        & set(re.findall(r"\d{2,}", candidate.title))
+                    )
+                    >= 2
+                )
+                or (
+                    char_ngram_overlap(signal.title, candidate.title) >= 0.15
+                    and keyword_overlap >= 0.25
+                    and bm25_score >= 0.60
+                )
+            )
+            and not any(f.endswith("_conflict") for f in flags)
+            and not comparison.quality_flags
+        ),
         hard_constraints_passed=hard_constraints_passed,
         guardrail_flags=dedupe(flags),
         matched_by=dedupe(matched_by),
@@ -403,6 +455,8 @@ def score_match_confidence(
             score = max(score, config.candidate_review_confidence_threshold)
         elif features.rerank_score < 0.20 and not features.title_containment:
             score = min(score, config.candidate_review_confidence_threshold - 0.01)
+    if features.semantic_event_support:
+        return clip(features.rerank_score)
     if signal.is_weak_signal:
         score -= 0.10
     if "embedding_only_without_hard_constraint" in features.guardrail_flags:
