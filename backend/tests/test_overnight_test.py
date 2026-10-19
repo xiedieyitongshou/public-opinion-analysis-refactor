@@ -4,11 +4,12 @@ import pytest
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session
 from sqlalchemy.pool import StaticPool
+from test_hotspot_analysis import OTHER_TITLE, TITLE, request
+from test_hotspot_analysis import environment as environment
 
 from app.db.init_db import init_db
 from app.models.briefing import AnalysisRun
 from app.services import overnight_test as night
-from test_hotspot_analysis import environment as environment, request, TITLE, OTHER_TITLE
 
 NOW = datetime(2026, 10, 18, 14, tzinfo=UTC)
 
@@ -43,7 +44,10 @@ def test_nine_hourly_slots_no_duplicates_and_no_more_after_end(db, monkeypatch):
         run = db.scalar(select(AnalysisRun).where(AnalysisRun.status == 'queued'))
         assert run.input_json['trend_configs']['weibo']['expected_interval_minutes'] == 60
         assert run.input_json['official_search_enabled'] is False
-        assert run.input_json['collection']['source_ids'] == ['zhihu_hot_list', 'zhihu_search', 'weibo_rsshub_hot_search']
+        assert run.input_json['collection']['source_ids'] == [
+            'zhihu_hot_list', 'zhihu_search', 'weibo_rsshub_hot_search',
+            'chinanews_scroll_rss', 'people_politics_rss', 'xinhua_politics_rss',
+        ]
         night.tick(db, at)
         assert len(night.current(db).rounds_json) == hour + 1
         finish(db)
@@ -96,7 +100,7 @@ def test_preflight_failure_does_not_start(db, monkeypatch):
 
 def test_final_report_includes_earlier_event_without_sending_or_round_drafts(environment):
     from app.models import DailyReport
-    from app.models.briefing import OvernightTest, EmailDelivery
+    from app.models.briefing import EmailDelivery, OvernightTest
     from app.services.briefing_jobs import execute_analysis
     db, clock, _ = environment
     trial = OvernightTest(id=1, token='offline', status='running', started_at=clock.time,

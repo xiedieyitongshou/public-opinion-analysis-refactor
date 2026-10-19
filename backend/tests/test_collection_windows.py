@@ -91,3 +91,25 @@ def test_latest_report_link_follows_revision(db):
     )
     db.commit()
     assert night.describe(db)["report_id"] == 2
+
+
+def test_official_rss_enters_session_report_as_f_category(environment, monkeypatch):
+    from test_hotspot_analysis import register_official_feed
+
+    db, clock, _ = environment
+    start = clock.time - timedelta(seconds=1)
+    register_official_feed(environment, monkeypatch, published_at=clock.time)
+    run = execute_analysis(
+        db, request("session-official", clock.time, sources=["chinanews_scroll_rss"])
+    )
+    assert run.status in ("partial", "succeeded")
+    report_id = build_window(
+        db, start=start, end=clock.time + timedelta(minutes=1),
+        run_ids=[run.run_id], run_id="session-official-summary",
+    )
+    report = db.get(DailyReport, report_id)
+    cards = [c for s in report.briefing_json["sections"] for c in s["event_cards"]]
+    assert any(c["title"] == TITLE for c in cards)
+    summary = db.get(AnalysisRun, "session-official-summary")
+    classification = summary.output_json["classifications"][0]["classification"]
+    assert classification["priority_category"] == "F_official_only"

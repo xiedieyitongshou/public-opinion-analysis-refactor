@@ -182,11 +182,7 @@ def tick(db, now):
             slot = len(slots)
             run_id = f"overnight-{row.token}-{slot}"
             data = default_analysis_input(run_id)
-            data.collection.source_ids = [
-                "zhihu_hot_list",
-                "zhihu_search",
-                "weibo_rsshub_hot_search",
-            ]
+            # Keep shared daily RSS sources, including official news.
             data.official_search_enabled = False
             data.trend_configs = {
                 p: PlatformTrendConfig(expected_interval_minutes=config.interval_minutes)
