@@ -43,7 +43,8 @@ def test_nine_hourly_slots_no_duplicates_and_no_more_after_end(db, monkeypatch):
         assert night.tick(db, at)
         run = db.scalar(select(AnalysisRun).where(AnalysisRun.status == 'queued'))
         assert run.input_json['trend_configs']['weibo']['expected_interval_minutes'] == 60
-        assert run.input_json['official_search_enabled'] is False
+        from app.core.config import settings
+        assert run.input_json['official_search_enabled'] == settings.official_search_enabled
         assert run.input_json['collection']['source_ids'] == [
             'zhihu_hot_list', 'zhihu_search', 'weibo_rsshub_hot_search',
             'chinanews_scroll_rss', 'people_politics_rss', 'xinhua_politics_rss',

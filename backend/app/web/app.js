@@ -351,6 +351,7 @@ async function listReviews(tasks) {
     panel.append(
       node("p", `REVIEW ${task.id} · ${time(task.created_at)}`, "eyebrow"),
       node("h2", payload.title || payload.event_signal?.title || "候选事件"),
+      node("p", `累计涉及 ${new Set([...(payload.run_ids || []), payload.run_id].filter(Boolean)).size} 轮采集`, "muted"),
       node("p", payload.reason || "需要人工核对是否属于同一事件", "muted"),
     );
     const comparison = node("div", null, "review-comparison");

@@ -124,6 +124,7 @@ class Settings(BaseSettings):
     weibo_relevance_reject_below: float = Field(default=0.10, ge=0, le=0.5)
     weibo_relevance_accept_at: float = Field(default=0.80, gt=0.5, le=1)
     official_search_enabled: bool = True
+    official_support_lookback_days: int = Field(default=7, ge=1, le=30)
     official_search_cache_minutes: int = Field(default=30, ge=0, le=1440)
     official_search_limit: int = Field(default=5, ge=1, le=20)
     official_search_max_events: int = Field(default=3, ge=0, le=20)

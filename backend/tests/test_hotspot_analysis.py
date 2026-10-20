@@ -536,6 +536,14 @@ def test_old_or_undated_official_reports_are_audited_without_creating_current_at
     assert prepared.output_json["excluded_count"] == 1
     if with_community:
         classification = result.classifications[0]
+        if published == START - timedelta(hours=24):
+            assert classification.classification.priority_category == (
+                "D_single_platform_with_official"
+            )
+            assert classification.classification_detail_json[
+                "official_support_detail"
+            ]["prior_report_item_ids"]
+            return
         assert classification.classification.priority_category == "E_single_platform_only"
         assert classification.classification_input.platform_presence.official_source is False
         exclusions = classification.classification_detail_json[
@@ -573,8 +581,11 @@ def test_official_expiry_uses_publication_and_refetch_does_not_extend_it(
     assert expired.status != "failed", expired.errors
     if with_community:
         classification = expired.classifications[0]
-        assert classification.classification.priority_category == "E_single_platform_only"
-        assert not expired.classifications[0].classification_input.platform_presence.official_source
+        assert classification.classification.priority_category == "D_single_platform_with_official"
+        assert expired.classifications[0].classification_input.platform_presence.official_source
+        assert classification.classification_detail_json[
+            "official_support_detail"
+        ]["prior_report_item_ids"]
         assert expired.analyses[0].platforms["zhihu"].current_topn_present is False
     else:
         assert expired.event_ids == expired.classifications == []

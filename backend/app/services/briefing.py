@@ -87,6 +87,19 @@ def source_health(collection: dict, window_end: datetime) -> list[dict]:
     return health
 
 
+def _prior_reference_allowed(detail, item_id, published_at, start, end):
+    official = detail.get("official_support_detail") or {}
+    scope = official.get("support_window") or {}
+    if (
+        str(item_id) not in official.get("prior_report_item_ids", [])
+        or not published_at
+        or not scope.get("start")
+        or not scope.get("end")
+    ):
+        return False
+    return as_utc(scope["end"]) == end and as_utc(scope["start"]) < as_utc(published_at) <= start
+
+
 def _citations(db, event, assembly, start, end):
     # Only accepted classification members and accepted official matches may be cited.
     detail = assembly.classification_detail_json
@@ -101,7 +114,10 @@ def _citations(db, event, assembly, start, end):
     observed_times = detail.get("citation_observed_at", {})
     for item in rows:
         signal = (item.normalized_json or {}).get("source_signal", {})
-        if signal.get("audit_only") or signal.get("contributes_to_classification") is False:
+        is_prior = _prior_reference_allowed(detail, item.id, item.published_at, start, end)
+        if (
+            signal.get("audit_only") or signal.get("contributes_to_classification") is False
+        ) and not is_prior:
             continue
         is_official = item.source.source_type == "official_news"
         observed_at = observed_times.get(str(item.id)) or item.fetched_at
@@ -109,7 +125,11 @@ def _citations(db, event, assembly, start, end):
             continue
         if not is_official and not start < as_utc(observed_at) <= end:
             continue
-        if is_official and official_publication_exclusion(item.published_at, end, start):
+        if (
+            is_official
+            and not is_prior
+            and official_publication_exclusion(item.published_at, end, start)
+        ):
             continue
         flags = list(item.quality_flags_json or [])
         if not item.url:
@@ -127,6 +147,7 @@ def _citations(db, event, assembly, start, end):
                 platform=item.source.platform,
                 fetched_at=as_utc(observed_at),
                 published_at=item.published_at,
+                is_prior_report=is_prior,
                 quality_flags=flags,
                 raw_metrics_used=item.raw_metrics_json or {},
                 citation_role="official_support" if is_official else "supporting",
@@ -173,9 +194,15 @@ def generate_briefing(db: Session, run_id: str, *, refresh=False) -> DailyBriefi
         platforms = [
             name
             for key, name in PLATFORMS.items()
-            if (presence.official_source if key == "official" else getattr(presence, key + "_topn"))
+            if (
+                any(c.source_type == "official_news" and not c.is_prior_report for c in citations)
+                if key == "official"
+                else getattr(presence, key + "_topn")
+            )
         ]
         summary = window_label + "见于" + "、".join(platforms or ["待确认来源"]) + "。"
+        if any(c.is_prior_report for c in citations):
+            summary += "官媒依据含此前报道，不代表官媒本期新发布报道。"
         if not presence.official_source:
             summary += "话题信息来自平台讨论，暂无已接纳的官媒依据。"
         cards.append(
@@ -213,7 +240,10 @@ def generate_briefing(db: Session, run_id: str, *, refresh=False) -> DailyBriefi
             card
             for card in cards
             if (
-                card.platform_presence.official_source
+                any(
+                    c.source_type == "official_news" and not c.is_prior_report
+                    for c in card.source_citations
+                )
                 if platform == "official"
                 else getattr(card.platform_presence, platform + "_topn")
             )
@@ -347,6 +377,13 @@ def review_briefing(briefing: DailyBriefing) -> dict:
                     citation.source_type == "official_news"
                     and end
                     and (official_publication_exclusion(citation.published_at, end, start))
+                    and not (
+                        citation.is_prior_report
+                        and (card.platform_presence.zhihu_topn or card.platform_presence.weibo_topn)
+                        and _prior_reference_allowed(
+                            detail, citation.item_id, citation.published_at, start, end
+                        )
+                    )
                 ):
                     errors.append(f"{card.event_id}: 官媒发布时间不符合窗口")
     if not any(section.event_cards for section in briefing.sections):

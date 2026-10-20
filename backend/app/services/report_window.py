@@ -33,6 +33,7 @@ def rebuild_window(db, run):
             if key:
                 by_hash[key].append(item)
     members, observations = {}, set()
+    official_pool = {}
     events = {}
     for original in runs:
         if original is None:
@@ -45,6 +46,8 @@ def rebuild_window(db, run):
                 observations.add(source["observation_id"])
             for raw in source.get("normalized_items", []):
                 for item in by_hash.get(raw.get("content_hash"), []):
+                    if item.source.source_type == "official_news":
+                        official_pool[item.id] = item
                     data = (item.normalized_json or {}).get("source_signal")
                     if not item.event or not data:
                         continue
@@ -93,6 +96,34 @@ def rebuild_window(db, run):
                 for s in official
             ],
         )
+        if any(s.platform in {"zhihu", "weibo"} for s in signals):
+            from app.schemas.official_support import OfficialSupportConfig
+            from app.services.official_support import match_official_support
+
+            # Revalidate only evidence captured by the selected original analyses.
+            # Never search externally while rebuilding a historical report.
+            evidence_ids = set(official_pool)
+            for original in runs:
+                if not original:
+                    continue
+                for assembly in (original.output_json or {}).get("classifications", []):
+                    if assembly.get("event_id") == eid:
+                        detail = assembly.get("classification_detail_json", {})
+                        evidence_ids.update(
+                            int(v)
+                            for v in detail.get("official_support_detail", {}).get(
+                                "matched_item_ids", []
+                            )
+                            if str(v).isdigit()
+                        )
+            support = match_official_support(
+                event,
+                [item for item in items if item.id in evidence_ids],
+                OfficialSupportConfig(),
+                window_start=start,
+                window_end=end,
+                allow_prior_reports=True,
+            )
         assembly = assemble_hotspot_classification_from_db(
             db=db,
             run_id=run.run_id,

@@ -120,7 +120,9 @@ def render_report(briefing: DailyBriefing, *, email=False, status="draft") -> st
             category = card.priority_category.split("_")[0]
             cites = "".join(
                 f'<a href="{e(c.url, quote=True)}" rel="noopener noreferrer" style="color:{TEAL};text-decoration:underline">'
-                f"{e(c.source_name)}</a> · "
+                f"{e(c.source_name)}</a>"
+                + (f"（此前报道 · {e(stamp(c.published_at, briefing.timezone))}）"
+                   if c.is_prior_report else "") + " · "
                 for c in card.source_citations
                 if safe_url(c.url)
             ).removesuffix(" · ")
@@ -175,7 +177,10 @@ def render_text(briefing: DailyBriefing) -> str:
             if section.section_type == "platform_hotspots":
                 lines.extend([trend_label(card, section.key), card.summary])
                 lines.extend(
-                    f"{c.source_name}: {c.url}" for c in card.source_citations if safe_url(c.url)
+                    f"{c.source_name}"
+                    + (f"（此前报道 · {stamp(c.published_at, briefing.timezone)}）"
+                       if c.is_prior_report else "")
+                    + f": {c.url}" for c in card.source_citations if safe_url(c.url)
                 )
         if not section.event_cards:
             lines.append("本期暂无")

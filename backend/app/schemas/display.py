@@ -59,6 +59,7 @@ class SourceCitation(BaseModel):
     source_origin: SourceOrigin
     platform: Platform
     published_at: datetime | str | None = None
+    is_prior_report: bool = False
     fetched_at: datetime | str
     quality_flags: list[str] = Field(default_factory=list)
     raw_metrics_used: dict[str, Any] = Field(default_factory=dict)

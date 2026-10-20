@@ -184,8 +184,13 @@ def test_cached_official_search_expires_by_publication_not_fetch_or_citation():
                 "source_type": "official_news",
             }]
             db.commit()
-            expired = enrich_event_support(
+            previous = enrich_event_support(
                 db, event, [], window_end=now + timedelta(hours=24), **common
+            )
+            assert previous.official_support_status == "supported"
+            assert previous.official_support_detail.prior_report_item_ids
+            expired = enrich_event_support(
+                db, event, [], window_end=now + timedelta(days=7), **common
             )
             assert len(calls) == 2
             assert expired.official_support_status == "not_found"

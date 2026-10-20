@@ -275,7 +275,9 @@ def enrich_event_support(
     from app.services.official_paths import build_official_query, enrich_support_detail
     from app.services.official_support import match_official_support
 
-    support = match_official_support(event, pool, config, window_end=window_end)
+    support = match_official_support(
+        event, pool, config, window_end=window_end, allow_prior_reports=True
+    )
     if support.official_support_status in {"supported", "weak_supported"}:
         return support
     query = build_official_query(event)
@@ -313,7 +315,9 @@ def enrich_event_support(
             "results": [result.audit() for result in results],
             "item_ids": sorted({row.id for row in rows}),
         }
-    support = match_official_support(event, [*(pool or []), *rows], config, window_end=window_end)
+    support = match_official_support(
+        event, [*(pool or []), *rows], config, window_end=window_end, allow_prior_reports=True
+    )
     results = audit.get("results", [])
     succeeded = any(result["status"] == "succeeded" for result in results)
     failed = any(result["status"] != "succeeded" for result in results)

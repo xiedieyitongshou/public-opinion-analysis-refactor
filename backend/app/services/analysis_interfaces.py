@@ -336,7 +336,14 @@ def resolve_and_persist_events(
         resolution = resolved.event_resolutions[0]
         from app.services.human_review import reuse_reviewed_merge
 
-        resolution = reuse_reviewed_merge(db, signal, resolution)
+        resolution = reuse_reviewed_merge(
+            db, signal, resolution,
+            sources=[
+                sources[key].model_dump(mode="json") for key in signal.source_signal_ids
+                if key in sources
+            ],
+            run_id=data.run_id,
+        )
         if resolution.action == "reject" and resolution.reason.startswith("reused explicit human"):
             result.event_resolutions.append(resolution)
             result.rejected_event_count += 1
@@ -599,7 +606,9 @@ def classify_events(db: Session, data: ClassifyEventsInput) -> ClassifyEventsOut
                 window_end=data.window_end,
             )
         else:
-            support = match_official_support(event, pool, config, window_end=data.window_end)
+            support = match_official_support(
+                event, pool, config, window_end=data.window_end, allow_prior_reports=community
+            )
         degraded = [
             flag
             for flag in support.quality_flags

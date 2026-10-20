@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 from collections.abc import Iterable
 from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime, timedelta, timezone
 from typing import Any
 
 from app.schemas import (
@@ -15,7 +15,7 @@ from app.schemas import (
     OfficialSupportResult,
 )
 from app.services.hotspot_freshness import official_publication_exclusion
-from app.services.match_documents import event_document, item_document
+from app.services.match_documents import as_datetime, event_document, item_document
 from app.services.matching_engine import Comparison, compare_many, retrieve
 
 OFFICIAL_SIGNAL_ROLES = {"evidence_signal", "event_signal", "mixed_signal"}
@@ -121,37 +121,113 @@ def match_official_support(
     config: OfficialSupportConfig | None = None,
     *,
     window_end: datetime | None = None,
+    window_start: datetime | None = None,
+    allow_prior_reports: bool = False,
 ) -> OfficialSupportResult:
     """Optionally scope official attention to publications in the analysis window."""
     exclusions = []
+    from app.core.config import settings
+
+    attention_start = window_start or (window_end - timedelta(hours=24) if window_end else None)
+    support_start = (
+        min(attention_start, window_end - timedelta(days=settings.official_support_lookback_days))
+        if window_end and allow_prior_reports
+        else attention_start
+    )
+    target = event_document(event)
     current_items = None if official_items is None else list(official_items)
     if window_end is not None and current_items is not None:
         eligible = []
         for item in current_items:
             evidence = _evidence_item(item)
-            reason = official_publication_exclusion(evidence.published_at, window_end)
+            reason = official_publication_exclusion(
+                evidence.published_at, window_end, support_start
+            )
+            if (
+                not reason
+                and allow_prior_reports
+                and target.event_time
+                and as_datetime(evidence.published_at)
+                .astimezone(timezone(timedelta(hours=8)))
+                .date()
+                < target.event_time.astimezone(timezone(timedelta(hours=8))).date()
+            ):
+                reason = "official_report_predates_event"
             if reason:
-                exclusions.append({
-                    "item_id": evidence.item_id,
-                    "url": evidence.url,
-                    "published_at": (
-                        evidence.published_at.isoformat() if evidence.published_at else None
-                    ),
-                    "reason": reason,
-                })
+                exclusions.append(
+                    {
+                        "item_id": evidence.item_id,
+                        "url": evidence.url,
+                        "published_at": (
+                            evidence.published_at.isoformat() if evidence.published_at else None
+                        ),
+                        "reason": reason,
+                    }
+                )
             else:
                 eligible.append(item)
         current_items = eligible
+    effective_config = config or OfficialSupportConfig()
+    if allow_prior_reports:
+        effective_config = effective_config.model_copy(
+            update={
+                "time_window_days": settings.official_support_lookback_days,
+            }
+        )
     result = _match_official_support(
-        event, current_items, config, allow_citation_snapshot=window_end is None
+        event, current_items, effective_config, allow_citation_snapshot=window_end is None
     )
+    if allow_prior_reports and attention_start:
+        accepted = []
+        for ref in result.official_references:
+            prior = ref.published_at and as_datetime(ref.published_at) <= attention_start
+            features = ref.match_features
+            specific = (
+                (features.get("title_containment") and len(target.title.strip()) >= 8)
+                or (
+                    features.get("entity_overlap", 0) > 0
+                    and features.get("action_overlap", 0) > 0
+                    and features.get("ngram_overlap", 0) >= 0.45
+                )
+                or (
+                    (features.get("rerank_score") or 0) >= 0.95
+                    and features.get("ngram_overlap", 0) >= 0.30
+                )
+            )
+            if prior and (not specific or not ref.url):
+                exclusions.append(
+                    {"item_id": ref.item_id, "reason": "prior_report_insufficient_event_identity"}
+                )
+            else:
+                if prior and not target.event_time:
+                    ref.quality_flags.append("prior_report_event_time_unknown")
+                accepted.append(ref)
+        result.official_references = accepted
+        result.official_support_detail.matched_item_ids = [r.item_id for r in accepted if r.item_id]
+        if not accepted and result.official_support_status in {"supported", "weak_supported"}:
+            result.official_support_status = "not_found"
+            result.official_support_detail.match_quality = "none"
+        result.official_support_detail.official_item_count = len(accepted)
+        result.official_support_detail.source_coverage_count = len(
+            {r.source_name for r in accepted}
+        )
     if window_end is not None:
         result.official_support_detail.attention_window = {
-            "start": (window_end - timedelta(hours=24)).isoformat(),
+            "start": attention_start.isoformat(),
             "end": window_end.isoformat(),
             "basis": "published_at",
         }
         result.official_support_detail.freshness_exclusions = exclusions
+        result.official_support_detail.support_window = {
+            "start": support_start.isoformat(),
+            "end": window_end.isoformat(),
+            "basis": "published_at",
+        }
+        result.official_support_detail.prior_report_item_ids = [
+            ref.item_id
+            for ref in result.official_references
+            if ref.item_id and ref.published_at and as_datetime(ref.published_at) <= attention_start
+        ]
     return result
 
 

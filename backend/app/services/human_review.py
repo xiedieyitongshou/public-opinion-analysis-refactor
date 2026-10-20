@@ -17,6 +17,7 @@ from app.schemas import (
     HumanReviewDecisionOutput,
     HumanReviewTaskRecord,
 )
+from app.services.review_identity import merge_evidence, relation_key, topic_identity
 
 
 def create_human_review_tasks(
@@ -32,11 +33,13 @@ def create_human_review_tasks(
             message="No candidate_review payloads were provided.",
         )
 
+    consolidate_pending_reviews(db)
     created_count = 0
     updated_count = 0
     records: list[HumanReviewTaskRecord] = []
     for candidate_review in candidate_reviews:
         payload = _review_payload(input_data, candidate_review)
+        payload = identity_payload(db, payload)
         existing = _find_pending_duplicate(db, input_data.review_type, payload)
         if existing is None:
             task = HumanReviewTask(
@@ -53,27 +56,8 @@ def create_human_review_tasks(
         else:
             task = existing
             old = task.payload_json or {}
-            payload["run_ids"] = list(
-                dict.fromkeys([*old.get("run_ids", []), old.get("run_id"), payload.get("run_id")])
-            )
-            payload["item_ids"] = list(
-                dict.fromkeys([*old.get("item_ids", []), *payload.get("item_ids", [])])
-            )
-            payload["source_signal_ids"] = list(
-                dict.fromkeys(
-                    [*old.get("source_signal_ids", []), *payload.get("source_signal_ids", [])]
-                )
-            )
-            citations = {
-                str(c.get("item_id") or c.get("url")): c for c in old.get("source_citations", [])
-            }
-            citations.update(
-                {
-                    str(c.get("item_id") or c.get("url")): c
-                    for c in payload.get("source_citations", [])
-                }
-            )
-            payload["source_citations"] = list(citations.values())
+            payload = merge_evidence(old, payload)
+            payload["run_id"] = old.get("run_id") or payload.get("run_id")
             task.payload_json = payload
             task.priority = input_data.priority
             db.add(task)
@@ -143,6 +127,7 @@ def _decide_human_review_task(
             message=f"Human review task is not pending: {task.status}",
         )
 
+    consolidate_pending_reviews(db, preferred_id=task.id)
     payload = dict(task.payload_json or {})
     now = datetime.now(UTC)
     try:
@@ -228,6 +213,10 @@ def _review_payload(
             sources[key] for key in candidate_review.get("source_signal_ids", []) if key in sources
         ]
         payload["item_ids"] = [source["item_id"] for source in related if source.get("item_id")]
+        payload["identity_sources"] = [
+            {k: source.get(k) for k in ("url", "title", "source_type", "fetched_at")}
+            for source in related
+        ]
         payload["source_citations"] = [
             source.get("classification_features", {}).get("source_citation", {})
             for source in related
@@ -248,7 +237,6 @@ def _find_pending_duplicate(
     review_type: str,
     payload: dict[str, Any],
 ) -> HumanReviewTask | None:
-    target_key = payload.get("idempotency_key")
     rows = db.scalars(
         select(HumanReviewTask).where(
             HumanReviewTask.review_type == review_type,
@@ -256,24 +244,85 @@ def _find_pending_duplicate(
         )
     ).all()
     for row in rows:
-        if _idempotency_key(review_type, row.payload_json or {}) == target_key:
+        if same_pending_relation(db, review_type, row.payload_json or {}, payload):
             return row
     return None
 
 
 def _idempotency_key(review_type: str, payload: dict[str, Any]) -> str:
-    raw = "|".join(
-        [
-            review_type,
-            str(payload.get("event_signal_id") or ""),
-            str(payload.get("candidate_event_id") or ""),
-            str(sorted((payload.get("match_features_json") or {}).get("guardrail_flags", []))),
+    return relation_key(review_type, payload)
+
+
+def identity_payload(db, payload):
+    """Hydrate old rows without changing their original per-run identifiers."""
+    payload = dict(payload)
+    if not payload.get("identity_sources") and payload.get("item_ids"):
+        rows = db.scalars(select(Item).where(Item.id.in_(payload["item_ids"])))
+        payload["identity_sources"] = [
+            {"url": row.url, "title": row.title, "source_type": row.source.source_type}
+            for row in rows
         ]
-    )
-    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+    payload["topic_identity"] = topic_identity(payload)
+    payload["identity_version"] = 1
+    return payload
 
 
-def reuse_reviewed_merge(db, signal, resolution):
+def _within_topic_window(db, left, right):
+    if not any(k.startswith("weibo:") for k in topic_identity(left)):
+        return True
+    from app.models.briefing import AnalysisRun
+    from app.services.briefing import as_utc
+
+    times = []
+    for p in (left, right):
+        run = db.get(AnalysisRun, p.get("run_id")) if p.get("run_id") else None
+        value = run.started_at if run else p.get("observed_at")
+        if not value:
+            return left.get("run_id") == right.get("run_id")
+        times.append(as_utc(value))
+    return abs((times[1] - times[0]).total_seconds()) <= 24 * 3600
+
+
+def same_pending_relation(db, review_type, left, right):
+    left, right = identity_payload(db, left), identity_payload(db, right)
+    return (relation_key(review_type, left) == relation_key(review_type, right)
+            and _within_topic_window(db, left, right))
+
+
+def consolidate_pending_reviews(db, preferred_id=None):
+    """Archive duplicate queue entries; keep original evidence and canonical task linkage."""
+    rows = list(db.scalars(select(HumanReviewTask).where(
+        HumanReviewTask.status == "pending",
+        HumanReviewTask.review_type == "event_merge_candidate",
+    ).order_by(HumanReviewTask.id)))
+    if preferred_id is not None:
+        rows.sort(key=lambda row: (row.id != preferred_id, row.id))
+    groups = []
+    archived = 0
+    for row in rows:
+        payload = identity_payload(db, row.payload_json or {})
+        for canonical in groups:
+            if not same_pending_relation(db, row.review_type, canonical.payload_json, payload):
+                continue
+            combined = merge_evidence(canonical.payload_json, payload)
+            # Preserve the first observation as the anchor for the weak topic's 24h scope.
+            combined["run_id"] = canonical.payload_json.get("run_id")
+            combined["grouped_review_ids"] = list(dict.fromkeys(
+                [*canonical.payload_json.get("grouped_review_ids", []), row.id]
+            ))
+            canonical.payload_json = combined
+            row.payload_json = {**payload, "grouped_into_review_id": canonical.id}
+            row.status = "cancelled"
+            archived += 1
+            break
+        else:
+            row.payload_json = payload
+            groups.append(row)
+    db.flush()
+    return archived
+
+
+def reuse_reviewed_merge(db, signal, resolution, sources=None, run_id=None):
     """Reuse explicit decisions for the same relation, unless new facts conflict."""
     if resolution.action not in {"candidate_review", "merge"} or any(
         flag.endswith("_conflict") for flag in resolution.match_features_json.guardrail_flags
@@ -283,15 +332,20 @@ def reuse_reviewed_merge(db, signal, resolution):
         select(HumanReviewTask)
         .where(
             HumanReviewTask.status.in_(["resolved", "ignored"]),
-            HumanReviewTask.decision.in_(["merge_to_existing", "reject", "ignore"]),
+            HumanReviewTask.decision.in_(["merge_to_existing", "reject"]),
         )
         .order_by(HumanReviewTask.id.desc())
     )
     for row in rows:
-        payload = row.payload_json or {}
+        payload = identity_payload(db, row.payload_json or {})
+        current = {
+            "event_signal_id": signal.event_signal_id,
+            "identity_sources": sources or [], "run_id": run_id,
+        }
         if (
-            payload.get("event_signal_id") == signal.event_signal_id
+            topic_identity(payload) == topic_identity(current)
             and payload.get("candidate_event_id") == resolution.event_id
+            and _within_topic_window(db, payload, current)
         ):
             return resolution.model_copy(
                 update={
@@ -425,8 +479,9 @@ def _resolve_related_guardrail_violations(
         select(GuardrailViolation).where(GuardrailViolation.resolved.is_(False))
     ).all()
     for row in rows:
-        same_signal = event_signal_id and row.event_signal_id == event_signal_id
-        same_event = candidate_event_id and row.event_id == candidate_event_id
+        signal_ids = {*payload.get("event_signal_ids", []), event_signal_id} - {None}
+        same_signal = row.event_signal_id in signal_ids
+        same_event = not signal_ids and candidate_event_id and row.event_id == candidate_event_id
         if same_signal or same_event:
             row.resolved = True
             row.resolved_at = now
