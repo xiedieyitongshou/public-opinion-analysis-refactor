@@ -20,6 +20,7 @@ from app.schemas.display import BriefingSection, DailyBriefing, EventCard, Sourc
 from app.schemas.guardrails import GuardrailCheckInput
 from app.services.email_settings import get_email_settings
 from app.services.hotspot_freshness import official_publication_exclusion
+from app.services.topic_content import summary_from_items
 
 CATEGORIES = {
     "A": "跨平台 · 有官媒依据",
@@ -201,6 +202,20 @@ def generate_briefing(db: Session, run_id: str, *, refresh=False) -> DailyBriefi
             )
         ]
         summary = window_label + "见于" + "、".join(platforms or ["待确认来源"]) + "。"
+        summary_items = list(
+            db.scalars(
+                select(Item).where(
+                    Item.id.in_(
+                        [
+                            int(c.item_id)
+                            for c in citations
+                            if c.item_id and str(c.item_id).isdigit() and not c.is_prior_report
+                        ]
+                    )
+                )
+            )
+        )
+        source_summary, excerpt_sources = summary_from_items(summary_items)
         if any(c.is_prior_report for c in citations):
             summary += "官媒依据含此前报道，不代表官媒本期新发布报道。"
         if not presence.official_source:
@@ -211,6 +226,7 @@ def generate_briefing(db: Session, run_id: str, *, refresh=False) -> DailyBriefi
                 title=event.title,
                 title_is_source_quote=any(citation.title == event.title for citation in citations),
                 summary=summary,
+                source_summary=source_summary,
                 priority_category=classification.priority_category,
                 category_rank=classification.category_rank,
                 platform_presence=presence,
@@ -229,12 +245,30 @@ def generate_briefing(db: Session, run_id: str, *, refresh=False) -> DailyBriefi
                 ),
                 source_citations=citations,
                 platform_heat_analysis=heat.get(event.event_id),
-                classification_detail=assembly.classification_detail_json,
+                classification_detail={
+                    **assembly.classification_detail_json,
+                    "summary_excerpts": excerpt_sources,
+                },
                 quality_flags=classification.quality_flags,
                 risk_notes=classification.limitations,
             )
         )
     sections = []
+    shared = [
+        card
+        for card in cards
+        if card.platform_presence.zhihu_topn and card.platform_presence.weibo_topn
+    ]
+    if shared:
+        sections.append(
+            BriefingSection(
+                key="shared",
+                section_type="platform_hotspots",
+                title="跨平台共同关注",
+                event_cards=sorted(shared, key=lambda card: (card.title, card.event_id)),
+                notes=["知乎与微博均有已接纳话题；热度仍分别在平台内比较。"],
+            )
+        )
     for platform, label in PLATFORMS.items():
         selected = [
             card

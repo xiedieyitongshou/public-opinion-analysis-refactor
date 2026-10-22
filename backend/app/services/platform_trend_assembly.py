@@ -19,6 +19,7 @@ from app.schemas.platform_trend import (
     PlatformTrendConfig,
     PlatformTrendInput,
 )
+from app.services.match_documents import canonical_ids
 from app.services.platform_heat import item_to_platform_heat_signal, score_platform_signals
 from app.services.platform_trend import analyze_platform_trend
 
@@ -28,6 +29,46 @@ MAIN_SOURCE_PLATFORMS = {
 }
 AUX_SOURCE_PLATFORMS = {"zhihu_search": "zhihu"}
 SOURCE_PLATFORMS = {**MAIN_SOURCE_PLATFORMS, **AUX_SOURCE_PLATFORMS}
+
+
+def zhihu_answer_metrics(seed, collection):
+    """Use accepted, unique answers to this question from this collection only."""
+    question_ids = set(canonical_ids([seed.get("url") or ""]))
+    answers = {}
+    signatures = set()
+    for result in collection.results:
+        if (
+            result.source_id != "zhihu_search" or result.status != "succeeded"
+            or result.validate_only or result.dry_run
+            or (result.run_id and collection.run_id and result.run_id != collection.run_id)
+        ):
+            continue
+        signatures.add(result.sampling_signature or "unknown")
+        for item in result.normalized_items:
+            normalized = item.get("normalized") or {}
+            relation = normalized.get("relation") or {}
+            flags = item.get("quality_flags") or []
+            if (
+                relation.get("decision") != "accepted" or relation.get("audit_only")
+                or {"audit_only", "low_relevance"} & set(flags)
+                or "/answer/" not in (item.get("url") or "")
+                or not question_ids.intersection(canonical_ids([item.get("url") or ""]))
+            ):
+                continue
+            # Repeated query hits must not count the same answer twice.
+            identity = (item.get("url") or "").split("?")[0].rstrip("/")
+            metrics = item.get("raw_metrics") or {}
+            previous = answers.setdefault(identity, {})
+            for key in ("vote_count", "comment_count"):
+                value = metrics.get(key)
+                if isinstance(value, (int, float)) and value >= 0:
+                    previous[key] = max(previous.get(key, 0), value)
+    metrics = {
+        key: sum(values[key] for values in answers.values() if key in values)
+        for key in ("vote_count", "comment_count")
+        if any(key in values for values in answers.values())
+    }
+    return metrics, sorted(answers), sorted(signatures)
 
 
 def record_collection_round(
@@ -56,13 +97,14 @@ def record_collection_round(
         return 0
     result_count = 0
     config = score_config or PlatformHeatConfig()
-    config_version = (
-        "day44-v1:" + hashlib.sha256(config.model_dump_json().encode("utf-8")).hexdigest()[:12]
-    )
+    config_hash = hashlib.sha256(config.model_dump_json().encode("utf-8")).hexdigest()[:12]
     for result in collection.results:
         platform = SOURCE_PLATFORMS.get(result.source_id)
         if platform is None or result.validate_only or result.dry_run:
             continue
+        config_version = (
+            "zhihu-answers-v2:" if result.source_id == "zhihu_hot_list" else "day44-v1:"
+        ) + config_hash
         if result.observed_at is None or result.observation_id is None:
             raise ValueError("collection must provide observed_at and observation_id")
         hashes = [item.get("content_hash") for item in result.normalized_items]
@@ -111,10 +153,20 @@ def record_collection_round(
                 rank = min(ranks) if ranks else None
             heat = None
             component_signature = None
+            extra_refs = []
+            sampling_signature = result.sampling_signature
             if hit_items and result.status == "succeeded":
-                signals = [
-                    item_to_platform_heat_signal(item, event_id=event_id) for item in hit_items
-                ]
+                signals = []
+                for item in hit_items:
+                    signal = item_to_platform_heat_signal(item, event_id=event_id)
+                    if result.source_id == "zhihu_hot_list":
+                        metrics, refs, signatures = zhihu_answer_metrics(item, collection)
+                        signal = signal.model_copy(update=metrics)
+                        extra_refs.extend(refs)
+                        sampling_signature = hashlib.sha256(
+                            repr((result.sampling_signature, signatures)).encode()
+                        ).hexdigest()
+                    signals.append(signal)
                 heat = score_platform_signals(signals, config, observed_at=result.observed_at)[0]
                 if platform == "weibo":
                     heat = heat.model_copy(
@@ -149,11 +201,11 @@ def record_collection_round(
                 rank=rank,
                 platform_heat=heat,
                 score_config_version=config_version if heat else None,
-                sampling_signature=result.sampling_signature,
+                sampling_signature=sampling_signature,
                 score_component_signature=component_signature,
-                source_refs=[
+                source_refs=list(dict.fromkeys([
                     str(item.get("url") or item.get("content_hash")) for item in hit_items
-                ],
+                ] + extra_refs)),
                 quality_flags=flags,
             )
             result_count += record_platform_observations(

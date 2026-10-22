@@ -147,7 +147,14 @@ class CollectorRegistry:
                     for item in (parent.normalized_items if parent else [])
                     if item.get("title") and item.get("url")
                 ][:int(config.params.get("max_queries", 3))]
+            from app.services.run_progress import emit_progress
+
+            emit_progress(source=source_id, status="running")
             result = collector.collect(config, db=db)
+            emit_progress(
+                source=source_id, status=result.status, returned_count=result.returned_count,
+                duration_ms=result.duration_ms, error=result.error_message,
+            )
             results.append(result)
             if result.status == "failed":
                 unavailable_source_ids.append(source_id)

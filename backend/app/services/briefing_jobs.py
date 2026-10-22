@@ -183,6 +183,7 @@ def probe_quota(db):
 
 def execute_analysis(db, data, *, agent=None, sink=None):
     from app.agents.analysis import HotspotAnalysisAgent
+    from app.services.run_progress import progress_scope
 
     row = db.get(AnalysisRun, data.run_id) or queue_analysis(db, data)
     if row.run_id != data.run_id:
@@ -198,7 +199,7 @@ def execute_analysis(db, data, *, agent=None, sink=None):
     db.commit()
     logger.info("analysis_started run=%s profile=%s", data.run_id, data.matching_profile)
     try:
-        with request_scope(
+        with progress_scope(db.get_bind(), data.run_id), request_scope(
             data.run_id, settings.request_limits, settings.job_timeout_seconds, sink=sink
         ) as scope:
             try:

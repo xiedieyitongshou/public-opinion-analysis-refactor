@@ -139,6 +139,10 @@ def test_natural_cross_platform_and_official_views(environment, monkeypatch):
     report = run_report(environment, sources=["zhihu_hot_list", "weibo_rsshub_hot_search"])
     briefing = DailyBriefing.model_validate(report.briefing_json)
     assert briefing.event_count == 1
+    assert briefing.sections[0].key == "shared"
+    assert len(briefing.sections[0].event_cards) == 1
+    assert "知乎问题：" in briefing.sections[0].event_cards[0].source_summary
+    assert "跨平台共同关注" in render_text(briefing)
     assert next(section for section in briefing.sections if section.key == "C").event_cards
     assert next(section for section in briefing.sections if section.key == "weibo").event_cards
     assert next(section for section in briefing.sections if section.key == "zhihu").event_cards

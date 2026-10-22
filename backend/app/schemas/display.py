@@ -108,6 +108,7 @@ class EventCard(BaseModel):
     title: str
     title_is_source_quote: bool = False
     summary: str
+    source_summary: str = ""
     domain: str | None = None
     priority_category: PriorityCategory = "unknown"
     category_rank: int | None = None

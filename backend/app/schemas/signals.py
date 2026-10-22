@@ -108,6 +108,7 @@ class EventSignal(BaseModel):
     event_signal_id: str
     source_signal_ids: list[str]
     title: str
+    summary: str = ""
     keywords: list[str] = Field(default_factory=list)
     entities: list[str] = Field(default_factory=list)
     event_type: str | None = None

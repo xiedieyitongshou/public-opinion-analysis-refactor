@@ -23,6 +23,8 @@ def stamp(value, timezone):
 
 
 def trend_label(card, platform):
+    if platform == "shared":
+        return "知乎：" + trend_label(card, "zhihu") + "；微博：" + trend_label(card, "weibo")
     if platform == "official":
         count = len(
             {c.source_name for c in card.source_citations if c.source_type == "official_news"}
@@ -126,11 +128,18 @@ def render_report(briefing: DailyBriefing, *, email=False, status="draft") -> st
                 for c in card.source_citations
                 if safe_url(c.url)
             ).removesuffix(" · ")
+            excerpts = " · ".join(
+                f'<a href="{e(row["url"], quote=True)}" rel="noopener noreferrer">摘要原文</a>'
+                for row in card.classification_detail.get("summary_excerpts", [])
+                if safe_url(row.get("url"))
+            )
+            label = ("知乎：" + trend_label(card, "zhihu") + "；微博：" + trend_label(card, "weibo")) if key == "shared" else trend_label(card, key)
             body.append(f'''<article id="{e(anchor)}" style="padding:16px 0 20px;border-bottom:1px solid #e1e8e9">
-                <p style="color:{TEAL};font-size:12px;margin:0 0 9px">{e(category)} 类 · {e(trend_label(card, key))}</p>
+                <p style="color:{TEAL};font-size:12px;margin:0 0 9px">{e(category)} 类 · {e(label)}</p>
                 <h4 style="font-size:18px;line-height:1.6;margin:0 0 9px">{e(display_title(card))}</h4>
+                <p style="font-size:14px;line-height:1.8;margin:0 0 8px">{e(card.source_summary)}</p>
                 <p style="font-size:14px;line-height:1.8;margin:0;color:{MUTED}">{e(card.summary)}</p>
-                <p style="font-size:12px;line-height:1.8;margin:12px 0 0">依据 / {cites}</p></article>''')
+                <p style="font-size:12px;line-height:1.8;margin:12px 0 0">依据 / {cites} {excerpts}</p></article>''')
     body.append(
         '<h2 style="font-size:23px;margin:38px 0 8px">02 / 事件的来源分类</h2>'
         f'<p style="color:{MUTED};font-size:13px">按已接纳的来源组合分类，同一平台的热榜与搜索仍算一个平台。</p>'
@@ -175,7 +184,12 @@ def render_text(briefing: DailyBriefing) -> str:
         for card in section.event_cards:
             lines.append(f"[{card.priority_category.split('_')[0]}] {display_title(card)}")
             if section.section_type == "platform_hotspots":
-                lines.extend([trend_label(card, section.key), card.summary])
+                lines.extend([trend_label(card, section.key), card.source_summary, card.summary])
+                lines.extend(
+                    "摘要原文: " + row["url"]
+                    for row in card.classification_detail.get("summary_excerpts", [])
+                    if safe_url(row.get("url"))
+                )
                 lines.extend(
                     f"{c.source_name}"
                     + (f"（此前报道 · {stamp(c.published_at, briefing.timezone)}）"

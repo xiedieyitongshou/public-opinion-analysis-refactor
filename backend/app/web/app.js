@@ -32,6 +32,13 @@ const names = {
   zhihu_quota: "知乎额度查询",
 };
 let dashboard = {};
+let activeRun = false;
+let activeSession = false;
+function syncStartButtons() {
+  for (const id of ["collect", "overnight-start"]) {
+    $(id).disabled = activeRun || activeSession || $(id).dataset.busy === "true";
+  }
+}
 let previewedReportId = null;
 function node(tag, text, cls) {
   const el = document.createElement(tag);
@@ -57,13 +64,16 @@ function show(message, error = false) {
   $("notice").hidden = false;
 }
 async function busy(el, action) {
+  el.dataset.busy = "true";
   el.disabled = true;
   try {
     await action();
   } catch (error) {
     show(error.message, true);
   } finally {
+    delete el.dataset.busy;
     el.disabled = false;
+    if (["collect", "overnight-start"].includes(el.id)) syncStartButtons();
   }
 }
 async function api(path, data, method) {
@@ -290,6 +300,13 @@ function citationList(citations) {
 }
 function reviewEvidence(payload, context) {
   const root = node("div", null, "review-evidence");
+  if (!context.existing) {
+    root.append(node("h4", "没有已接纳的归并目标"), node("p",
+      (payload.reason || "").includes("discovery parent")
+        ? "增强数据正在等待父话题确定归属；父话题处理后将核对并回挂。"
+        : "这是独立话题的处理，并非与某个目标的合并确认。历史检索分数不代表当前匹配。"));
+    return root;
+  }
   const features = payload.match_features_json || {};
   const incoming = payload.event_signal || {};
   const existing = context.existing?.detail?.match_features || {};
@@ -523,13 +540,44 @@ function listDeliveries(rows) {
 function renderOvernight(night) {
   night = night || {status: "idle", rounds: []};
   const activeNight = ["running", "stopping"].includes(night.status);
-  $("overnight-start").disabled = activeNight;
+  activeSession = activeNight;
+  syncStartButtons();
   $("overnight-stop").hidden = !activeNight;
-  $("collect").disabled = activeNight;
   const nightLabels = {idle:"尚未启动",running:"运行中",stopping:"等待当前轮次完成后汇总",completed:"已完成",stopped:"已停止",failed:"失败"};
   $("overnight-status").textContent = `${nightLabels[night.status] || night.status} · ${night.rounds.length}/${night.planned_rounds ?? "持续"} 轮已安排${night.ends_at && night.config?.duration_hours !== null ? ` · 计划结束 ${time(night.ends_at)}` : ""}${night.error ? ` · ${night.error}` : ""}`;
   if (night.report_id) $("overnight-status").append(" · ", link("打开测试简报", `/api/reports/${night.report_id}/html`));
+  if (night.backup_file) $("overnight-status").append(` · 已备份：backups/${night.backup_file}`);
   table($("overnight-rounds"), ["轮次", "状态", "异常"], night.rounds.map(r => [r.slot + 1, labels[r.status] || r.status, r.error || "—"]));
+}
+
+function renderRunProgress(run) {
+  activeRun = ["queued", "running"].includes(run.status);
+  syncStartButtons();
+  const stages = {
+    fetch_source_items: "采集数据", normalize_raw_items: "整理采集数据",
+    prepare_source_signals: "准备来源证据", extract_event_signals: "提取事件",
+    match_and_resolve_events: "匹配与归并事件", create_human_review_task: "整理人工审核",
+    calculate_event_scores: "计算平台内热度", classify_events: "官媒补证与事件分类",
+    analyze_event_heat: "分析热度趋势", generate_daily_briefing: "生成简报",
+    review_briefing_quality: "检查简报质量", save_daily_report: "保存简报", idle: "暂无任务"
+  };
+  const status = {...labels, waiting:"等待执行", interrupted:"已中断", not_observed:"未记录", idle:"暂无任务"};
+  const sourceNames = {...names, weibo_rss:"微博 RSS 获取", weibo_rsshub_hot_search:"微博采集与增强"};
+  $("run-status").textContent = run.run_id
+    ? `${status[run.status] || run.status} · ${stages[run.stage] || status[run.stage] || (activeRun ? "准备执行" : "任务结束")} · ${Math.floor(run.elapsed_seconds / 60)}分${run.elapsed_seconds % 60}秒 · 开始 ${time(run.started_at)}${run.error ? ` · ${run.error}` : ""}`
+    : "暂无采集任务";
+  if (run.report_id) $("run-status").append(" · ", link("查看简报", `/api/reports/${run.report_id}/html`));
+  $("run-refresh").textContent = `状态读取于 ${new Date().toLocaleTimeString()} · 每5秒刷新，不触发采集${run.updated_at ? ` · 最近执行进展 ${time(run.updated_at)}` : ""}`;
+  table($("run-sources"), ["模块", "状态", "进度／返回数据", "异常"], run.sources.map(s => [
+    sourceNames[s.source_id] || s.source_id, status[s.status] || s.status || "等待执行",
+    `${s.total != null ? `${s.completed || 0}/${s.total}个话题；` : ""}${s.returned_count != null ? `返回${s.returned_count}条` : "—"}${s.accepted_count != null ? `，接纳${s.accepted_count}条` : ""}`,
+    s.error || (s.failed_topics ? `${s.failed_topics}个话题增强失败` : "—")
+  ]));
+  table($("run-usage"), ["接口来源", "已结束请求", "成功", "失败", "累计耗时"], run.requests.map(r => [
+    sourceNames[r.source_id] || r.source_id, r.count, r.count - r.failed, r.failed, `${(r.duration_ms / 1000).toFixed(1)}秒`
+  ]));
+  const cli = run.sources.find(s => s.source_id === "weibo_cli");
+  $("run-usage-note").textContent = `${run.run_id ? `轮次 ${run.run_id}。` : ""}请求完成后更新；进行中的请求尚未计入。${cli?.returned_count != null ? `微博CLI已解析${cli.returned_count}条，按3积分/条估算${cli.returned_count * 3}积分。` : ""}估算不含无法解析的响应及启动检查，不是实际账单；额度见下方。`;
 }
 
 async function load() {
@@ -542,10 +590,12 @@ async function load() {
     api("/api/deliveries"),
     api("/api/daily-jobs"),
     api("/api/recipients"),
+    api("/api/run-progress"),
   ]);
-  const [dash, reports, usage, jobs, reviews, deliveries, dailyJobs, recipients] = responses;
+  const [dash, reports, usage, jobs, reviews, deliveries, dailyJobs, recipients, progress] = responses;
   dashboard = dash;
   renderOvernight(dash.overnight);
+  renderRunProgress(progress);
   $("login").hidden = true;
   $("workspace").hidden = false;
   $("logout").hidden = false;
@@ -653,18 +703,21 @@ $("collect").addEventListener("click", () =>
   busy($("collect"), async () => {
     const row = await api("/api/jobs", {});
     show(
-      `采集任务已${row.status === "running" ? "在运行" : "排队"}。请稍后刷新查看结果。`,
+      `采集任务已${row.status === "running" ? "在运行" : "排队"}，主页会自动更新进度。`,
     );
     await load();
   }),
 );
 $("refresh").addEventListener("click", () => busy($("refresh"), load));
 $("overnight-start").addEventListener("click", () => busy($("overnight-start"), async () => {
+  const fresh = $("session-fresh").checked;
+  if (fresh && !confirm("将先备份数据库，再清空当前采集、事件、审核和简报，开始独立采集。邮箱及收件人配置保留。确定继续？")) return;
   await api("/api/overnight-test", {
+      fresh_start: fresh,
       duration_hours: $("session-duration").value ? Number($("session-duration").value) : null,
       interval_minutes: Number($("session-interval").value),
       generate_report: $("session-finish").value !== "none",
-      report_scope: $("session-finish").value === "last24h" ? "last24h" : "session"
+      report_scope: !fresh && $("session-finish").value === "last24h" ? "last24h" : "session"
     });
   show("采集任务已启动，按所选配置运行，不发送邮件。");
   await load();
@@ -770,10 +823,17 @@ $("mail-test-form").addEventListener("submit", event => {
   });
 });
 
+let progressPolling = false;
 setInterval(async () => {
   if ($("workspace").hidden || document.hidden) return;
-  try { renderOvernight(await api("/api/overnight-test")); } catch (_) {}
-}, 30000);
+  if (progressPolling) return;
+  progressPolling = true;
+  try {
+    const [night, run] = await Promise.all([api("/api/overnight-test"), api("/api/run-progress")]);
+    renderOvernight(night); renderRunProgress(run);
+  } catch (_) { $("run-refresh").textContent = "状态刷新失败，正在重试；上方是最后一次成功读取的数据。"; }
+  finally { progressPolling = false; }
+}, 5000);
 
 function sessionEstimate() {
   const hours = Number($("session-duration").value), minutes = Number($("session-interval").value);

@@ -163,6 +163,8 @@ def prepare_source_signals(
 
 
 def item_to_source_signal(item, item_id: str) -> SourceSignal:
+    from app.services.topic_content import topic_context, topic_excerpts
+
     normalized = item.normalized
     relation_data = normalized.get("relation")
     relation = SearchEnrichmentRelation.model_validate(relation_data) if relation_data else None
@@ -189,7 +191,12 @@ def item_to_source_signal(item, item_id: str) -> SourceSignal:
         published_at=item.published_at,
         fetched_at=item.fetched_at,
         raw_metrics=item.raw_metrics,
-        platform_features={**normalized, "source_name": item.source_name},
+        platform_features={
+            **normalized,
+            "source_name": item.source_name,
+            "topic_context": topic_context(item),
+            "topic_excerpts": topic_excerpts(item),
+        },
         classification_features={"source_citation": item.source_citation},
         relation_to_parent=relation,
         audit_only=audit_only,
@@ -218,12 +225,22 @@ def _has_current_attention(event: Event, window_end: datetime) -> bool:
 
 
 def _candidate(event: Event) -> RetrievedEventMatchCandidate:
+    from app.services.topic_content import topic_context
+
     detail = event.event_detail_json or {}
     features = event_features(event)
     document = event_document(event)
     return RetrievedEventMatchCandidate(
         event_id=event.event_id,
         title=event.title,
+        summary="\n".join(
+            dict.fromkeys(
+                topic_context(item)
+                for item in sorted(event.items, key=lambda row: row.id, reverse=True)
+                if not (item.normalized_json or {}).get("source_signal", {}).get("audit_only")
+                and item.signal_role != "search_enrichment_signal"
+            )
+        )[:1200],
         event_fingerprint=event.event_fingerprint,
         keywords=event.keywords_json or [],
         entities=document.entities,
@@ -337,9 +354,12 @@ def resolve_and_persist_events(
         from app.services.human_review import reuse_reviewed_merge
 
         resolution = reuse_reviewed_merge(
-            db, signal, resolution,
+            db,
+            signal,
+            resolution,
             sources=[
-                sources[key].model_dump(mode="json") for key in signal.source_signal_ids
+                sources[key].model_dump(mode="json")
+                for key in signal.source_signal_ids
                 if key in sources
             ],
             run_id=data.run_id,

@@ -173,6 +173,9 @@ class ToolRegistry:
         raw_input: dict[str, Any] | BaseModel,
         attempt: int,
     ) -> AgentToolCall | None:
+        from app.services.run_progress import emit_progress
+
+        emit_progress(stage=definition.name)
         if db is None:
             return None
 

@@ -257,6 +257,7 @@ class EventSignalAssembler:
             event_signal_id=_event_signal_id(run_id, result.signal.source_signal_id),
             source_signal_ids=[result.signal.source_signal_id],
             title=title,
+            summary=result.signal.platform_features.get("topic_context", ""),
             keywords=keywords,
             entities=entities,
             event_type=event_type,

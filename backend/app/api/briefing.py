@@ -124,6 +124,13 @@ def usage(db: Db):
     return usage_summary(db)
 
 
+@router.get("/run-progress")
+def run_progress(db: Db):
+    from app.services.run_progress import current_progress
+
+    return current_progress(db)
+
+
 @router.get("/jobs")
 def jobs(db: Db, limit: int = Query(30, ge=1, le=200)):
     return [

@@ -40,12 +40,18 @@
         <section class="intro">
           <div>
             <p class="eyebrow">YOUR DAILY SIGNAL</p>
-            <h1>过去 24 小时，大家在关注什么？</h1>
+            <h1>过去一段时间，发生了什么？</h1>
             <p class="muted">
               知乎、微博与官媒的关注线索，一份有来源依据的每日简报。
             </p>
           </div>
-          <button id="collect" class="primary">采集新一期 ↗</button>
+          <div><button id="collect" class="primary">立即采集一次 ↗</button><p class="muted small">使用默认配置，会调用付费接口。</p></div>
+        </section>
+        <section class="panel" aria-live="polite">
+          <h2>当前任务状态</h2>
+          <p id="run-status">正在读取任务状态…</p>
+          <p id="run-refresh" class="muted small">每5秒更新；只显示实际阶段和已完成数量。</p>
+          <div id="run-sources" class="table-wrap"></div>
         </section>
         <section class="panel">
           <h2>采集任务</h2>
@@ -56,6 +62,8 @@
 <label>结束后<select id="session-finish"><option value="session">生成本次运行简报</option><option value="last24h">生成过去24小时简报</option><option value="none">仅保存数据</option></select></label>
 </div>
 <p id="session-estimate" class="muted"></p>
+<label><input id="session-fresh" type="checkbox">备份旧数据后独立采集</label>
+<p class="muted">勾选后先保存完整数据库备份，再清空当前采集、事件、审核和简报；保留邮箱、收件人和数据源配置。新任务按本次运行生成简报，不受旧事件及审核结论影响。</p>
 <div class="actions"><button id="session-preset">夜间8小时预设</button><button id="overnight-start" class="primary">开始采集</button><button id="overnight-stop" hidden>结束任务</button></div>
 <div class="actions">
 <label>简报范围<select id="report-scope"><option value="session">本次运行</option><option value="last24h">过去24小时</option><option value="custom">自定义</option></select></label>
@@ -104,6 +112,9 @@
           <div id="source-list" class="source-grid"></div>
           <div class="panel">
             <h2>过去 24 小时的 API 使用</h2>
+            <h3>当前／最近一轮用量</h3>
+            <p id="run-usage-note" class="muted small"></p>
+            <div id="run-usage" class="table-wrap"></div>
             <p id="usage-notes" class="muted small"></p>
             <div id="usage" class="table-wrap"></div>
             <div id="quotas"></div>

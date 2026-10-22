@@ -11,6 +11,13 @@ class CollectionSessionConfig(BaseModel):
     interval_minutes: int = Field(default=60, ge=30, le=180)
     report_scope: Literal["session", "last24h"] = "session"
     generate_report: bool = True
+    fresh_start: bool = False
+
+    @model_validator(mode="after")
+    def fresh_session_report(self):
+        if self.fresh_start:
+            self.report_scope = "session"
+        return self
 
 
 class ReportWindowInput(BaseModel):

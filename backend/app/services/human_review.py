@@ -134,6 +134,7 @@ def _decide_human_review_task(
         event_id = _apply_decision_side_effect(db, payload, input_data, now=now)
         if event_id:
             _associate_review_items(db, event_id, payload)
+            _reattach_pending_children(db, event_id, task.id, now)
     except ValueError as exc:
         db.rollback()
         return HumanReviewDecisionOutput(
@@ -285,16 +286,23 @@ def _within_topic_window(db, left, right):
 
 def same_pending_relation(db, review_type, left, right):
     left, right = identity_payload(db, left), identity_payload(db, right)
-    return (relation_key(review_type, left) == relation_key(review_type, right)
-            and _within_topic_window(db, left, right))
+    return relation_key(review_type, left) == relation_key(
+        review_type, right
+    ) and _within_topic_window(db, left, right)
 
 
 def consolidate_pending_reviews(db, preferred_id=None):
     """Archive duplicate queue entries; keep original evidence and canonical task linkage."""
-    rows = list(db.scalars(select(HumanReviewTask).where(
-        HumanReviewTask.status == "pending",
-        HumanReviewTask.review_type == "event_merge_candidate",
-    ).order_by(HumanReviewTask.id)))
+    rows = list(
+        db.scalars(
+            select(HumanReviewTask)
+            .where(
+                HumanReviewTask.status == "pending",
+                HumanReviewTask.review_type == "event_merge_candidate",
+            )
+            .order_by(HumanReviewTask.id)
+        )
+    )
     if preferred_id is not None:
         rows.sort(key=lambda row: (row.id != preferred_id, row.id))
     groups = []
@@ -307,9 +315,9 @@ def consolidate_pending_reviews(db, preferred_id=None):
             combined = merge_evidence(canonical.payload_json, payload)
             # Preserve the first observation as the anchor for the weak topic's 24h scope.
             combined["run_id"] = canonical.payload_json.get("run_id")
-            combined["grouped_review_ids"] = list(dict.fromkeys(
-                [*canonical.payload_json.get("grouped_review_ids", []), row.id]
-            ))
+            combined["grouped_review_ids"] = list(
+                dict.fromkeys([*canonical.payload_json.get("grouped_review_ids", []), row.id])
+            )
             canonical.payload_json = combined
             row.payload_json = {**payload, "grouped_into_review_id": canonical.id}
             row.status = "cancelled"
@@ -340,7 +348,8 @@ def reuse_reviewed_merge(db, signal, resolution, sources=None, run_id=None):
         payload = identity_payload(db, row.payload_json or {})
         current = {
             "event_signal_id": signal.event_signal_id,
-            "identity_sources": sources or [], "run_id": run_id,
+            "identity_sources": sources or [],
+            "run_id": run_id,
         }
         if (
             topic_identity(payload) == topic_identity(current)
@@ -407,6 +416,69 @@ def _apply_decision_side_effect(
         db.flush()
         return event_id
     return None
+
+
+def _reattach_pending_children(db, event_id, parent_review_id, now):
+    """Resolve accepted same-question children after their discovery parent is reviewed.
+
+    Question identity is strong; a shared Weibo query alone is not. Never move an
+    item already owned by a different event or override a rejected relation.
+    """
+    from app.services.match_documents import canonical_ids
+
+    db.flush()
+    event = db.scalar(select(Event).where(Event.event_id == event_id))
+    parents = list(db.scalars(select(Item).where(Item.event_id == event.id)))
+    identities = set()
+    for parent in parents:
+        if parent.source.platform == "zhihu" and parent.source.source_type in {
+            "community_hotlist",
+            "community_question_hotlist",
+        }:
+            identities.update(canonical_ids([parent.url] if parent.url else []))
+    if not identities:
+        return
+    for child in db.scalars(select(HumanReviewTask).where(HumanReviewTask.status == "pending")):
+        payload = dict(child.payload_json or {})
+        if child.id == parent_review_id or "no resolved discovery parent" not in payload.get(
+            "reason", ""
+        ):
+            continue
+        ids = payload.get("item_ids") or []
+        rows = list(db.scalars(select(Item).where(Item.id.in_([int(v) for v in ids]))))
+        if not rows or len(rows) != len(set(ids)):
+            continue
+        eligible = True
+        for row in rows:
+            normalized = row.normalized_json or {}
+            signal = normalized.get("source_signal") or {}
+            relation = signal.get("relation_to_parent") or normalized.get("relation") or {}
+            if (
+                row.event_id not in {None, event.id}
+                or relation.get("source") != "zhihu_search"
+                or relation.get("decision") != "accepted"
+                or relation.get("audit_only")
+                or signal.get("audit_only")
+                or not identities.intersection(canonical_ids([row.url] if row.url else []))
+            ):
+                eligible = False
+                break
+        if not eligible:
+            continue
+        _associate_review_items(db, event_id, payload)
+        payload["decision_audit"] = {
+            "event_id": event_id,
+            "parent_review_id": parent_review_id,
+            "basis": "accepted_same_zhihu_question",
+            "resolved_at": now.isoformat(),
+        }
+        child.payload_json = payload
+        child.status = "resolved"
+        child.decision = "merge_to_existing"
+        child.reviewer = "system:resolved-parent"
+        child.decision_reason = "Accepted search answers attached to the reviewed question event"
+        child.resolved_at = now
+        _resolve_related_guardrail_violations(db, payload, now=now)
 
 
 def _associate_review_items(db: Session, event_id: str, payload: dict[str, Any]) -> None:

@@ -103,6 +103,7 @@ def describe(db):
         interval_minutes=config.interval_minutes,
         config=config.model_dump(),
         email_sent=False,
+        backup_file=(row.config_json or {}).get("backup_file"),
     )
 
 
@@ -119,6 +120,8 @@ def start(db, now=None, config=None):
     try:
         row = current(db)
         if row and row.status in ACTIVE:
+            if config.fresh_start:
+                raise ValueError("已有采集任务运行，请结束后再备份并独立采集")
             return row
         if settings.scheduler_enabled:
             raise ValueError("请先关闭常规定时采集 SCHEDULER_ENABLED，避免有限测试结束后继续采集")
@@ -130,6 +133,12 @@ def start(db, now=None, config=None):
         preflight(db)
         if db.scalar(select(AnalysisRun).where(AnalysisRun.status.in_(["queued", "running"]))):
             raise ValueError("启动检查期间有其他采集启动，请等待完成后重试")
+        backup_file = None
+        if config.fresh_start:
+            from app.services.collection_backup import backup_and_clear
+
+            backup_file = backup_and_clear(db)
+            row = None
         if row is None:
             row = OvernightTest(id=1)
             db.add(row)
@@ -137,10 +146,15 @@ def start(db, now=None, config=None):
         row.started_at = now
         row.ends_at = now + timedelta(hours=config.duration_hours or 87600)
         row.config_json = config.model_dump(mode="json")
+        if backup_file:
+            row.config_json = {**row.config_json, "backup_file": backup_file}
         row.rounds_json, row.report_id, row.error = [], None, None
         db.commit()
         logger.info("overnight_started token=%s ends=%s", row.token, row.ends_at)
         return row
+    except Exception:
+        db.rollback()
+        raise
     finally:
         release_lease(db, "overnight-start", owner)
 

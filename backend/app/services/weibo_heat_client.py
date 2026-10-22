@@ -179,13 +179,19 @@ class WeiboHeatClient:
             safe_limit - 1,
         )
         rsshub_url = build_url(self.config.rsshub_base_url, self.config.rsshub_route)
+        from app.services.run_progress import emit_progress
+
+        emit_progress(source="weibo_rss", status="running")
         fetched_at = datetime.now(UTC).isoformat()
-        rsshub_items, rsshub_meta = self._fetch_rsshub_topics(
-            rsshub_url,
-            limit=safe_limit,
-            fetched_at=fetched_at,
-        )
+        try:
+            rsshub_items, rsshub_meta = self._fetch_rsshub_topics(
+                rsshub_url, limit=safe_limit, fetched_at=fetched_at,
+            )
+        except Exception:
+            emit_progress(source="weibo_rss", status="failed")
+            raise
         selected_items = rsshub_items[safe_skip_top:]
+        emit_progress(source="weibo_rss", status="succeeded", returned_count=len(selected_items))
         cli_should_run = self.config.cli_enabled if with_cli is None else with_cli
         safe_cli_topic_limit = _clamp(
             self.config.cli_topic_limit if cli_topic_limit is None else cli_topic_limit,
@@ -194,6 +200,11 @@ class WeiboHeatClient:
         )
 
         topics: list[WeiboHeatTopic] = []
+        cli_returned = cli_accepted = cli_failed = 0
+        emit_progress(
+            source="weibo_cli", status="running" if cli_should_run else "skipped",
+            completed=0, total=safe_cli_topic_limit if cli_should_run else 0,
+        )
         for index, item in enumerate(selected_items, start=1):
             cli_enrichment = None
             if cli_should_run and index <= safe_cli_topic_limit:
@@ -208,6 +219,22 @@ class WeiboHeatClient:
                     cli_enrichment=cli_enrichment,
                 )
             )
+            if cli_enrichment is not None:
+                cli_failed += not cli_enrichment.available
+                cli_returned += len(cli_enrichment.samples)
+                cli_accepted += (
+                    topics[-1].normalized.get("cli_relevance_counts", {}).get("accepted_count", 0)
+                )
+                emit_progress(
+                    source="weibo_cli", status="running", completed=index,
+                    total=safe_cli_topic_limit, returned_count=cli_returned,
+                    accepted_count=cli_accepted, failed_topics=cli_failed,
+                )
+        emit_progress(
+            source="weibo_cli",
+            status=("partial" if cli_failed else "succeeded")
+            if cli_should_run and safe_cli_topic_limit else "skipped",
+        )
 
         return WeiboHeatResult(
             generated_at=fetched_at,
