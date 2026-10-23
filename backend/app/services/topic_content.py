@@ -11,6 +11,18 @@ def plain(raw):
     return re.sub(r"\s+", " ", unescape(re.sub(r"<[^>]+>", " ", raw or ""))).strip()
 
 
+def cli_source_url(sample):
+    """Resolve citation provenance, including saved CLI samples without a URL."""
+    url = str(sample.get("url") or "").strip()
+    if re.match(r"^https?://", url, re.IGNORECASE):
+        return url
+    for key in ("external_id", "mid"):
+        status_id = str(sample.get(key) or "").strip()
+        if re.fullmatch(r"[1-9][0-9]{0,24}", status_id):
+            return f"https://m.weibo.cn/detail/{status_id}"
+    return None
+
+
 def topic_excerpts(item):
     """Only accepted CLI bodies; preserve provenance and never promote rejected samples."""
     raw = value(item, "raw_payload_json", "raw_payload", default={}) or {}
@@ -23,11 +35,12 @@ def topic_excerpts(item):
             continue
         body = plain(clean_body(sample.get("text") or "", title))[:360]
         identity = re.sub(r"\W", "", body).lower()
-        if len(identity) < 12 or identity in seen or not sample.get("url"):
+        url = cli_source_url(sample)
+        if len(identity) < 12 or identity in seen or not url:
             continue
         seen.add(identity)
         excerpts.append(
-            {"text": body, "url": sample["url"], "published_at": sample.get("created_at")}
+            {"text": body, "url": url, "published_at": sample.get("created_at")}
         )
         if len(excerpts) == 3:
             break

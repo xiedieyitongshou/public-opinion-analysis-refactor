@@ -258,6 +258,7 @@ class EventSignalAssembler:
             source_signal_ids=[result.signal.source_signal_id],
             title=title,
             summary=result.signal.platform_features.get("topic_context", ""),
+            has_accepted_cli_context=bool(result.signal.platform_features.get("topic_excerpts")),
             keywords=keywords,
             entities=entities,
             event_type=event_type,

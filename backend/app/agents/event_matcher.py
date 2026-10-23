@@ -223,14 +223,17 @@ class EventMatcher:
         config: EventMatchConfig,
     ) -> tuple[str, str, bool]:
         features = result.features
-        if "cluster_conflict" in features.guardrail_flags:
-            return "candidate_review", "representative event records conflict", True
         if "entity_conflict" in features.guardrail_flags:
             return "reject", "entity conflict blocks merge", False
         if "time_conflict" in features.guardrail_flags:
             return "reject", "time window conflict blocks merge", False
-        if any(flag.endswith("_conflict") for flag in features.guardrail_flags):
+        if any(
+            flag.endswith("_conflict") and flag != "cluster_conflict"
+            for flag in features.guardrail_flags
+        ):
             return "reject", "explicit event facts conflict", False
+        if "cluster_conflict" in features.guardrail_flags:
+            return "candidate_review", "representative event records conflict", True
         if features.id_match or features.url_match:
             return "merge", "hard ID or URL match reuses existing event_id", False
         if (
@@ -332,8 +335,21 @@ def build_match_features(
         matched_by.append("cross_encoder")
 
     flags: list[str] = list(comparison.conflicts)
-    if signal.entities and candidate.entities and entity_overlap == 0:
+    # Untyped extracted entities can name different aspects of the same event.
+    # Disjoint lists are missing corroboration, not an explicit contradiction.
+    from app.services.event_constraints import explicit_entity_conflict, title_conflicts
+
+    if explicit_entity_conflict(signal.entities, candidate.entities, signal.title, candidate.title):
         flags.append("entity_conflict")
+    if signal.has_accepted_cli_context or candidate.has_accepted_cli_context:
+
+        def lead(side):
+            body = re.split(r"[。！？\n]", side.summary)[0][:160]
+            return side.title + "。" + body if side.has_accepted_cli_context else side.title
+
+        flags.extend(title_conflicts(lead(signal), lead(candidate)))
+        if "explicit_date_conflict" in flags:
+            flags.append("time_conflict")
     if time_distance is not None and time_distance > config.time_window_same_event_hours:
         flags.append("time_conflict")
     if "explicit_date_conflict" in flags:
@@ -390,23 +406,28 @@ def build_match_features(
         semantic_event_support=bool(
             comparison.rerank_score is not None
             and comparison.rerank_score >= 0.95
-            and len(normalize_text(signal.title)) >= 8
-            and len(normalize_text(candidate.title)) >= 8
             and (
-                title_containment
-                or char_ngram_overlap(signal.title, candidate.title) >= 0.30
+                cli_context_support(signal, candidate)
                 or (
-                    char_ngram_overlap(signal.title, candidate.title) >= 0.10
-                    and len(
-                        set(re.findall(r"\d{2,}", signal.title))
-                        & set(re.findall(r"\d{2,}", candidate.title))
+                    len(normalize_text(signal.title)) >= 8
+                    and len(normalize_text(candidate.title)) >= 8
+                    and (
+                        title_containment
+                        or char_ngram_overlap(signal.title, candidate.title) >= 0.30
+                        or (
+                            char_ngram_overlap(signal.title, candidate.title) >= 0.10
+                            and len(
+                                set(re.findall(r"\d{2,}", signal.title))
+                                & set(re.findall(r"\d{2,}", candidate.title))
+                            )
+                            >= 2
+                        )
+                        or (
+                            char_ngram_overlap(signal.title, candidate.title) >= 0.15
+                            and keyword_overlap >= 0.25
+                            and bm25_score >= 0.60
+                        )
                     )
-                    >= 2
-                )
-                or (
-                    char_ngram_overlap(signal.title, candidate.title) >= 0.15
-                    and keyword_overlap >= 0.25
-                    and bm25_score >= 0.60
                 )
             )
             and not any(f.endswith("_conflict") for f in flags)
@@ -415,6 +436,19 @@ def build_match_features(
         hard_constraints_passed=hard_constraints_passed,
         guardrail_flags=dedupe(flags),
         matched_by=dedupe(matched_by),
+    )
+
+
+def cli_context_support(signal, candidate) -> bool:
+    """Only provenance-checked CLI bodies may relax title/NER requirements."""
+    return bool(
+        (signal.has_accepted_cli_context or candidate.has_accepted_cli_context)
+        and all(
+            len(normalize_text(side.summary)) >= 12
+            if side.has_accepted_cli_context
+            else (len(normalize_text(side.title)) >= 8 or len(normalize_text(side.summary)) >= 24)
+            for side in (signal, candidate)
+        )
     )
 
 

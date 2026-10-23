@@ -225,22 +225,23 @@ def _has_current_attention(event: Event, window_end: datetime) -> bool:
 
 
 def _candidate(event: Event) -> RetrievedEventMatchCandidate:
-    from app.services.topic_content import topic_context
+    from app.services.topic_content import topic_context, topic_excerpts
 
     detail = event.event_detail_json or {}
     features = event_features(event)
     document = event_document(event)
+    content_items = [
+        item
+        for item in sorted(event.items, key=lambda row: row.id, reverse=True)
+        if not (item.normalized_json or {}).get("source_signal", {}).get("audit_only")
+        and item.signal_role != "search_enrichment_signal"
+    ]
+    content_items.sort(key=lambda item: not bool(topic_excerpts(item)))
     return RetrievedEventMatchCandidate(
         event_id=event.event_id,
         title=event.title,
-        summary="\n".join(
-            dict.fromkeys(
-                topic_context(item)
-                for item in sorted(event.items, key=lambda row: row.id, reverse=True)
-                if not (item.normalized_json or {}).get("source_signal", {}).get("audit_only")
-                and item.signal_role != "search_enrichment_signal"
-            )
-        )[:1200],
+        summary="\n".join(dict.fromkeys(topic_context(item) for item in content_items))[:1200],
+        has_accepted_cli_context=any(topic_excerpts(item) for item in content_items),
         event_fingerprint=event.event_fingerprint,
         keywords=event.keywords_json or [],
         entities=document.entities,

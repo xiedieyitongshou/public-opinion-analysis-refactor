@@ -40,6 +40,11 @@ def trend_label(card, platform):
     heat = trend.latest_platform_heat if trend else None
     if platform == "zhihu" and heat and heat.primary_platform_rank is not None:
         presence += f" · 第 {heat.primary_platform_rank} 名"
+    if platform == "zhihu":
+        if heat and heat.platform_score is not None:
+            presence += f" · 知乎站内热度 {heat.platform_score:.3f}（系统计算，仅限知乎内比较）"
+        else:
+            presence += " · 知乎站内热度暂不可用"
     elif platform == "weibo" and heat and heat.platform_score is not None:
         presence += f" · 本平台热度 {heat.platform_score:.3f}"
     if trend and trend.trend_status != "unknown":

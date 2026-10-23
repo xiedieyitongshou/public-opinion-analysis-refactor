@@ -82,3 +82,26 @@ def specific_title_anchors(left: str, right: str) -> list[str]:
     return [
         f"{key}:{value}" for key in ("model", "named_object") for value in sorted(a[key] & b[key])
     ]
+
+
+def explicit_entity_conflict(left, right, left_text, right_text):
+    """Require comparable, text-grounded subjects, not disjoint untyped NER lists."""
+
+    def groups(entities, text):
+        result = {}
+        for entity in entities:
+            if not entity or entity.casefold() not in text.casefold():
+                continue
+            kind = next(
+                (suffix for suffix in ("公司", "大学", "医院", "法院") if entity.endswith(suffix)),
+                None,
+            )
+            if kind is None and re.fullmatch(r"[A-Za-z][A-Za-z0-9-]*", entity):
+                if text.casefold().startswith(entity.casefold() + " "):
+                    kind = "latin_subject"
+            if kind:
+                result.setdefault(kind, set()).add(entity.casefold())
+        return result
+
+    a, b = groups(left, left_text), groups(right, right_text)
+    return any(not a[key] & b[key] for key in a.keys() & b.keys())

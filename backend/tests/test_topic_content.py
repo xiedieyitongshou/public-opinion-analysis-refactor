@@ -47,7 +47,11 @@ def test_accepted_bodies_only_deduplicate_and_bound():
     assert all(row["url"] for row in excerpts)
 
 
-def test_context_reaches_both_match_documents():
+@pytest.mark.parametrize("missing_url", [False, True])
+def test_context_reaches_both_match_documents(missing_url):
+    body = sample()
+    if missing_url:
+        body.update(url=None, external_id="5357051598341194")
     item = NormalizedItem(
         source_id="weibo_rsshub_hot_search",
         source_name="微博",
@@ -59,13 +63,14 @@ def test_context_reaches_both_match_documents():
         title="事故进展",
         url="https://weibo.com/topic",
         fetched_at=datetime.now(UTC),
-        raw_payload={"cli_enrichment": {"samples": [sample()]}},
+        raw_payload={"cli_enrichment": {"samples": [body]}},
     )
     source = item_to_source_signal(item, "1")
     signal = EventSignalAssembler().assemble(
         run_id="offline", result=RuleEventExtractor().extract(source)
     )
     assert "警方公布" in event_document(signal).text
+    assert signal.has_accepted_cli_context
     event = Event(
         event_id="example",
         title="事故进展",
@@ -80,6 +85,27 @@ def test_context_reaches_both_match_documents():
         ],
     )
     assert "警方公布" in event_document(_candidate(event)).text
+
+
+@pytest.mark.parametrize("identifier", ["external_id", "mid"])
+def test_saved_id_only_sample_reaches_summary(identifier):
+    body = {**sample(), "url": None, identifier: "5357051598341194"}
+    item = SimpleNamespace(
+        source=SimpleNamespace(platform="weibo", source_type="community_hotlist"),
+        title="事故进展", summary=None,
+        raw_payload_json={"cli_enrichment": {"samples": [body]}},
+    )
+    text, citations = summary_from_items([item])
+    assert "警方公布" in text
+    assert citations[0]["url"] == "https://m.weibo.cn/detail/5357051598341194"
+    body["relation"]["audit_only"] = True
+    assert topic_excerpts(item) == []
+
+
+@pytest.mark.parametrize("status_id", [None, "", "../unsafe", "1?x=y", "0"])
+def test_no_valid_provenance_is_still_excluded(status_id):
+    body = {**sample(), "url": None, "external_id": status_id}
+    assert topic_excerpts({"raw_payload": {"cli_enrichment": {"samples": [body]}}}) == []
 
 
 def test_summary_does_not_call_an_answer_question_description():

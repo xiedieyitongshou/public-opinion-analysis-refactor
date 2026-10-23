@@ -84,6 +84,7 @@ class RetrievedEventMatchCandidate(BaseModel):
     event_id: str
     title: str
     summary: str = ""
+    has_accepted_cli_context: bool = False
     event_fingerprint: str | None = None
     keywords: list[str] = Field(default_factory=list)
     entities: list[str] = Field(default_factory=list)

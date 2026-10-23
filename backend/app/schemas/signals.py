@@ -109,6 +109,7 @@ class EventSignal(BaseModel):
     source_signal_ids: list[str]
     title: str
     summary: str = ""
+    has_accepted_cli_context: bool = False
     keywords: list[str] = Field(default_factory=list)
     entities: list[str] = Field(default_factory=list)
     event_type: str | None = None

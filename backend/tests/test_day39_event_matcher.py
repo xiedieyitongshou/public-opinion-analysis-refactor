@@ -150,8 +150,10 @@ def test_match_and_resolve_events_uses_keyword_and_ngram_matching() -> None:
 
 
 def test_match_and_resolve_events_rejects_entity_conflict() -> None:
-    signal = event_signal(entities=["甲公司"])
-    result = call_match(signal, [candidate(event_id="evt_conflict", entities=["乙公司"])])
+    signal = event_signal(title="甲公司发布召回通知", entities=["甲公司"])
+    result = call_match(signal, [candidate(
+        event_id="evt_conflict", title="乙公司发布召回通知", entities=["乙公司"]
+    )])
 
     resolution = result.output["event_resolutions"][0]
     assert resolution["action"] == "reject"

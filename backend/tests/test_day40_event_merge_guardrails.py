@@ -116,7 +116,7 @@ def test_entity_conflict_blocks_and_persists_full_violation_context() -> None:
 
     result = resolve(
         signal(event_signal_id="sig-conflict", entities=["Alpha"]),
-        [candidate(event_id="evt-beta", entities=["Beta"])],
+        [candidate(event_id="evt-beta", title="Beta product recall update", entities=["Beta"])],
         db=session,
         context=ToolContext(task_id=task.id),
     )
@@ -154,7 +154,7 @@ def test_embedding_conflict_blocks_and_marks_semantic_false_positive_risk(
 ) -> None:
     result = resolve(
         signal(
-            title="Same viral topic",
+            title="Alpha viral topic",
             entities=["Alpha"],
             action_terms=[],
             event_time_hint=None,
@@ -162,7 +162,7 @@ def test_embedding_conflict_blocks_and_marks_semantic_false_positive_risk(
         [
             candidate(
                 event_id="evt-embedding-conflict",
-                title="Same viral topic",
+                title="Beta viral topic",
                 entities=["Beta"],
                 action_terms=[],
                 event_time_hint=None,
