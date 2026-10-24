@@ -25,6 +25,7 @@ class HumanReviewTaskRecord(BaseModel):
     created_at: str | None = None
     updated_at: str | None = None
     resolved_at: str | None = None
+    merge_selection: dict[str, Any] | None = None
 
 
 class CreateHumanReviewTaskInput(BaseModel):
@@ -62,3 +63,14 @@ class HumanReviewDecisionOutput(BaseModel):
     message: str | None = None
     refresh_status: str | None = None
     report_id: int | None = None
+
+
+class BatchMergeEntry(BaseModel):
+    task_id: int = Field(gt=0)
+    candidate_event_id: str = Field(min_length=1, max_length=120)
+    decision_reason: str | None = Field(default=None, max_length=2000)
+
+
+class BatchMergeInput(BaseModel):
+    items: list[BatchMergeEntry] = Field(min_length=1, max_length=100)
+    reviewer: str | None = Field(default=None, max_length=120)

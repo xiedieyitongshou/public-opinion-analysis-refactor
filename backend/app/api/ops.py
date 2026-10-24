@@ -22,6 +22,7 @@ from app.models import (
     Source,
 )
 from app.schemas import HumanReviewDecisionInput, HumanReviewDecisionOutput
+from app.schemas.human_review import BatchMergeInput
 from app.services.human_review import decide_human_review_task, task_record
 
 router = APIRouter(prefix="/ops", tags=["ops"])
@@ -48,9 +49,7 @@ def list_guardrail_violations(
 ) -> ListResponse:
     try:
         rows = db.scalars(
-            select(GuardrailViolation)
-            .order_by(desc(GuardrailViolation.created_at))
-            .limit(limit)
+            select(GuardrailViolation).order_by(desc(GuardrailViolation.created_at)).limit(limit)
         ).all()
     except SQLAlchemyError as exc:
         return _db_unavailable(exc)
@@ -177,6 +176,13 @@ def get_human_review_task(task_id: int, db: DbSession) -> dict[str, Any]:
     if task is None:
         raise HTTPException(status_code=404, detail="Human review task not found")
     return {"status": "ok", "human_review_task": task_record(task).model_dump(mode="json")}
+
+
+@router.post("/human-review/batch-merge")
+def batch_merge_endpoint(input_data: BatchMergeInput, db: DbSession):
+    from app.services.review_batch import batch_merge_reviews
+
+    return batch_merge_reviews(db, input_data)
 
 
 @router.post(

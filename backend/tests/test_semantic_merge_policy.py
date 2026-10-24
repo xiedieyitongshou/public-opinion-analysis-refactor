@@ -147,8 +147,8 @@ def test_multiple_similarly_strong_candidates_still_require_review(monkeypatch):
         module,
         "compare_many",
         lambda *args, **kwargs: [
-            Comparison(rerank_score=0.999, title_containment=True),
-            Comparison(rerank_score=0.998, title_containment=True),
+            Comparison(rerank_score=0.999, embedding_similarity=.8, title_containment=True),
+            Comparison(rerank_score=0.998, embedding_similarity=.8, title_containment=True),
         ],
     )
     result = EventMatcher().match_event(

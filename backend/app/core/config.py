@@ -124,6 +124,12 @@ class Settings(BaseSettings):
     weibo_relevance_reject_below: float = Field(default=0.10, ge=0, le=0.5)
     weibo_relevance_accept_at: float = Field(default=0.80, gt=0.5, le=1)
     official_search_enabled: bool = True
+    official_article_enabled: bool = True
+    official_article_max_fetches: int = Field(default=5, ge=0, le=50)
+    official_article_timeout_seconds: float = Field(default=4, gt=0, le=30)
+    official_article_batch_seconds: float = Field(default=15, gt=0, le=120)
+    official_article_cache_hours: int = Field(default=24, ge=1, le=168)
+    official_article_cache_dir: str | None = None
     official_support_lookback_days: int = Field(default=7, ge=1, le=30)
     official_search_cache_minutes: int = Field(default=30, ge=0, le=1440)
     official_search_limit: int = Field(default=5, ge=1, le=20)
@@ -144,6 +150,8 @@ class Settings(BaseSettings):
         "weibo_rsshub_hot_search": 4, "weibo_cli": 50,
         "chinanews_scroll_rss": 3, "people_politics_rss": 3, "xinhua_politics_rss": 3,
         "official_search_people": 3, "official_search_chinanews": 3,
+        "official_article_people": 8, "official_article_chinanews": 8,
+        "official_article_xinhua": 8,
     })
     quota_probe_enabled: bool = False
     briefing_timezone: str = "Asia/Shanghai"

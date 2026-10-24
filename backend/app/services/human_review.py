@@ -119,6 +119,9 @@ def _decide_human_review_task(
     db: Session,
     task: HumanReviewTask,
     input_data: HumanReviewDecisionInput,
+    *,
+    consolidate: bool = True,
+    validate_ownership: bool = True,
 ) -> HumanReviewDecisionOutput:
     if task.status != "pending":
         return HumanReviewDecisionOutput(
@@ -127,7 +130,16 @@ def _decide_human_review_task(
             message=f"Human review task is not pending: {task.status}",
         )
 
-    consolidate_pending_reviews(db, preferred_id=task.id)
+    if input_data.decision == "merge_to_existing" and validate_ownership:
+        from app.services.review_batch import MergeSelection
+
+        issues = MergeSelection(db, [task]).issues(task.id)
+        if issues:
+            return HumanReviewDecisionOutput(
+                status="failed", human_review_task=task_record(task), message="；".join(issues)
+            )
+    if consolidate:
+        consolidate_pending_reviews(db, preferred_id=task.id)
     payload = dict(task.payload_json or {})
     now = datetime.now(UTC)
     try:

@@ -108,6 +108,9 @@ class OfficialSearchClient:
                 elif item.url not in seen:
                     items.append(item)
                     seen.add(item.url)
+            from app.services.official_article import enrich_official_items
+
+            items = enrich_official_items(items, client=client)
             outcome = "partial" if flags and items else "failed" if flags else "succeeded"
             return SearchResult(
                 source, query, outcome, items, sorted(set(flags)), http_status=status
@@ -249,6 +252,7 @@ def persist_search_items(db: Session, items: list[NormalizedItem]) -> list[Item]
                 "external_id",
                 "url",
                 "summary",
+                "content",
                 "published_at",
                 "fetched_at",
                 "source_status",
@@ -262,6 +266,12 @@ def persist_search_items(db: Session, items: list[NormalizedItem]) -> list[Item]
             row.signal_contribution_roles_json = item.signal_contribution_role
             db.flush()
             row.source_citation_json = {**item.source_citation, "item_id": str(row.id)}
+        elif item.normalized.get("official_article", {}).get("status") == "succeeded":
+            row.summary = item.summary
+            row.content = item.content_text or item.content
+            row.normalized_json = {**(row.normalized_json or {}),
+                                   "official_article": item.normalized["official_article"]}
+            row.quality_flags_json = item.quality_flags
         rows.append(row)
     db.flush()
     return rows

@@ -2,6 +2,8 @@
 
 更新日期：2026-10-23。返回[项目 README](../README.md)。
 
+2026-10-24补充：[embedding 联合门槛](embedding-merge-gate.md)已接入共享匹配器及官媒补证，下面的高分正文放行也必须通过该门槛。
+
 ## 微博匹配不再仅依赖标题
 
 RSS 热搜标题仍是发现入口。已采集 CLI 样本中，只有关联判定为 accepted、非 audit_only 且可定位出处的正文可以补强匹配。优先使用 HTTP(S) 原文链接；链接缺失时，用有效数字 external_id 或 mid 构造 `https://m.weibo.cn/detail/{id}`。详情链接不代表已联网验证可访问，原文删除或访问限制仍可能影响打开。既无链接也无有效 ID 的样本仍不用于正文补强。清理 HTML、链接和重复查询 hashtag，去重后最多选取 3 条，每条最多 360 字。新 EventSignal 与已有候选事件均带入这些上下文，供 BM25、embedding 和 reranker 使用；正文与出处同时保存在来源信号中。

@@ -5,7 +5,7 @@ from datetime import timedelta
 from sqlalchemy import select
 
 from app.core.config import settings
-from app.models import AgentTask, Event
+from app.models import AgentTask, Event, HumanReviewTask
 from app.models.briefing import AnalysisRun
 from app.schemas.analysis import ClassifyEventsInput, HotspotAnalysisInput, HotspotAnalysisOutput
 from app.schemas.collectors import FetchSourceItemsOutput
@@ -18,6 +18,31 @@ from app.services.platform_trend_assembly import (
 
 
 def refresh_after_review(db, task, event_id):
+    ids = (task.payload_json or {}).get("refresh", {}).get("batch_review_ids")
+    if ids:
+        tasks = list(db.scalars(select(HumanReviewTask).where(HumanReviewTask.id.in_(ids))))
+        return refresh_after_reviews(
+            db,
+            [
+                (row, (row.payload_json or {}).get("decision_audit", {}).get("event_id"))
+                for row in tasks
+                if row.status == "resolved"
+            ],
+        )
+    return refresh_after_reviews(db, [(task, event_id)])
+
+
+def mark_refresh_result(db, task, **values):
+    """A batch retry updates every member, not just the button that was clicked."""
+    ids = (task.payload_json or {}).get("refresh", {}).get("batch_review_ids") or [task.id]
+    for row in db.scalars(select(HumanReviewTask).where(HumanReviewTask.id.in_(ids))):
+        payload = dict(row.payload_json or {})
+        payload["refresh"] = {**payload.get("refresh", {}), **values}
+        row.payload_json = payload
+    db.commit()
+
+
+def refresh_after_reviews(db, decisions):
     run = db.scalar(
         select(AnalysisRun)
         .where(
@@ -30,18 +55,20 @@ def refresh_after_review(db, task, event_id):
         return None
     end = as_utc(run.window_end)
     result = HotspotAnalysisOutput.model_validate(run.output_json)
-    if event_id:
-        event = db.scalar(select(Event).where(Event.event_id == event_id))
-        if event is None:
+    event_ids = {event_id for _, event_id in decisions if event_id}
+    if event_ids:
+        events = list(db.scalars(select(Event).where(Event.event_id.in_(event_ids))))
+        if len(events) != len(event_ids):
             raise ValueError("reviewed_event_missing")
         by_hash = {}
-        for item in event.items:
-            by_hash[item.content_hash] = event_id
-            original = (item.normalized_json or {}).get("collector_content_hash")
-            if original:
-                by_hash[original] = event_id
+        for event in events:
+            for item in event.items:
+                by_hash[item.content_hash] = event.event_id
+                original = (item.normalized_json or {}).get("collector_content_hash")
+                if original:
+                    by_hash[original] = event.event_id
         # Include the original round even when it is now older than 24h; it remains history.
-        original_run = (task.payload_json or {}).get("run_id")
+        original_runs = {(task.payload_json or {}).get("run_id") for task, _ in decisions}
         tasks = db.scalars(
             select(AgentTask)
             .where(
@@ -60,15 +87,16 @@ def refresh_after_review(db, task, event_id):
                 value.observed_at and end - timedelta(hours=24) < value.observed_at <= end
                 for value in collection.results
             )
-            if recent or collection.run_id == original_run:
+            if recent or collection.run_id in original_runs:
                 record_collection_round(
                     db,
                     collection=collection,
-                    tracked_events=[event],
+                    tracked_events=events,
                     event_ids_by_content_hash=by_hash,
                 )
-        if _has_current_attention(event, end) and event_id not in result.event_ids:
-            result.event_ids.append(event_id)
+        for event in events:
+            if _has_current_attention(event, end) and event.event_id not in result.event_ids:
+                result.event_ids.append(event.event_id)
     if run.input_json.get("report_window"):
         from app.services.report_window import rebuild_window
 

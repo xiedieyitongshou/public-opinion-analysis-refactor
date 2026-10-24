@@ -179,7 +179,9 @@ class OfficialRSSCollector(BaseCollector):
                     }
                 )
             )
-        return normalized_items
+        from app.services.official_article import enrich_official_items
+
+        return enrich_official_items(normalized_items, client=self._client)
 
 
 def default_official_collectors() -> list[OfficialRSSCollector]:

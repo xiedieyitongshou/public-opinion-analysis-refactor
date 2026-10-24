@@ -408,17 +408,32 @@ def resolve_delivery(delivery_id: int, data: DeliveryDecision, db: Db):
 
 
 @router.get("/review-queue")
-def review_queue(db: Db, limit: int = Query(50, ge=1, le=200)):
+def review_queue(
+    db: Db, limit: int = Query(50, ge=1, le=200), offset: Annotated[int, Query(ge=0)] = 0
+):
     active = or_(
         HumanReviewTask.status == "pending",
         HumanReviewTask.payload_json["refresh"]["status"].as_string() == "failed",
     )
-    rows = db.scalars(
-        select(HumanReviewTask).where(active).order_by(HumanReviewTask.id).limit(limit)
+    rows = list(
+        db.scalars(
+            select(HumanReviewTask)
+            .where(active)
+            .order_by(HumanReviewTask.id)
+            .offset(offset)
+            .limit(limit)
+        )
     )
+    from app.services.review_batch import selection_metadata
+
+    metadata = selection_metadata(db, rows) if rows else {}
     return {
         "total": db.scalar(select(func.count(HumanReviewTask.id)).where(active)),
-        "items": [task_record(task) for task in rows],
+        "offset": offset,
+        "items": [
+            task_record(task).model_copy(update={"merge_selection": metadata[task.id]})
+            for task in rows
+        ],
     }
 
 
@@ -460,16 +475,15 @@ def retry_review_refresh(task_id: int, db: Db):
         report_id = refresh_after_review(
             db, task, payload.get("decision_audit", {}).get("event_id")
         )
-        payload["refresh"] = {"status": "refreshed", "report_id": report_id}
-        task.payload_json = payload
-        db.commit()
+        from app.services.review_refresh import mark_refresh_result
+
+        mark_refresh_result(db, task, status="refreshed", report_id=report_id, error=None)
         return {"status": "refreshed", "report_id": report_id}
     except Exception as exc:
         db.rollback()
-        payload = dict(task.payload_json or {})
-        payload["refresh"] = {"status": "failed", "error": type(exc).__name__}
-        task.payload_json = payload
-        db.commit()
+        from app.services.review_refresh import mark_refresh_result
+
+        mark_refresh_result(db, task, status="failed", error=type(exc).__name__)
         raise HTTPException(409, "审核决定已保存，重算仍未完成，请稍后重试") from exc
     finally:
         release_lease(db, "analysis", owner)

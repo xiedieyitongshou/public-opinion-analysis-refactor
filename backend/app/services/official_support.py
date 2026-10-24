@@ -17,6 +17,7 @@ from app.schemas import (
 from app.services.hotspot_freshness import official_publication_exclusion
 from app.services.match_documents import as_datetime, event_document, item_document
 from app.services.matching_engine import Comparison, compare_many, retrieve
+from app.services.semantic_agreement import embedding_gate
 
 OFFICIAL_SIGNAL_ROLES = {"evidence_signal", "event_signal", "mixed_signal"}
 OFFICIAL_SOURCE_STATUSES = {"use", "fallback"}
@@ -115,6 +116,22 @@ class MatchCandidate:
     quality_flags: list[str]
 
 
+def official_match_document(event):
+    """Use accepted source context rather than a generated event-level narrative."""
+    from app.services.match_documents import value
+    from app.services.topic_content import topic_context, topic_excerpts
+
+    document = event_document(event)
+    items = value(event, "items", default=[]) or []
+    accepted = [item for item in items
+                if value(item, "signal_role") != "search_enrichment_signal"
+                and not (value(item, "normalized_json", "normalized", default={}) or {})
+                .get("source_signal", {}).get("audit_only")]
+    accepted.sort(key=lambda item: not bool(topic_excerpts(item)))
+    context = "\n".join(dict.fromkeys(topic_context(item) for item in accepted if topic_context(item)))
+    return document.model_copy(update={"summary": context[:1200]}) if context else document
+
+
 def match_official_support(
     event: Any,
     official_items: Iterable[Any] | None,
@@ -134,7 +151,7 @@ def match_official_support(
         if window_end and allow_prior_reports
         else attention_start
     )
-    target = event_document(event)
+    target = official_match_document(event)
     current_items = None if official_items is None else list(official_items)
     if window_end is not None and current_items is not None:
         eligible = []
@@ -266,7 +283,7 @@ def _match_official_support(
             return citation_result
         return _not_checked_result(event_data, "official_pool_empty")
 
-    target = event_document(event)
+    target = official_match_document(event)
     documents = [item_document(item) for item in evidence_items]
     if len(documents) > config.recall_limit:
         indices, retrieval = retrieve(
@@ -301,6 +318,9 @@ def _match_official_support(
             "conflicts": comp.conflicts,
             "missing_features": comp.missing,
             "quality_flags": comp.quality_flags,
+            "embedding_gate": embedding_gate(comp.embedding_similarity, anchored=(
+                comp.title_containment or comp.entity_overlap > 0 and comp.action_overlap > 0
+            )) if config.use_embedding or comp.rerank_score is not None else "not_applied",
         }
         for i, comp in zip(indices, comparisons, strict=True)
     ]
@@ -414,6 +434,11 @@ def _match_candidate(
     title_containment = (
         comparison.title_containment if comparison else _title_containment(event_title, item_title)
     )
+    if comparison and (config.use_embedding or comparison.rerank_score is not None):
+        if embedding_gate(comparison.embedding_similarity, anchored=(
+            title_containment or entity_overlap > 0 and action_overlap > 0
+        )) != "pass":
+            return None
     keyword_overlap = _keyword_overlap(event.keywords, item_text, event_text, item_text)
     ngram_overlap = _ngram_overlap(event_text, item_text)
     time_distance_days = _time_distance_days(event, item)
@@ -500,12 +525,12 @@ def _event_data(event: Any) -> EventForOfficialSupport:
         _dict_value(event, "source_citations_json", "source_citations", default=[]) or []
     )
     primary_entity = _string_value(event, "primary_entity")
-    document = event_document(event)
+    document = official_match_document(event)
     entities = document.entities
     return EventForOfficialSupport(
         event_id=_string_value(event, "event_id") or _string_value(event, "id"),
         title=_string_value(event, "title") or "",
-        summary=_string_value(event, "summary"),
+        summary=document.summary,
         primary_entity=primary_entity,
         entities=_dedupe([entity for entity in entities if entity]),
         action_terms=document.action_terms,

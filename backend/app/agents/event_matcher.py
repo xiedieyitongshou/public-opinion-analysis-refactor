@@ -23,6 +23,7 @@ from app.schemas import (
 )
 from app.services.match_documents import MatchDocument, canonical_ids, event_document
 from app.services.matching_engine import Comparison, bm25_scores, compare_many, retrieve
+from app.services.semantic_agreement import embedding_gate
 from app.services.topic_discovery_policy import can_create_hotlist_topic
 
 TOKEN_RE = re.compile(r"[\w\u4e00-\u9fff]+", re.UNICODE)
@@ -236,6 +237,18 @@ class EventMatcher:
             return "candidate_review", "representative event records conflict", True
         if features.id_match or features.url_match:
             return "merge", "hard ID or URL match reuses existing event_id", False
+        if config.use_embedding or features.rerank_score is not None:
+            gate = embedding_gate(features.embedding_similarity, anchored=(
+                features.title_containment
+                or features.entity_overlap > 0 and features.action_overlap > 0
+            ))
+            if gate == "separate":
+                return "create", "embedding below 0.60; keep separate topic", False
+            if gate in {"review", "missing"}:
+                return "candidate_review", (
+                    "embedding unavailable; semantic merge needs review" if gate == "missing"
+                    else "embedding below 0.70 without specific event anchors; needs review"
+                ), True
         if (
             features.rerank_score is not None
             and features.rerank_score < config.rerank_reject_below
@@ -406,6 +419,9 @@ def build_match_features(
         semantic_event_support=bool(
             comparison.rerank_score is not None
             and comparison.rerank_score >= 0.95
+            and embedding_gate(embedding_similarity, anchored=(
+                title_containment or entity_overlap > 0 and action_overlap > 0
+            )) == "pass"
             and (
                 cli_context_support(signal, candidate)
                 or (
@@ -462,6 +478,11 @@ def score_match_confidence(
         return 0.0
     if features.id_match or features.url_match:
         return 0.98
+    gate = embedding_gate(features.embedding_similarity, anchored=(
+        features.title_containment or features.entity_overlap > 0 and features.action_overlap > 0
+    )) if config.use_embedding or features.rerank_score is not None else "pass"
+    if gate == "separate":
+        return 0.0
     score = 0.0
     if features.title_containment:
         score += 0.35
@@ -491,6 +512,8 @@ def score_match_confidence(
             score = min(score, config.candidate_review_confidence_threshold - 0.01)
     if features.semantic_event_support:
         return clip(features.rerank_score)
+    if gate in {"review", "missing"}:
+        return min(clip(score), config.candidate_review_confidence_threshold)
     if signal.is_weak_signal:
         score -= 0.10
     if "embedding_only_without_hard_constraint" in features.guardrail_flags:

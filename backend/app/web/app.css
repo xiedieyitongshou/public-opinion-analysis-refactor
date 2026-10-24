@@ -521,3 +521,9 @@ pre {
 .review-evidence td { overflow-wrap: anywhere; min-width: 75px; }
 .review-evidence details { margin-top: 14px; }
 .review-evidence pre { max-height: 260px; overflow: auto; }
+.review-batch { border: 1px solid #b9d5d1; }
+.review-batch button { margin: 4px 8px 4px 0; }
+.review-select { display: flex; align-items: center; gap: 8px; font-weight: 600; }
+.review-select input { width: auto; }
+.review-target { font-weight: 600; }
+.review-exclusive { padding: 12px; background: #fff6df; border-left: 3px solid #bc8500; }

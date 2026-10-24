@@ -23,13 +23,15 @@ def pair():
     return a, b
 
 
-def decide(a, b, score=0.96, flags=None):
+def decide(a, b, score=0.96, flags=None, embedding=0.75):
     matcher = EventMatcher()
     result = matcher.rerank_candidate(
         signal=a,
         candidate=b,
         config=EventMatchConfig(),
-        comparison=Comparison(rerank_score=score, quality_flags=flags or []),
+        comparison=Comparison(
+            rerank_score=score, embedding_similarity=embedding, quality_flags=flags or []
+        ),
     )
     return result, matcher._decide(result, signal=a, config=EventMatchConfig())
 
@@ -84,8 +86,27 @@ def test_two_high_scoring_candidates_still_require_review(monkeypatch):
     other = b.model_copy(update={"event_id": "other"})
     monkeypatch.setattr(
         "app.agents.event_matcher.compare_many",
-        lambda *args, **kwargs: [Comparison(rerank_score=0.99) for _ in args[1]],
+        lambda *args, **kwargs: [
+            Comparison(rerank_score=0.99, embedding_similarity=0.75) for _ in args[1]
+        ],
     )
     result = EventMatcher().match_event(signal=a, candidates=[b, other], config=EventMatchConfig())
     assert result.action == "candidate_review"
     assert result.reason == "multiple similarly strong event candidates"
+
+
+@pytest.mark.parametrize(
+    "embedding,action",
+    [
+        (0.337, "create"),
+        (0.599, "create"),
+        (0.60, "candidate_review"),
+        (0.693, "candidate_review"),
+        (0.70, "merge"),
+        (None, "candidate_review"),
+    ],
+)
+def test_embedding_gates_high_reranker(embedding, action):
+    a, b = pair()
+    _, decision = decide(a, b, score=0.999, embedding=embedding)
+    assert decision[0] == action

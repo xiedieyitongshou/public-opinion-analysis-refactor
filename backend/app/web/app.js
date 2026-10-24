@@ -355,13 +355,97 @@ function reviewEvidence(payload, context) {
   return root;
 }
 
-async function listReviews(tasks) {
+const selectedReviews = new Map();
+const reviewReasons = new Map();
+let reviewSubmitting = false;
+let reviewPageOffset = 0;
+let reviewPageTotal = 0;
+async function listReviews(tasks, paging) {
+  if (paging) { reviewPageOffset = paging.offset || 0; reviewPageTotal = paging.total; }
   const root = $("review-list");
+  const toolbar = $("review-batch");
   root.replaceChildren();
+  toolbar.replaceChildren();
+  const eligible = new Map(tasks.filter(t => t.status === "pending" && t.merge_selection?.eligible)
+    .map(t => [t.id, t]));
+  for (const [id, target] of selectedReviews) {
+    if (tasks.some(t => t.id === id) && eligible.get(id)?.merge_selection.target_event_id !== target) selectedReviews.delete(id);
+  }
   if (!tasks.length) {
+    selectedReviews.clear();
+    toolbar.hidden = true;
     empty(root, "暂无待处理候选。已接纳的事件会正常进入日报。");
     return;
   }
+  toolbar.hidden = false;
+  const summary = node("p"), batchResult = node("div", null, "small");
+  const checkboxes = new Map(), hints = new Map();
+  const conflictsWithSelection = task => (task.merge_selection?.conflicts || [])
+    .filter(c => selectedReviews.has(c.task_id));
+  function updateSelection() {
+    summary.textContent = `已选择 ${selectedReviews.size} 条。各条归入各自展示的目标，全部完成后统一更新热度与简报。`;
+    submit.disabled = reviewSubmitting || !selectedReviews.size;
+    selectSafe.disabled = clear.disabled = reviewSubmitting;
+    previous.disabled = reviewSubmitting || reviewPageOffset === 0;
+    next.disabled = reviewSubmitting || reviewPageOffset + tasks.length >= reviewPageTotal;
+    for (const task of tasks) {
+      const checkbox = checkboxes.get(task.id);
+      if (!checkbox) continue;
+      const conflicts = conflictsWithSelection(task);
+      checkbox.checked = selectedReviews.has(task.id);
+      checkbox.disabled = reviewSubmitting || !task.merge_selection?.eligible || conflicts.length > 0
+        || (!checkbox.checked && selectedReviews.size >= 100);
+      hints.get(task.id).textContent = conflicts.length
+        ? `与已选审核 #${conflicts.map(c => c.task_id).join("、#")} 互斥，请先取消另一项。`
+        : task.merge_selection?.unavailable_reason || "";
+    }
+  }
+  const submit = button("确认归并所选", async () => {
+    if (!selectedReviews.size || reviewSubmitting) return;
+    const entries = [...selectedReviews].map(([task_id, candidate_event_id]) => ({
+      task_id, candidate_event_id, decision_reason: reviewReasons.get(task_id) || null,
+    }));
+    if (!confirm(`确认将所选 ${entries.length} 条分别归入各自的候选目标？只生成一次更新草稿。`)) return;
+    reviewSubmitting = true;
+    root.querySelectorAll("button, input").forEach(el => { el.disabled = true; });
+    updateSelection();
+    batchResult.replaceChildren(node("p", "正在逐条保存归并结果并统一重算，请等待；不会重新采集或发送邮件。"));
+    let reloaded = false;
+    try {
+      const result = await api("/ops/human-review/batch-merge", { items: entries, reviewer: "admin" });
+      const details = (result.conflicts || []).map(c => `审核 #${c.task_ids.join("、#")}：${c.reason}`);
+      for (const item of result.items || []) {
+        details.push(`审核 #${item.task_id}：${item.status === "succeeded" ? "已归并" : item.message || item.status}`);
+        if (item.status === "succeeded" || item.status === "skipped") selectedReviews.delete(item.task_id);
+      }
+      const message = `${result.message}${result.report_id ? `，更新草稿 #${result.report_id}` : ""}`;
+      show(message, result.status !== "succeeded" || result.refresh_status === "failed");
+      reviewSubmitting = false;
+      await load();
+      reloaded = true;
+      $("review-batch").hidden = false;
+      $("review-batch").append(node("p", message), ...details.map(s => node("p", s, "small")));
+    } finally {
+      reviewSubmitting = false;
+      if (!reloaded && root.isConnected) {
+        // Restore existing single-action availability after a transport failure too.
+        await listReviews(tasks);
+      }
+    }
+  });
+  const selectSafe = button("选择本页无互斥项", () => {
+    for (const task of eligible.values()) {
+      if (selectedReviews.size < 100 && !task.merge_selection.conflicts.length) selectedReviews.set(task.id, task.merge_selection.target_event_id);
+    }
+    updateSelection();
+  });
+  const clear = button("清空选择", () => { selectedReviews.clear(); updateSelection(); });
+  const previous = button("上一页", async () => { reviewPageOffset = Math.max(0, reviewPageOffset - 50); await load(); });
+  const next = button("下一页", async () => { reviewPageOffset += 50; await load(); });
+  toolbar.append(node("h3", "批量归并"), summary,
+    node("p", "同一线索指向不同事件时只能选一个；翻页保留选择，最多100条。请逐条核对目标。", "small muted"),
+    node("p", `当前第 ${reviewPageOffset + 1}–${reviewPageOffset + tasks.length} 条，共 ${reviewPageTotal || tasks.length} 条`, "small"),
+    previous, next, selectSafe, clear, submit, batchResult);
   for (const task of tasks) {
     const payload = task.payload || {},
       panel = node("article", null, "panel");
@@ -371,6 +455,26 @@ async function listReviews(tasks) {
       node("p", `累计涉及 ${new Set([...(payload.run_ids || []), payload.run_id].filter(Boolean)).size} 轮采集`, "muted"),
       node("p", payload.reason || "需要人工核对是否属于同一事件", "muted"),
     );
+    if (task.status === "pending") {
+      const selection = task.merge_selection || {};
+      const label = node("label", null, "review-select");
+      const checkbox = node("input");
+      checkbox.type = "checkbox";
+      checkbox.setAttribute("aria-label", `选择审核 ${task.id} 归并`);
+      checkbox.addEventListener("change", () => {
+        if (checkbox.checked) selectedReviews.set(task.id, selection.target_event_id);
+        else selectedReviews.delete(task.id);
+        updateSelection();
+      });
+      label.append(checkbox, document.createTextNode("加入批量归并"));
+      const hint = node("p", null, "quality small");
+      checkboxes.set(task.id, checkbox); hints.set(task.id, hint);
+      panel.append(label,
+        node("p", `归并目标：${selection.target_title || "没有可用目标"}`, "review-target"), hint);
+      if (selection.conflicts?.length) {
+        panel.append(node("p", `互斥关系：${selection.conflicts.map(c => `审核 #${c.task_id} → ${c.target_title}`).join("；")}。只能选择其中一个目标。`, "review-exclusive"));
+      }
+    }
     const comparison = node("div", null, "review-comparison");
     const incoming = node("div", null, "review-side"),
       existing = node("div", null, "review-side");
@@ -418,6 +522,8 @@ async function listReviews(tasks) {
       reason = node("input");
     reason.placeholder = "处理理由（可选）";
     reason.setAttribute("aria-label", "处理理由");
+    reason.value = reviewReasons.get(task.id) || "";
+    reason.addEventListener("input", () => reviewReasons.set(task.id, reason.value));
     actions.append(reason);
     const eventTitle = node("input");
     eventTitle.value = payload.title || payload.event_signal?.title || "";
@@ -449,13 +555,13 @@ async function listReviews(tasks) {
         );
         await load();
       });
-      b.disabled =
-        decision === "merge_to_existing" && !payload.candidate_event_id;
+      b.disabled = reviewSubmitting || (decision === "merge_to_existing" && !task.merge_selection?.eligible);
       actions.append(b);
     });
     panel.append(actions);
     root.append(panel);
   }
+  updateSelection();
 }
 function resetRecipientForm() {
   $("recipient-form").reset();
@@ -586,13 +692,18 @@ async function load() {
     api("/api/reports"),
     api("/api/usage"),
     api("/api/jobs"),
-    api("/api/review-queue"),
+    api(`/api/review-queue?offset=${reviewPageOffset}`),
     api("/api/deliveries"),
     api("/api/daily-jobs"),
     api("/api/recipients"),
     api("/api/run-progress"),
   ]);
-  const [dash, reports, usage, jobs, reviews, deliveries, dailyJobs, recipients, progress] = responses;
+  const [dash, reports, usage, jobs, initialReviews, deliveries, dailyJobs, recipients, progress] = responses;
+  let reviews = initialReviews;
+  if (reviewPageOffset && reviewPageOffset >= reviews.total) {
+    reviewPageOffset = 0;
+    reviews = await api("/api/review-queue");
+  }
   dashboard = dash;
   renderOvernight(dash.overnight);
   renderRunProgress(progress);
@@ -659,7 +770,7 @@ async function load() {
       j.error || (j.report_id ? `简报 #${j.report_id}` : "—"),
     ]),
   );
-  await listReviews(reviews.items);
+  await listReviews(reviews.items, reviews);
   listDeliveries(deliveries);
   listRecipients(recipients);
   table(
