@@ -206,7 +206,7 @@ def test_cli_metrics_only_use_relevant_recent_statuses() -> None:
 def test_all_paid_records_are_filtered_including_relevant_results_after_first_five(search_count):
     def cli_runner(command, timeout):
         assert command[command.index("--count") + 1] == "10"
-        assert command[command.index("--sort") + 1] == "time"
+        assert command[command.index("--sort") + 1] == "hot"
         query = command[command.index("--q") + 1]
         return CLIProcessResult(returncode=0, stderr="", stdout=json.dumps({
             "statuses": [{

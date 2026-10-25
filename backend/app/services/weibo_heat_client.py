@@ -34,7 +34,7 @@ BARE_AMPERSAND = re.compile(r"&(?!amp;|lt;|gt;|quot;|apos;|#\d+;|#x[0-9a-fA-F]+;
 HTML_TAG = re.compile(r"<[^>]+>")
 HOT_VALUE = re.compile(r"(?<!\d)(\d{4,})(?!\d)")
 CLI_SAMPLE_MAX_AGE = timedelta(hours=72)
-CLI_SEARCH_SORT = "time"
+CLI_SEARCH_SORT = "hot"
 
 
 class WeiboHeatError(RuntimeError):

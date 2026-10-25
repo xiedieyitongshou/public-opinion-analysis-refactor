@@ -115,7 +115,7 @@ def test_default_cli_covers_entire_selected_list_within_request_budget(limit, sk
     sampling = json.loads(result.sampling_signature)
     assert sampling["cli_topic_limit"] == limit - skip_top
     assert sampling["cli_search_count"] == 10
-    assert sampling["cli_search_sort"] == "time"
+    assert sampling["cli_search_sort"] == "hot"
 
 
 def test_cli_failure_in_middle_does_not_skip_later_topics():
@@ -290,7 +290,7 @@ def _full_list_collector(limit, *, fail_at=None):
 
     def cli_runner(command, timeout):
         assert command[command.index("--count") + 1] == "10"
-        assert command[command.index("--sort") + 1] == "time"
+        assert command[command.index("--sort") + 1] == "hot"
         query = command[command.index("--q") + 1]
         queries.append(query)
         if len(queries) == fail_at:
