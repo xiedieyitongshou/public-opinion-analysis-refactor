@@ -65,6 +65,12 @@ class WeiboHeatCollector(BaseCollector):
             f"body-rerank-v2:{settings.matching_profile}:"
             f"{settings.weibo_relevance_reject_below}:{settings.weibo_relevance_accept_at}"
         )
+        from app.services.llm_client import reasoning_mode
+
+        if reasoning_mode() == "llm":
+            from app.schemas.llm import PROMPT_VERSION
+
+            params["cli_sampling_version"] = f"llm:{settings.deepseek_model}:{PROMPT_VERSION}"
         # A valid RSS response is our observable list, including a short or empty feed.
         # HTTP/XML failures still return failed; CLI failure does not invalidate RSS.
         params.setdefault("list_complete", True)

@@ -2,7 +2,7 @@
 
 [返回项目首页](../README.md) · [产品设计](product-design.md) · [工具参考](tool-reference.md)
 
-系统由固定 Plan、任务状态机和结构化工具驱动。本文说明运行入口、数据交接与失败处理；LLM 动态规划未接入。
+系统由固定 Plan、任务状态机和结构化工具驱动。语义判断后端支持[规则／DeepSeek 独立切换](llm-reasoning.md)，默认 rules；LLM 动态规划未接入。
 
 ## 运行入口与职责
 
@@ -24,7 +24,7 @@ API 和 CLI 复用业务服务。Collector 负责外部协议，Normalizer 负�
 | 1 | `fetch_source_items` | 调度知乎、微博和官媒 Collector；返回条目、每源状态、观测 ID、榜单完整性与采样口径 |
 | 2 | `normalize_raw_items` | 清洗标题、URL、时间与指标结构，输出 `NormalizedItem`，保留原始指标语义 |
 | 3 | `prepare_source_signals` | 保存／复用 `Source` 与 `Item`，建立来源引用和父话题关系，输出 `SourceSignal` 与匹配引用 |
-| 4 | `extract_event_signals` | 规则抽取关键词、实体、动作、事件类型、时间提示和弱信号，输出 `EventSignal` |
+| 4 | `extract_event_signals` | 按总开关使用原规则或独立 LLM 抽取，输出带来源的 `EventSignal` |
 | 5 | `match_and_resolve_events` | 召回和比较候选，经约束与 Guardrails 创建、归并、待复核或拒绝，保存稳定事件和条目关联 |
 | 6 | `create_human_review_task` | 待确认关系进入人工队列；没有候选则跳过 |
 | 7 | `calculate_event_scores` | 按本轮真实观测计算并保存知乎／微博各自的平台分和快照 |

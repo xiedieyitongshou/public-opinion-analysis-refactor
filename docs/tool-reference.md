@@ -11,7 +11,7 @@
 | `fetch_source_items` | `FetchSourceItemsInput` → `FetchSourceItemsOutput` | 分析第 1 步；外部采集、来源状态和日志 |
 | `normalize_raw_items` | `NormalizeRawItemsInput` → `NormalizeRawItemsOutput` | 第 2 步；确定性清洗 |
 | `prepare_source_signals` | `PrepareSourceSignalsInput` → `PrepareSourceSignalsOutput` | 第 3 步；条目持久化与引用 |
-| `extract_event_signals` | `ExtractEventSignalsInput` → `ExtractEventSignalsOutput` | 第 4 步；规则抽取 |
+| `extract_event_signals` | `ExtractEventSignalsInput` → `ExtractEventSignalsOutput` | 第 4 步；原规则或独立 LLM 抽取，见[模式说明](llm-reasoning.md) |
 | `match_and_resolve_events` | `MatchAndResolveEventsInput` → `MatchAndResolveEventsOutput` | 第 5 步；事件和条目关联落库 |
 | `create_human_review_task` | `CreateHumanReviewTaskInput` → `CreateHumanReviewTaskOutput` | 第 6 步；复核入队，无候选则跳过 |
 | `calculate_event_scores` | `CalculateEventScoresInput` → `CalculateEventScoresOutput` | 第 7 步；平台分与真实观测写入 |

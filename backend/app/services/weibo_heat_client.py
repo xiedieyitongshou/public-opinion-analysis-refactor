@@ -659,7 +659,11 @@ def _parsed_cli_created_at(value: str) -> datetime | None:
 
 def normalize_cli_status(status: dict[str, Any]) -> WeiboCLIStatusSample:
     user = status.get("user") if isinstance(status.get("user"), dict) else {}
-    text = first_present(status, "text", "text_raw", "content")
+    long_text = status.get("long_text")
+    full_text = long_text.get("long_text_content") if isinstance(long_text, dict) else None
+    text = full_text if isinstance(full_text, str) and full_text.strip() else first_present(
+        status, "text", "text_raw", "content"
+    )
     status_id = first_present(status, "idstr", "id", "mid")
     mid = first_present(status, "mid")
     url = first_present(status, "url", "scheme")

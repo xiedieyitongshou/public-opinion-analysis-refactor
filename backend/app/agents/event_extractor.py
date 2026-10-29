@@ -126,7 +126,7 @@ class RuleExtractionResult:
 
 
 class DeepSeekEventExtractionClient:
-    """Adapter placeholder for future OpenAI-compatible DeepSeek calls."""
+    """Deprecated mixed-refinement adapter; use services.llm_client for exclusive mode."""
 
     def __init__(
         self,
@@ -140,14 +140,14 @@ class DeepSeekEventExtractionClient:
         self.model = model or settings.deepseek_model
 
     def refine(self, prompt_payload: dict[str, Any]) -> EventExtractionRefinement:
-        raise RuntimeError("DeepSeek event extraction refinement is not implemented")
+        raise ValueError("Mixed LLM refinement was removed; select EVENT_REASONING_MODE=llm")
 
 
 class LLMEventExtractionRefiner:
     """Controlled LLM refinement wrapper.
 
-    The default client is a non-calling placeholder. This keeps the Day 38
-    implementation deterministic while preserving the provider boundary.
+    Kept for Python import compatibility only. Production extraction uses the
+    exclusive EVENT_REASONING_MODE backend; this wrapper is never mixed in.
     """
 
     def __init__(self, client: DeepSeekEventExtractionClient | None = None) -> None:
@@ -303,6 +303,12 @@ class EventSignalExtractor:
         )
 
     def extract(self, input_data: ExtractEventSignalsInput) -> ExtractEventSignalsOutput:
+        from app.services.llm_client import reasoning_mode
+
+        if reasoning_mode() == "llm":
+            from app.services.llm_event_workflow import extract_signals
+
+            return extract_signals(input_data)
         if not input_data.source_signals:
             return ExtractEventSignalsOutput(
                 run_id=input_data.run_id,
@@ -371,15 +377,9 @@ class EventSignalExtractor:
         input_data: ExtractEventSignalsInput,
         result: RuleExtractionResult,
     ) -> bool:
-        if not self.use_llm_globally or not input_data.use_llm:
-            return False
-        return (
-            result.confidence < self.llm_confidence_threshold
-            or not result.entities
-            or not result.action_terms
-            or result.is_weak_signal
-            or _is_high_value_signal(result.signal)
-        )
+        # EVENT_REASONING_MODE is the only production switch. The legacy flags cannot
+        # activate per-record fallback or merge LLM fields with dictionary fields.
+        return False
 
 
 def _extract_phrases(title: str) -> list[str]:

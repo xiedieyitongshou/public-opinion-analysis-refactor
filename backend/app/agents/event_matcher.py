@@ -93,6 +93,12 @@ class EventMatcher:
         source_refs_by_signal_id: dict[str, SourceSignalMatchRef] | None = None,
     ) -> EventResolution:
         source_refs = source_refs_for_signal(signal, source_refs_by_signal_id or {})
+        from app.services.llm_client import reasoning_mode
+
+        if reasoning_mode() == "llm":
+            from app.services.llm_event_workflow import resolve_signal
+
+            return resolve_signal(signal, candidates, source_refs)
         fingerprint = build_event_fingerprint(signal, source_refs=source_refs)
         target = event_document(signal)
         target.urls = [ref.url for ref in source_refs if ref.url]

@@ -6,6 +6,7 @@ from uuid import uuid4
 
 from pydantic import BaseModel, Field, model_validator
 
+from app.core.config import settings
 from app.schemas.classification import HotspotClassificationAssembly
 from app.schemas.collectors import FetchSourceItemsInput, FetchSourceItemsOutput
 from app.schemas.matching import EventResolution, SourceSignalMatchRef
@@ -26,6 +27,10 @@ class HotspotAnalysisInput(BaseModel):
     window_end: datetime | None = None
     trend_configs: dict[Literal["zhihu", "weibo"], PlatformTrendConfig] = Field(
         default_factory=dict
+    )
+    # Snapshot the backend in the queued input; legacy use_llm is no longer a mixed-mode switch.
+    reasoning_mode: Literal["rules", "llm"] = Field(
+        default_factory=lambda: settings.event_reasoning_mode
     )
     use_llm: bool = False
     matching_profile: Literal["rules", "hybrid", "hybrid_rerank"] | None = None

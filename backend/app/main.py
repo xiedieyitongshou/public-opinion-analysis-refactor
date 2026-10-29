@@ -20,7 +20,7 @@ async def lifespan(app):
     if settings.app_env == "production":
         if not settings.admin_token or len(settings.admin_token) < 32:
             raise RuntimeError("Production requires ADMIN_TOKEN with at least 32 characters")
-        if settings.matching_profile != "rules":
+        if settings.event_reasoning_mode == "rules" and settings.matching_profile != "rules":
             from app.services.semantic_models import DEFAULT_MODEL_ROOT
 
             root = Path(settings.semantic_model_dir or DEFAULT_MODEL_ROOT)

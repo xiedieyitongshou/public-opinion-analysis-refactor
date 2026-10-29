@@ -112,7 +112,7 @@ def test_extract_event_signals_marks_short_topic_as_weak_signal() -> None:
     }
 
 
-def test_extract_event_signals_llm_failure_falls_back_to_rule_result() -> None:
+def test_legacy_llm_flags_cannot_enable_mixed_refinement() -> None:
     extractor = EventSignalExtractor(
         use_llm_globally=True,
         refiner=LLMEventExtractionRefiner(client=FailingDeepSeekClient()),
@@ -134,10 +134,11 @@ def test_extract_event_signals_llm_failure_falls_back_to_rule_result() -> None:
         )
     )
 
-    assert result.status == "partial"
+    assert result.status == "succeeded"
     assert len(result.event_signals) == 1
-    assert "llm_refinement_failed" in result.quality_flags
-    assert any("llm refinement failed" in error for error in result.errors)
+    assert result.event_signals[0].reasoning_mode == "rules"
+    assert "llm_refinement_failed" not in result.quality_flags
+    assert not result.errors
 
 
 def test_extract_event_signals_rejects_legacy_items_input() -> None:

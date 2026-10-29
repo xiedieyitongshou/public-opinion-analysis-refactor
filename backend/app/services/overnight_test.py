@@ -35,13 +35,16 @@ def record_resources(db):
 
 
 def preflight(db):
+    from app.services.llm_client import reasoning_mode, require_llm_configuration
+
+    require_llm_configuration()  # No paid CLI preflight when the selected LLM is unconfigured.
     from app.core.config import settings
     from app.services.request_usage import request_scope
     from app.services.weibo_heat_client import WeiboHeatClient
 
     if not settings.weibo_cli_enabled:
         raise ValueError("请先启用微博 CLI，夜间测试需要验证完整增强链路")
-    if settings.matching_profile != "hybrid_rerank":
+    if reasoning_mode() == "rules" and settings.matching_profile != "hybrid_rerank":
         raise ValueError("夜间完整链路测试需要 MATCHING_PROFILE=hybrid_rerank")
     # Container headroom is observable here; Windows host free RAM is not.
     limit = Path("/sys/fs/cgroup/memory.max")

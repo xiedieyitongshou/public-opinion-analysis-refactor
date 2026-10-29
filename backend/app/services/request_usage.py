@@ -65,6 +65,13 @@ def request_scope(run_id, limits, timeout_seconds, *, sink=None):
         _scope.reset(token)
 
 
+def register_default_limit(source, limit):
+    """Supply a new source budget without overriding an explicitly configured one."""
+    scope = _scope.get()
+    if scope is not None:
+        scope.limits.setdefault(source, limit)
+
+
 def measured_call(source, operation, unit, call):
     scope = _scope.get()
     if scope is None:

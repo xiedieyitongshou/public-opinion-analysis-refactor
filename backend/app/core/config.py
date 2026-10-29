@@ -105,6 +105,22 @@ class Settings(BaseSettings):
         alias="OFFICIAL_RSS_TIMEOUT_SECONDS",
         gt=0,
     )
+    event_reasoning_mode: Literal["rules", "llm"] = Field(
+        default="rules", alias="EVENT_REASONING_MODE"
+    )
+    llm_timeout_seconds: float = Field(default=30, alias="LLM_TIMEOUT_SECONDS", gt=0, le=120)
+    llm_max_calls_per_run: int = Field(default=100, alias="LLM_MAX_CALLS_PER_RUN", ge=1, le=2000)
+    llm_document_max_chars: int = Field(
+        default=1800, alias="LLM_DOCUMENT_MAX_CHARS", ge=200, le=6000
+    )
+    llm_input_max_chars: int = Field(default=16000, alias="LLM_INPUT_MAX_CHARS", ge=2000, le=100000)
+    llm_max_output_tokens: int = Field(default=2200, alias="LLM_MAX_OUTPUT_TOKENS", ge=200, le=8000)
+    llm_candidates_per_request: int = Field(
+        default=4, alias="LLM_CANDIDATES_PER_REQUEST", ge=1, le=10
+    )
+    llm_cache_path: str | None = Field(default=None, alias="LLM_CACHE_PATH")
+    llm_cache_hours: int = Field(default=24, alias="LLM_CACHE_HOURS", ge=1, le=168)
+    # Deprecated: exclusive backend selection supersedes mixed refinement.
     event_extraction_use_llm: bool = Field(
         default=False,
         alias="EVENT_EXTRACTION_USE_LLM",
@@ -137,7 +153,7 @@ class Settings(BaseSettings):
     official_search_timeout_seconds: float = Field(default=10, gt=0, le=60)
     deepseek_api_key: str | None = Field(default=None, alias="DEEPSEEK_API_KEY")
     deepseek_base_url: str = Field(default="https://api.deepseek.com", alias="DEEPSEEK_BASE_URL")
-    deepseek_model: str = Field(default="deepseek-chat", alias="DEEPSEEK_MODEL")
+    deepseek_model: str = Field(default="deepseek-flash", alias="DEEPSEEK_MODEL")
 
     admin_token: str | None = None
     admin_cookie_secure: bool = False  # Set true behind HTTPS.

@@ -163,6 +163,7 @@ def prepare_source_signals(
 
 
 def item_to_source_signal(item, item_id: str) -> SourceSignal:
+    from app.services.llm_event_workflow import documents_from_item
     from app.services.topic_content import topic_context, topic_excerpts
 
     normalized = item.normalized
@@ -196,6 +197,7 @@ def item_to_source_signal(item, item_id: str) -> SourceSignal:
             "source_name": item.source_name,
             "topic_context": topic_context(item),
             "topic_excerpts": topic_excerpts(item),
+            "llm_documents": documents_from_item(item, signal_id),
         },
         classification_features={"source_citation": item.source_citation},
         relation_to_parent=relation,
@@ -417,6 +419,8 @@ def resolve_and_persist_events(
         event.last_seen_at = max(parse_datetime(event.last_seen_at) or observed_at, observed_at)
         detail = dict(event.event_detail_json or {})
         incoming_features = {
+            "reasoning_mode": signal.reasoning_mode,
+            "reasoning_detail": signal.reasoning_detail,
             "entities": signal.entities,
             "action_terms": signal.action_terms,
             "event_time_hint": signal.model_dump(mode="json")["event_time_hint"],
@@ -633,7 +637,8 @@ def classify_events(db: Session, data: ClassifyEventsInput) -> ClassifyEventsOut
         degraded = [
             flag
             for flag in support.quality_flags
-            if flag.startswith(("embedding_", "reranker_", "official_query_"))
+            if flag.startswith(("embedding_", "reranker_", "official_query_", "llm_"))
+            and not flag.endswith("_used")
         ]
         if degraded:
             output.status = "partial"

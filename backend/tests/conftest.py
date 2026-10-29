@@ -8,6 +8,7 @@ from app.core.config import settings
 @pytest.fixture(autouse=True)
 def offline_defaults(monkeypatch):
     monkeypatch.setattr(settings, "matching_profile", "rules")
+    monkeypatch.setattr(settings, "event_reasoning_mode", "rules")
     monkeypatch.setattr(settings, "official_search_enabled", False)
     monkeypatch.setattr(settings, "official_article_enabled", False)
     monkeypatch.setattr(settings, "admin_token", "test-admin")

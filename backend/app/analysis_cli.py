@@ -30,6 +30,9 @@ def main() -> int:
     parser.add_argument("--interval-minutes", type=int, help="Actual intended sampling interval")
     parser.add_argument("--matching-profile", choices=("rules", "hybrid", "hybrid_rerank"))
     parser.add_argument(
+        "--reasoning-mode", choices=("rules", "llm"), default=settings.event_reasoning_mode
+    )
+    parser.add_argument(
         "--official-search",
         action=argparse.BooleanOptionalAction,
         default=None,
@@ -65,6 +68,7 @@ def main() -> int:
         window_end=datetime.fromisoformat(args.window_end) if args.window_end else None,
         trend_configs=configs,
         matching_profile=args.matching_profile,
+        reasoning_mode=args.reasoning_mode,
         official_search_enabled=(
             False if replay and args.official_search is None else args.official_search
         ),

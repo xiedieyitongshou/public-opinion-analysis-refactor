@@ -35,6 +35,10 @@ RSSHub 负责获取热搜标题、URL 和列表顺序。`list_position` 是 RSS 
 
 当前基础配置请求 20 条并跳过首条，正常有 19 个有效话题。有效范围由本轮 `limit`、`skip_top` 和实际响应共同决定；请求上限不保证一定返回同样数量。
 
+### 语义判断后端
+
+采集协议与热度公式保持独立；可用 `EVENT_REASONING_MODE=rules|llm` 切换抽取、搜索相关性、事件归并和官媒补证的判断后端，见[DeepSeek 独立模式](llm-reasoning.md)。默认 rules，LLM 已做有限历史材料回放，尚未完成全量验收。微博长正文优先读取 `long_text.long_text_content`，缺失时回退短文本；历史简报不自动变化。
+
 ### CLI 全话题覆盖
 
 CLI 开启后，对本轮每个入选 RSS 话题各执行一次 `search statuses/limited`，固定 `sort=hot`、默认 `count=10`。全部返回记录先做逐条相关性与冲突检查，再汇总已接纳样本的数量、最新时间和互动字段；不先截掉后五条。

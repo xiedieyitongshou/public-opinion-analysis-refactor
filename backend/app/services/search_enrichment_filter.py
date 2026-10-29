@@ -45,6 +45,19 @@ def evaluate_search_enrichment(
     enrichment_text = _combined_text(enrichment_item)
     parent_text = _combined_text(parent_item)
 
+    from app.services.llm_client import reasoning_mode
+
+    if reasoning_mode() == "llm":
+        from app.services.llm_event_workflow import evaluate_relevance
+
+        return evaluate_relevance(
+            parent_title,
+            (enrichment_item.content_text or enrichment_item.content
+             or enrichment_item.summary or enrichment_title),
+            source=source, parent_candidate_id=parent_candidate_id,
+            parent_signal_id=parent_signal_id, user_query_id=user_query_id,
+            quality_flags=enrichment_item.quality_flags,
+        )
     matched_by: list[str] = []
     rejected_by: list[str] = []
     quality_flags = list(enrichment_item.quality_flags)
@@ -71,7 +84,8 @@ def evaluate_search_enrichment(
         from app.services.weibo_relevance import classify_body
 
         # Content and title often contain identical CLI text. Do not score it twice.
-        text = enrichment_item.content_text or enrichment_item.content or enrichment_item.summary or enrichment_title
+        text = (enrichment_item.content_text or enrichment_item.content
+                or enrichment_item.summary or enrichment_title)
         decision, score, matches, reasons = classify_body(parent_title, text)
         return SearchEnrichmentRelation(
             source=source, parent_candidate_id=parent_candidate_id,

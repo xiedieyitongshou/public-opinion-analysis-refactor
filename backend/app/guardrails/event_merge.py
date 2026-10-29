@@ -108,8 +108,8 @@ def finalize_event_resolution(
             "match_features_json": features,
             "guardrail_status": guardrail_result.status,
             "review_required": review_required,
-            "blocks_auto_analysis": False,
-            "blocks_publish": guardrail_result.blocks_publish,
+            "blocks_auto_analysis": resolution.blocks_auto_analysis,
+            "blocks_publish": resolution.blocks_publish or guardrail_result.blocks_publish,
             "candidate_review": candidate_review,
         }
     )

@@ -188,6 +188,13 @@ class BaseCollector(ABC):
                 key: config.params.get(key)
                 for key in ("cli_search_count", "cli_search_sort", "cli_sampling_version")
             })
+        from app.services.llm_client import reasoning_mode
+
+        if reasoning_mode() == "llm":
+            from app.core.config import settings
+            from app.schemas.llm import PROMPT_VERSION
+
+            sampling_params["reasoning_backend"] = f"llm:{settings.deepseek_model}:{PROMPT_VERSION}"
         sampling = json.dumps(
             sampling_params,
             sort_keys=True,

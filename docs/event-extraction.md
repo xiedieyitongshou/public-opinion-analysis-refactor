@@ -2,7 +2,7 @@
 
 [返回项目首页](../README.md) · [工作流](architecture.md) · [事件匹配](event-matching.md)
 
-当前 `extract_event_signals` 已执行规则抽取，输入为 `SourceSignal[]`，输出可追溯的 `EventSignal[]`。LLM refinement 仅预留适配器，真实请求尚未实现。
+当前 `extract_event_signals` 输入为 `SourceSignal[]`，输出可追溯的 `EventSignal[]`。默认规则抽取；新增独立 DeepSeek 抽取后端，使用 `EVENT_REASONING_MODE=llm` 选择，见[配置与边界](llm-reasoning.md)。已完成有限历史材料的真实 API 回放，不代表全量抽取效果。
 
 ## 抽取解决什么问题
 
@@ -34,15 +34,13 @@ SourceSignal
 
 `event_signal_id` 由轮次和来源信号生成，是抽取记录身份。跨轮次追踪必须使用下一步归并生成或复用的 `Event.event_id`。
 
-## LLM refinement 的预留设计
+## LLM 独立抽取（2026-10-29）
 
-代码已有受限 `EventExtractionRefinement`、逐条选择条件和失败回退。允许增强主题、关键词、实体、动作、事件类型、弱信号与有限置信度增量，不允许直接改写事件 ID、来源、原始指标或作出合并决定。
+原按低置信度逐条 refinement 的混合设计已停用，兼容字段 `use_llm`、`EVENT_EXTRACTION_USE_LLM` 不再开启这种路径。总开关为 `EVENT_REASONING_MODE=rules|llm`；选择 llm 时所有符合来源约束的输入均由 LLM 提取，不调用词典提取器，不把旧实体和模型字段拼回输出。
 
-启用条件要求全局 `EVENT_EXTRACTION_USE_LLM` 和工具输入 `use_llm` 同时为真，然后按低置信、字段不足、弱信号或高价值来源逐条选择；默认均关闭。输入只组装精简的标题、平台、发布时间、规则结果和质量标记。
+新实现位于 `services/llm_event_workflow.py` 与 `services/llm_client.py`，不是旧 `DeepSeekEventExtractionClient.refine()`。输入包含来源标题及正文，响应字段有严格 Schema 和逐字原文引用校验；仅允许有证据的发生时间，缺失字段保留空。Key、响应或预算失败不回退规则结果，而是返回明确失败／部分成功。
 
-**目前 `DeepSeekEventExtractionClient.refine()` 直接抛出未实现错误。** 仅填写 API Key 或开启开关无法获得真正的 LLM 抽取。还需实现请求、提示词、响应解析、输入预算和验证；失败时保留规则结果并标记降级。`analysis_cli` 当前没有 `--use-llm` 参数。
-
-设计选择是先保留可审计规则，再对确有收益的困难样本增加可控增强，而不是用 LLM 接管身份和流程。后续效果必须独立评估，现有匹配评估不能充当 LLM 抽取准确率。
+模型不修改来源 ID、原始指标、热度公式或数据库归属。事件归并使用独立的 LLM 候选比较契约，不能把抽取结果本身视为同事件判决。默认关闭；模拟测试与真实材料回放的范围、时间格式失败等限制见[独立模式说明](llm-reasoning.md)。
 
 ## 状态与实现入口
 

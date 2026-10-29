@@ -145,7 +145,7 @@ def build_hotspot_analysis_plan(data: HotspotAnalysisInput) -> Plan:
         name="Hotspot collection, event construction and analysis",
         mode="hotspot_analysis",
         steps=steps,
-        metadata={"run_id": data.run_id},
+        metadata={"run_id": data.run_id, "reasoning_mode": data.reasoning_mode},
     )
 
 
@@ -154,6 +154,13 @@ class HotspotAnalysisAgent:
         self.registry = registry or default_tool_registry
 
     def run(self, db: Session, data: HotspotAnalysisInput) -> HotspotAnalysisOutput:
+        from app.services.llm_client import reasoning_scope, require_llm_configuration
+
+        with reasoning_scope(data.reasoning_mode):
+            require_llm_configuration()  # Fail before any paid source collection.
+            return self._run(db, data)
+
+    def _run(self, db: Session, data: HotspotAnalysisInput) -> HotspotAnalysisOutput:
         plan = build_hotspot_analysis_plan(data)
         registry = self._registry_for_run(db, plan)
         tasks = AgentTaskRunner(registry, actor="hotspot_analysis_agent").run_plan(plan, db)

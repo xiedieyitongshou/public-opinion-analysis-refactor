@@ -21,6 +21,7 @@ MatchMethod = Literal[
     "embedding_rerank",
     "canonical_id",
     "cross_encoder",
+    "llm_event_judgement",
 ]
 
 
@@ -55,6 +56,8 @@ class EventMatchConfig(BaseModel):
 class MatchFeatures(BaseModel):
     """Auditable feature bundle saved with each match decision."""
 
+    reasoning_mode: Literal["rules", "llm"] = "rules"
+    llm_detail: dict = Field(default_factory=dict)
     id_match: bool = False
     url_match: bool = False
     title_containment: bool = False

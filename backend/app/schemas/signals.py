@@ -36,6 +36,7 @@ class SearchEnrichmentRelation(BaseModel):
     rejected_by: list[str] = Field(default_factory=list)
     quality_flags: list[str] = Field(default_factory=list)
     audit_only: bool = False
+    reasoning_detail: dict[str, Any] = Field(default_factory=dict)
 
     @model_validator(mode="after")
     def enforce_attachment_boundary(self) -> SearchEnrichmentRelation:
@@ -110,6 +111,8 @@ class EventSignal(BaseModel):
     title: str
     summary: str = ""
     has_accepted_cli_context: bool = False
+    reasoning_mode: Literal["rules", "llm"] = "rules"
+    reasoning_detail: dict[str, Any] = Field(default_factory=dict)
     keywords: list[str] = Field(default_factory=list)
     entities: list[str] = Field(default_factory=list)
     event_type: str | None = None

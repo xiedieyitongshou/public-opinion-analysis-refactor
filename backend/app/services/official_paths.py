@@ -109,6 +109,8 @@ def normalized_item_to_source_signal(
 ) -> SourceSignal:
     """Adapt an official NormalizedItem/Item-like object to SourceSignal."""
 
+    from app.services.llm_event_workflow import documents_from_item
+
     normalized = _dict_value(item, "normalized_json", "normalized", default={}) or {}
     source_citation = _dict_value(item, "source_citation_json", "source_citation", default={}) or {}
     raw_metrics = _dict_value(item, "raw_metrics_json", "raw_metrics", default={}) or {}
@@ -148,6 +150,9 @@ def normalized_item_to_source_signal(
         fetched_at=_datetime_string(item, "fetched_at") or datetime.utcnow().isoformat(),
         raw_metrics=raw_metrics if isinstance(raw_metrics, dict) else {},
         platform_features={
+            "llm_documents": documents_from_item(
+                item, _source_signal_id(path_type, item_id, title)
+            ),
             "source_name": _string_value(item, "source_name")
             or _string_value(source, "name")
             or _string_value(source_citation, "source_name"),
@@ -189,7 +194,7 @@ def run_official_agenda_path(
     source_signals = [
         normalized_item_to_source_signal(item, path_type="official_agenda") for item in items
     ]
-    extractor = extractor or EventSignalExtractor(use_llm_globally=False)
+    extractor = extractor or EventSignalExtractor()
     resolver = resolver or EventResolverAgent()
     extract_output = extractor.extract(
         ExtractEventSignalsInput(

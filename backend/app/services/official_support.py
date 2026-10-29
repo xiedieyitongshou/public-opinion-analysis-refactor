@@ -128,7 +128,9 @@ def official_match_document(event):
                 and not (value(item, "normalized_json", "normalized", default={}) or {})
                 .get("source_signal", {}).get("audit_only")]
     accepted.sort(key=lambda item: not bool(topic_excerpts(item)))
-    context = "\n".join(dict.fromkeys(topic_context(item) for item in accepted if topic_context(item)))
+    context = "\n".join(dict.fromkeys(
+        topic_context(item) for item in accepted if topic_context(item)
+    ))
     return document.model_copy(update={"summary": context[:1200]}) if context else document
 
 
@@ -152,6 +154,14 @@ def match_official_support(
         else attention_start
     )
     target = official_match_document(event)
+    from app.services.llm_client import reasoning_mode
+
+    if reasoning_mode() == "llm":
+        target = target.model_copy(update={"event_time": as_datetime(
+            ((_dict_value(event, "event_detail_json", "event_detail", default={}) or {})
+             .get("match_features", {}).get("reasoning_detail", {}).get("facts", {})
+             .get("occurred_at") or {}).get("value")
+        )})
     current_items = None if official_items is None else list(official_items)
     if window_end is not None and current_items is not None:
         eligible = []
@@ -200,7 +210,8 @@ def match_official_support(
             prior = ref.published_at and as_datetime(ref.published_at) <= attention_start
             features = ref.match_features
             specific = (
-                (features.get("title_containment") and len(target.title.strip()) >= 8)
+                features.get("llm_decision") == "same_event"
+                or (features.get("title_containment") and len(target.title.strip()) >= 8)
                 or (
                     features.get("entity_overlap", 0) > 0
                     and features.get("action_overlap", 0) > 0
@@ -283,6 +294,12 @@ def _match_official_support(
             return citation_result
         return _not_checked_result(event_data, "official_pool_empty")
 
+    from app.services.llm_client import reasoning_mode
+
+    if reasoning_mode() == "llm":
+        from app.services.llm_event_workflow import match_official
+
+        return match_official(event, event_data, evidence_items, config)
     target = official_match_document(event)
     documents = [item_document(item) for item in evidence_items]
     if len(documents) > config.recall_limit:
