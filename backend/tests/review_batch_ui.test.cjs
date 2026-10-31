@@ -25,6 +25,7 @@ function setup() {
   };
   vm.createContext(context);
   const source = fs.readFileSync(path.join(__dirname, "../app/web/app.js"), "utf8");
+  vm.runInContext(source.slice(source.indexOf("function reviewCategory("), source.indexOf("const selectedReviews =")), context);
   vm.runInContext(source.slice(source.indexOf("const selectedReviews ="), source.indexOf("function resetRecipientForm")), context);
   const tasks = [
     { id: 1, status: "pending", payload: { title: "X" }, merge_selection: { eligible: true, target_event_id: "a", target_title: "A", conflicts: [{ task_id: 2, target_title: "B" }] } },
@@ -35,6 +36,50 @@ function setup() {
 }
 function checkbox(elements, id) { return descendants(elements["review-list"]).find(e => e["aria-label"] === `选择审核 ${id} 归并`); }
 function action(elements, text) { return descendants(elements["review-batch"]).find(e => e.textContent === text); }
+
+test("technical failures are labelled separately without claiming a merge suggestion", async () => {
+  const { context, elements, tasks } = setup();
+  tasks[0].payload.reason = "LLM comparison unavailable; no rule fallback: llm_invalid_response";
+  await context.listReviews([tasks[0]]);
+  assert.ok(descendants(elements["review-list"]).some(e => String(e.textContent).includes("技术异常待处理")));
+  assert.equal(checkbox(elements, 1), undefined);
+  await action(elements, "选择本页无互斥项").events.click();
+  assert.ok(descendants(elements["review-batch"]).some(e => String(e.textContent).includes("已选择 0 条")));
+  const evidence = context.reviewEvidence(tasks[0].payload, { existing: null });
+  const text = descendants(evidence).map(e => e.textContent).join(" ");
+  assert.ok(text.includes("这不代表模型建议合并"));
+});
+
+test("LLM review shows concrete clues and missing details instead of unused model scores", () => {
+  const { context } = setup();
+  const evidence = context.reviewEvidence({
+    candidate_event_id: "A", confidence: 0.6,
+    match_features_json: { reasoning_mode: "llm", llm_detail: {
+      review_category: "plausible_uncertainty", comparisons: [{ judgement: {
+        candidate_id: "A", decision: "insufficient_evidence", reason: "疑似同一事故",
+        missing_information: ["具体日期"], same_event_clues: [{ quote: "甲车型在乙市撞车" }],
+      } }],
+    } },
+  }, { existing: { title: "事故" } });
+  const text = descendants(evidence).map(e => e.textContent).join(" ");
+  assert.ok(text.includes("甲车型在乙市撞车"));
+  assert.ok(text.includes("具体日期"));
+  assert.ok(!text.includes("0.600") && !text.includes("reranker"));
+});
+
+test("a no-target review does not display dozens of unrelated comparisons", () => {
+  const { context } = setup();
+  const evidence = context.reviewEvidence({
+    match_features_json: { reasoning_mode: "llm", llm_detail: {
+      comparisons: Array.from({ length: 30 }, (_, i) => ({ judgement: {
+        candidate_id: String(i), decision: "different_event", reason: "与该事件不同",
+      } })),
+    } },
+  }, { existing: null });
+  const text = descendants(evidence).map(e => e.textContent).join(" ");
+  assert.ok(text.includes("没有具体的归并目标"));
+  assert.ok(!text.includes("与该事件不同"));
+});
 
 test("selecting one target disables its exclusive alternative and clear restores it", async () => {
   const { context, elements, tasks } = setup();

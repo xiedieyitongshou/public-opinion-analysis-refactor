@@ -72,6 +72,7 @@ class PlatformTrendConfig(BaseModel):
     max_gap_minutes: float | None = Field(default=None, gt=0)
     rank_delta_threshold: int = Field(default=1, ge=1)
     score_delta_threshold: float = Field(default=0.05, gt=0, le=1)
+    native_heat_change_threshold: float = Field(default=0.05, gt=0, le=1)
 
     @model_validator(mode="after")
     def default_gap(self) -> PlatformTrendConfig:
@@ -123,10 +124,12 @@ class PlatformTrendResult(BaseModel):
     duration_status: DurationStatus = "unknown"
     latest_platform_heat: PlatformHeatScore | None = None
     trend_status: PlatformTrendStatus = "unknown"
-    trend_basis: Literal["rank", "platform_score", "none"] = "none"
+    trend_basis: Literal["rank", "native_heat", "platform_score", "none"] = "none"
     comparison_observation_ids: list[str] = Field(default_factory=list)
     rank_delta: int | None = None
     score_delta: float | None = None
+    native_heat_delta: float | None = None
+    native_heat_change_ratio: float | None = None
     quality_flags: list[str] = Field(default_factory=list)
     limitations: list[str] = Field(default_factory=list)
 

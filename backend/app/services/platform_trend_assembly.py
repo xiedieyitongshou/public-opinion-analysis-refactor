@@ -10,6 +10,7 @@ from sqlalchemy import select
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.orm import Session
 
+from app.core.config import settings
 from app.models import Event, EventSnapshot, Item, PlatformScore, Source
 from app.schemas.collectors import FetchSourceItemsOutput
 from app.schemas.platform_heat import PlatformHeatConfig
@@ -159,7 +160,9 @@ def record_collection_round(
                 signals = []
                 for item in hit_items:
                     signal = item_to_platform_heat_signal(item, event_id=event_id)
-                    if result.source_id == "zhihu_hot_list":
+                    if (result.source_id == "zhihu_hot_list"
+                            and settings.zhihu_search_enrichment_enabled
+                            and signal.raw_metrics.get("heat_provider") != "zhihu_native_hotlist"):
                         metrics, refs, signatures = zhihu_answer_metrics(item, collection)
                         signal = signal.model_copy(update=metrics)
                         extra_refs.extend(refs)
@@ -168,6 +171,13 @@ def record_collection_round(
                         ).hexdigest()
                     signals.append(signal)
                 heat = score_platform_signals(signals, config, observed_at=result.observed_at)[0]
+                if result.source_id == "zhihu_hot_list":
+                    native = any(s.raw_metrics.get("heat_provider") == "zhihu_native_hotlist"
+                                 for s in signals)
+                    if native:
+                        config_version = "zhihu-native-heat-v1:" + config_hash
+                    elif not settings.zhihu_search_enrichment_enabled:
+                        config_version = "zhihu-rank-only-v1:" + config_hash
                 if platform == "weibo":
                     heat = heat.model_copy(
                         update={

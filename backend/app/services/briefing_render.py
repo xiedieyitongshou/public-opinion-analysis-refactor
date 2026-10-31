@@ -42,13 +42,19 @@ def trend_label(card, platform):
         presence += f" · 第 {heat.primary_platform_rank} 名"
     if platform == "zhihu":
         if heat and heat.platform_score is not None:
-            presence += f" · 知乎站内热度 {heat.platform_score:.3f}（系统计算，仅限知乎内比较）"
+            native_text = heat.raw_metrics_used.get("heat_text")
+            if native_text:
+                presence += f" · 知乎热榜 {native_text}"
+            else:
+                presence += f" · 知乎站内热度 {heat.platform_score:.3f}（系统计算，仅限知乎内比较）"
         else:
             presence += " · 知乎站内热度暂不可用"
     elif platform == "weibo" and heat and heat.platform_score is not None:
         presence += f" · 本平台热度 {heat.platform_score:.3f}"
     if trend and trend.trend_status != "unknown":
-        if trend.trend_basis == "rank" and trend.rank_delta is not None:
+        if trend.trend_basis == "native_heat" and trend.native_heat_change_ratio is not None:
+            movement += f" · 热度变化 {trend.native_heat_change_ratio:+.1%}"
+        elif trend.trend_basis == "rank" and trend.rank_delta is not None:
             movement += f" · 榜位变化 {trend.rank_delta:+d}"
         elif trend.trend_basis == "platform_score" and trend.score_delta is not None:
             movement += f" · 本平台分数变化 {trend.score_delta:+.3f}"

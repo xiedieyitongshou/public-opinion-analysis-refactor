@@ -17,6 +17,7 @@ class PlatformHeatConfig(BaseModel):
     """Tunable constants for platform-local heat formulas."""
 
     zhihu_engagement_cap: int = Field(default=10000, ge=1)
+    zhihu_native_heat_scale: float = Field(default=10000000, gt=0)
     weibo_search_total_cap: int = Field(default=100000, ge=1)
     weibo_status_count_cap: int = Field(default=50, ge=1)
     weibo_interaction_cap: int = Field(default=10000, ge=1)
@@ -33,6 +34,7 @@ class PlatformHeatSignalInput(BaseModel):
     signal_role: SignalRole
     rank: int | float | None = None
     list_position: int | float | None = None
+    native_heat: float | None = Field(default=None, ge=0, allow_inf_nan=False)
     vote_count: int | None = None
     comment_count: int | None = None
     topic_present: bool | None = None

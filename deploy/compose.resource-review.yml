@@ -1,11 +1,13 @@
-# Local review UI for the 2026-10-16 profiling database.
+# Local isolated collection trial started 2026-10-19.
 # Use after compose.resource-test.yml; requires the local-review snapshot image.
 services:
   backend:
     image: opinion-backend:local-review
     command: ["python", "-m", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "1"]
     environment:
-      DATABASE_URL: sqlite:////app/data/20261016-direct.db
-      SEMANTIC_CACHE_PATH: /app/data/20261016-direct-cache.db
+      DATABASE_URL: sqlite:////app/data/20261019-isolated-001.db
+      ZHIHU_HOT_LIST_PROVIDER: native
+      ZHIHU_SEARCH_ENRICHMENT_ENABLED: "false"
+      SEMANTIC_CACHE_PATH: /app/data/20261019-isolated-001-cache.db
     ports:
       - "127.0.0.1:18000:8000"

@@ -46,7 +46,7 @@ def test_nine_hourly_slots_no_duplicates_and_no_more_after_end(db, monkeypatch):
         from app.core.config import settings
         assert run.input_json['official_search_enabled'] == settings.official_search_enabled
         assert run.input_json['collection']['source_ids'] == [
-            'zhihu_hot_list', 'zhihu_search', 'weibo_rsshub_hot_search',
+            'zhihu_hot_list', 'weibo_rsshub_hot_search',
             'chinanews_scroll_rss', 'people_politics_rss', 'xinhua_politics_rss',
         ]
         night.tick(db, at)

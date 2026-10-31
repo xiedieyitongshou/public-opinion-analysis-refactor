@@ -92,7 +92,13 @@ def default_analysis_input(run_id=None):
     from app.agents.planning import Planner
 
     sources = list(Planner.daily_collection_source_ids)
-    sources.insert(1, "zhihu_search")
+    search_enabled = settings.zhihu_search_enrichment_enabled
+    if search_enabled:
+        sources.insert(1, "zhihu_search")
+    logging.getLogger(__name__).info(
+        "zhihu_collection_policy provider=%s search_enrichment_enabled=%s",
+        settings.zhihu_hot_list_provider, search_enabled,
+    )
     return HotspotAnalysisInput(
         run_id=run_id or str(uuid4()),
         matching_profile=settings.matching_profile,
@@ -101,8 +107,11 @@ def default_analysis_input(run_id=None):
             source_ids=sources,
             validate_only=False,
             dry_run=False,
-            per_source_params={"zhihu_search": {"from_hotlist": True, "max_queries": 3}},
-            per_source_limits={"zhihu_search": 5},
+            per_source_params=(
+                {"zhihu_search": {"from_hotlist": True, "max_queries": 3}}
+                if search_enabled else {}
+            ),
+            per_source_limits={"zhihu_search": 5} if search_enabled else {},
         ),
         trend_configs={
             platform: PlatformTrendConfig(

@@ -17,6 +17,15 @@ from app.services.runtime_logging import configure_logging
 @asynccontextmanager
 async def lifespan(app):
     logger = configure_logging()
+    from app.schemas.llm import PROMPT_VERSION
+    from app.services.llm_event_workflow import REVIEW_POLICY_VERSION
+
+    logger.info("event_reasoning_policy mode=%s prompt_version=%s review_policy=%s",
+                settings.event_reasoning_mode, PROMPT_VERSION, REVIEW_POLICY_VERSION)
+    logger.info(
+        "zhihu_collection_policy provider=%s search_enrichment_enabled=%s native_heat_formula=v1",
+        settings.zhihu_hot_list_provider, settings.zhihu_search_enrichment_enabled,
+    )
     if settings.app_env == "production":
         if not settings.admin_token or len(settings.admin_token) < 32:
             raise RuntimeError("Production requires ADMIN_TOKEN with at least 32 characters")

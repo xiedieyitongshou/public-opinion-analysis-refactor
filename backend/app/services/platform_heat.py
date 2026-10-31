@@ -43,6 +43,7 @@ def item_to_platform_heat_signal(item: Any, *, event_id: str) -> PlatformHeatSig
         signal_role=signal_role,
         rank=_number_value(item, "rank") or _number_value(raw_metrics, "rank", "platform_rank"),
         list_position=_number_value(raw_metrics, "list_position"),
+        native_heat=_number_value(raw_metrics, "hot_value"),
         vote_count=_int_value(raw_metrics, "vote_count", "vote_up_count"),
         comment_count=_int_value(raw_metrics, "comment_count", "comments_count"),
         topic_present=_bool_value(normalized, "topic_present"),
@@ -89,6 +90,32 @@ def score_zhihu_platform(
     if signal.search_enrichment_only:
         flags.append("search_enrichment_only")
 
+    if signal.native_heat is not None and not signal.search_enrichment_only:
+        score = signal.native_heat / (signal.native_heat + config.zhihu_native_heat_scale)
+        return PlatformHeatSignalScore(
+            event_id=signal.event_id, platform="zhihu", item_id=signal.item_id,
+            signal_score=score, score_status="ok", platform_bucket=_bucket(score, signal.rank),
+            primary_platform_rank=signal.rank,
+            snapshot_presence_count=signal.snapshot_presence_count,
+            raw_metrics_used=_used_metrics({
+                "hot_value": signal.native_heat, "rank": signal.rank,
+                **{key: signal.raw_metrics.get(key) for key in (
+                    "heat_text", "heat_provider", "answer_count", "follower_count"
+                )},
+            }),
+            sub_scores={"native_heat_score": score}, quality_flags=_dedupe(flags),
+        )
+    if signal.raw_metrics.get("heat_provider") == "zhihu_native_hotlist":
+        # Preserve rank availability, but never replace absent heat with zero or search votes.
+        score = None if signal.search_enrichment_only else rank_score(signal.rank)
+        return PlatformHeatSignalScore(
+            event_id=signal.event_id, platform="zhihu", item_id=signal.item_id,
+            signal_score=score, score_status="partial" if score is not None else "unknown",
+            primary_platform_rank=signal.rank, platform_bucket=_bucket(score, signal.rank),
+            raw_metrics_used={"rank": signal.rank, "heat_provider": "zhihu_native_hotlist"},
+            sub_scores={"rank_score": score},
+            quality_flags=_dedupe([*flags, "zhihu_native_heat_missing", "rank_only_fallback"]),
+        )
     rank_component = None if signal.search_enrichment_only else rank_score(signal.rank)
     snapshot_component = _snapshot_presence_score(signal.snapshot_presence_count)
     rank_delta_component = _rank_delta_score(signal.rank_delta_direction)
@@ -237,6 +264,33 @@ def aggregate_platform_scores(
             )
             continue
 
+        native_members = [score for score in signal_scores
+                          if platform == "zhihu" and (
+                              score.raw_metrics_used.get("heat_provider") == "zhihu_native_hotlist"
+                              or score.raw_metrics_used.get("hot_value") is not None)]
+        native_scores = [
+            score for score in usable_scores
+            if platform == "zhihu" and score.raw_metrics_used.get("hot_value") is not None
+        ]
+        if native_members:
+            # One merged event may contain several questions: use the strongest native
+            # heat, never add duplicate observations, search scores or merge bonuses.
+            best = (
+                max(native_scores, key=lambda score: score.raw_metrics_used["hot_value"])
+                if native_scores
+                else max(native_members, key=lambda score: score.signal_score or 0.0)
+            )
+            results.append(PlatformHeatScore(
+                event_id=event_id, platform=platform, platform_score=best.signal_score,
+                platform_bucket=best.platform_bucket,
+                platform_strength=_strength(best.signal_score),
+                score_status=best.score_status, primary_platform_rank=best.primary_platform_rank,
+                snapshot_presence_count=max(s.snapshot_presence_count for s in native_members),
+                signal_scores=signal_scores, raw_metrics_used=best.raw_metrics_used,
+                sub_scores=best.sub_scores, platform_presence=_presence(platform, signal_scores),
+                quality_flags=flags,
+            ))
+            continue
         best = max(usable_scores, key=lambda score: score.signal_score or 0.0)
         extra_signal_count = max(0, len(usable_scores) - 1)
         platform_score = min(1.0, (best.signal_score or 0.0) + 0.05 * min(3, extra_signal_count))

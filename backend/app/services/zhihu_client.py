@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import hashlib
+import logging
+import math
+import re
 import time
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -30,6 +33,12 @@ class ZhihuHotListItem(BaseModel):
     url: str | None = Field(default=None, alias="Url")
     thumbnail_url: str | None = Field(default=None, alias="ThumbnailUrl")
     summary: str | None = Field(default=None, alias="Summary")
+    hot_value: float | None = Field(default=None, alias="HotValue", ge=0)
+    heat_text: str | None = Field(default=None, alias="HeatText")
+    heat_provider: str | None = Field(default=None, alias="HeatProvider")
+    answer_count: int | None = Field(default=None, alias="AnswerCount", ge=0)
+    follower_count: int | None = Field(default=None, alias="FollowerCount", ge=0)
+    native_rank: int | None = Field(default=None, alias="NativeRank", ge=1)
 
 
 class ZhihuHotListResult(BaseModel):
@@ -37,6 +46,8 @@ class ZhihuHotListResult(BaseModel):
     fetched_at: datetime
     items: list[ZhihuHotListItem]
     raw_payload: dict[str, Any]
+    provider: str = "official"
+    list_complete: bool = True
 
 
 class ZhihuSearchItem(BaseModel):
@@ -105,6 +116,72 @@ class ZhihuClient:
             raw_payload=payload,
         )
 
+    def fetch_native_hot_list(self, limit: int = 30) -> ZhihuHotListResult:
+        """Read RSSHub's Zhihu upstream JSON, retaining display heat and question counts.
+
+        This is a client endpoint, not the documented developer OpenAPI. Never
+        send OpenAPI credentials or automatically retry/fall back to a paid API.
+        """
+        logger = logging.getLogger(__name__)
+        url = "https://api.zhihu.com/topstory/hot-lists/total"
+        client = self._client or httpx.Client(timeout=self.config.timeout_seconds)
+        try:
+            response = http_request(
+                client, "zhihu_hot_list", "get", url,
+                params={"limit": max(1, min(limit, 30)), "reverse_order": 0},
+            )
+            response.raise_for_status()
+            payload = response.json()
+            rows = payload.get("data") if isinstance(payload, dict) else None
+            if not isinstance(rows, list) or not rows:
+                raise ZhihuAPIError("zhihu_native_hotlist_invalid_response")
+            items = []
+            valid = True
+            for rank, row in enumerate(rows[:max(1, min(limit, 30))], 1):
+                target = row.get("target") if isinstance(row, dict) else None
+                if not isinstance(target, dict):
+                    valid = False
+                    continue
+                token = str(target.get("id") or "")
+                kind = target.get("type")
+                if not re.fullmatch(r"[1-9][0-9]*", token) or kind not in {"question", "article"}:
+                    valid = False
+                    continue
+                link = (f"https://www.zhihu.com/question/{token}" if kind == "question"
+                        else f"https://zhuanlan.zhihu.com/p/{token}")
+                heat_text = row.get("detail_text")
+                heat = parse_zhihu_heat(heat_text)
+                items.append(ZhihuHotListItem.model_validate({
+                    "Title": target.get("title"), "Url": link,
+                    "Summary": target.get("excerpt") or "",
+                    "ThumbnailUrl": target.get("thumbnail") or "",
+                    "HotValue": heat, "HeatText": heat_text,
+                    "HeatProvider": "zhihu_native_hotlist", "NativeRank": rank,
+                    "AnswerCount": target.get("answer_count"),
+                    "FollowerCount": target.get("follower_count"),
+                    "NativePayload": row,
+                }))
+            logger.info(
+                "zhihu_native_hotlist_fetched returned=%d selected=%d heat_available=%d "
+                "heat_missing=%d display_units=true search_enrichment_enabled=%s",
+                len(rows), len(items), sum(i.hot_value is not None for i in items),
+                sum(i.hot_value is None for i in items), settings.zhihu_search_enrichment_enabled,
+            )
+            return ZhihuHotListResult(
+                total=len(rows), fetched_at=datetime.now(UTC), items=items,
+                raw_payload=payload, provider="native", list_complete=valid,
+            )
+        except (httpx.HTTPError, ValueError, ZhihuAPIError) as exc:
+            code = getattr(getattr(exc, "response", None), "status_code", None)
+            logger.warning("zhihu_native_hotlist_failed error_type=%s http_status=%s",
+                           type(exc).__name__, code)
+            raise ZhihuAPIError(
+                f"zhihu_native_hotlist_unavailable:{code or type(exc).__name__}"
+            ) from None
+        finally:
+            if self._client is None:
+                client.close()
+
     def search(self, query: str, count: int = 5) -> ZhihuSearchResult:
         safe_count = max(1, min(count, 20))
         payload = self._get(
@@ -167,6 +244,17 @@ class ZhihuClient:
         }
 
 
+def parse_zhihu_heat(value: Any) -> float | None:
+    """Convert the platform display text; missing/unrecognized values stay unknown."""
+    if not isinstance(value, str):
+        return None
+    match = re.fullmatch(r"\s*(\d+(?:\.\d+)?)\s*([万亿]?)\s*热度\s*", value)
+    if not match:
+        return None
+    number = float(match[1]) * {"": 1, "万": 10000, "亿": 100000000}[match[2]]
+    return number if math.isfinite(number) else None
+
+
 def normalize_hot_list_items(result: ZhihuHotListResult) -> list[dict[str, Any]]:
     normalized: list[dict[str, Any]] = []
     for index, item in enumerate(result.items, start=1):
@@ -177,6 +265,8 @@ def normalize_hot_list_items(result: ZhihuHotListResult) -> list[dict[str, Any]]
             quality_flags.append("missing_url")
         if not item.summary:
             quality_flags.append("missing_summary")
+        if item.heat_provider == "zhihu_native_hotlist" and item.hot_value is None:
+            quality_flags.append("zhihu_native_heat_missing")
 
         identity = (
             item.url or item.title or f"zhihu-hotlist-{result.fetched_at.isoformat()}-{index}"
@@ -203,13 +293,19 @@ def normalize_hot_list_items(result: ZhihuHotListResult) -> list[dict[str, Any]]
                 "published_at": None,
                 "fetched_at": result.fetched_at.isoformat(),
                 "raw_metrics": {
-                    "rank": index,
+                    "rank": item.native_rank or index,
                     "total": result.total,
-                    "hot_value": None,
+                    "hot_value": item.hot_value,
+                    "heat_text": item.heat_text,
+                    "heat_provider": item.heat_provider,
+                    "answer_count": item.answer_count,
+                    "follower_count": item.follower_count,
                 },
                 "normalized": {
-                    "rank": index,
+                    "rank": item.native_rank or index,
                     "thumbnail_url": item.thumbnail_url,
+                    "heat_provider": item.heat_provider,
+                    "heat_precision": "display" if item.hot_value is not None else None,
                 },
                 "source_citation": {
                     "platform": "zhihu",

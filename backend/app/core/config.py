@@ -24,6 +24,13 @@ class Settings(BaseSettings):
         default="/api/v1/content/hot_list",
         alias="ZHIHU_HOT_LIST_PATH",
     )
+    # The native endpoint is also used upstream by RSSHub; no Access Secret is sent.
+    zhihu_hot_list_provider: Literal["official", "native"] = Field(
+        default="official", alias="ZHIHU_HOT_LIST_PROVIDER"
+    )
+    zhihu_search_enrichment_enabled: bool = Field(
+        default=False, alias="ZHIHU_SEARCH_ENRICHMENT_ENABLED"
+    )
     zhihu_search_path: str = Field(
         default="/api/v1/content/zhihu_search",
         alias="ZHIHU_SEARCH_PATH",

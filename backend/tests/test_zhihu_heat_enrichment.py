@@ -56,7 +56,9 @@ def test_question_identity_acceptance_and_answer_deduplication():
     assert zhihu_answer_metrics(SEED, old)[0] == {}
 
 
-def test_final_main_heat_uses_same_round_answers_without_accumulation():
+def test_final_main_heat_uses_same_round_answers_without_accumulation(monkeypatch):
+    from app.core.config import settings
+    monkeypatch.setattr(settings, "zhihu_search_enrichment_enabled", True)
     engine = create_engine("sqlite://")
     init_db(engine)
     with Session(engine) as db:

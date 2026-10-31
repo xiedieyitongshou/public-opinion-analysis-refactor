@@ -60,7 +60,7 @@ def candidate(event_id="event-1"):
 
 
 def same_pair(candidate_id="event-1", decision="same_event"):
-    return {
+    result = {
         "candidate_id": candidate_id,
         "decision": decision,
         "evidence": [
@@ -71,6 +71,12 @@ def same_pair(candidate_id="event-1", decision="same_event"):
         "missing_information": [],
         "reason": "材料描述同一发布事件",
     }
+    if decision == "insufficient_evidence":
+        result.update(
+            uncertainty_kind="possible_same_event",
+            same_event_clues=result["evidence"], missing_information=["发布事件的具体日期"],
+        )
+    return result
 
 
 def extraction():
@@ -152,22 +158,110 @@ def test_hallucinated_quote_fails_without_rule_fallback(llm):
     assert "llm_unverifiable_evidence" in result.errors[0]
 
 
-@pytest.mark.parametrize("change", ["extra", "bad_time", "wrong_source"])
+@pytest.mark.parametrize(
+    "change", ["extra", "wrong_source", "time_wrong_type", "time_missing_evidence",
+               "time_wrong_quote", "time_missing_field"]
+)
 def test_strict_extraction_fields_are_validated(llm, change):
     data = llm[0]["output"]
     if change == "extra":
         data["event_id"] = "invented-id"
-    elif change == "bad_time":
+    elif change == "wrong_source":
+        data["subjects"][0]["evidence"][0]["source_id"] = "nonexistent"
+    elif change == "time_wrong_type":
+        data["occurred_at"] = "2026-10-21"
+    elif change == "time_missing_evidence":
+        data["occurred_at"] = {"value": "2026-10-21", "evidence": []}
+    elif change == "time_wrong_quote":
         data["occurred_at"] = {
-            "value": "2026-10-29",
-            "evidence": [{"source_id": "s1", "quote": TITLE}],
+            "value": "2026-10-21",
+            "evidence": [{"source_id": "s1", "quote": "原文不存在的时间"}],
         }
     else:
-        data["subjects"][0]["evidence"][0]["source_id"] = "nonexistent"
+        del data["occurred_at"]
     result = EventSignalExtractor().extract(
         ExtractEventSignalsInput(run_id="r", source_signals=[source()])
     )
     assert result.status == "failed" and not result.event_signals
+
+
+@pytest.mark.parametrize(
+    "value,code",
+    [
+        ("2026-10-21", "llm_occurrence_timezone_missing"),
+        ("2026-10-21T10:30:00", "llm_occurrence_timezone_missing"),
+        ("10月21日", "llm_invalid_occurrence_time"),
+        ("2026-02-30T10:30:00+08:00", "llm_invalid_occurrence_time"),
+        ("2026-10-21T25:30:00+08:00", "llm_invalid_occurrence_time"),
+        ("2026-W43-3T10:30:00+08:00", "llm_invalid_occurrence_time"),
+    ],
+)
+def test_bad_optional_time_keeps_valid_facts_and_audits_warning(llm, caplog, value, code):
+    text = "10月21号甲公司发布新机器人"
+    item = source()
+    item.platform_features["llm_documents"] = [
+        {"source_id": "s1", "title": TITLE, "body": text}
+    ]
+    action = {"value": "发布", "evidence": [{"source_id": "s1", "quote": "发布"}]}
+    data = llm[0]["output"]
+    data["actions"] = [action]
+    data["occurred_at"] = {
+        "value": value, "evidence": [{"source_id": "s1", "quote": text}],
+    }
+    extractor = EventSignalExtractor()
+    inputs = ExtractEventSignalsInput(run_id="r", source_signals=[item])
+    first = extractor.extract(inputs)
+    cached = extractor.extract(inputs)
+    for result in (first, cached):
+        assert result.status == "succeeded" and not result.errors
+        event = result.event_signals[0]
+        assert event.entities == ["甲公司"] and event.action_terms == ["发布"]
+        assert event.event_time_hint is None
+        assert event.reasoning_detail["facts"]["occurred_at"] is None
+        assert event.reasoning_detail["facts"]["actions"] == [action]
+        assert event.reasoning_detail["warnings"] == [{
+            "field": "occurred_at", "code": code, "action": "set_null",
+            "discarded_value": value,
+            "evidence": [{"source_id": "s1", "quote": text}],
+        }]
+        assert {code, "llm_occurrence_time_cleared"} <= set(event.quality_flags)
+        assert "llm_occurrence_time_cleared" in result.quality_flags
+    assert cached.event_signals[0].reasoning_detail["audit"]["cache_hit"]
+    assert len(llm[1]) == 1  # Normalization does not retry or consume another call.
+    assert "llm_extraction_warning source_id=s1 field=occurred_at" in caplog.text
+    assert value not in caplog.text  # Audit stores the value; logs only carry safe codes.
+
+
+@pytest.mark.parametrize("value", ["2026-10-21T10:30:00+08:00", "2026-10-21T02:30:00Z"])
+def test_complete_occurrence_time_is_preserved(llm, value):
+    text = "2026年10月21日10时30分（UTC+08:00）甲公司发布新机器人"
+    item = source()
+    item.platform_features["llm_documents"] = [
+        {"source_id": "s1", "title": TITLE, "body": text}
+    ]
+    llm[0]["output"]["occurred_at"] = {
+        "value": value, "evidence": [{"source_id": "s1", "quote": text}],
+    }
+    result = EventSignalExtractor().extract(
+        ExtractEventSignalsInput(run_id="r", source_signals=[item])
+    )
+    event = result.event_signals[0]
+    assert result.status == "succeeded" and event.event_time_hint is not None
+    assert event.reasoning_detail["facts"]["occurred_at"]["value"] == value
+    assert event.reasoning_detail["warnings"] == []
+    assert "llm_occurrence_time_cleared" not in event.quality_flags
+
+
+def test_clearing_time_does_not_hide_invalid_other_evidence(llm):
+    llm[0]["output"]["occurred_at"] = {
+        "value": "2026-10-21", "evidence": [{"source_id": "s1", "quote": TITLE}],
+    }
+    llm[0]["output"]["subjects"][0]["evidence"][0]["quote"] = "不存在的主体"
+    result = EventSignalExtractor().extract(
+        ExtractEventSignalsInput(run_id="r", source_signals=[source()])
+    )
+    assert result.status == "failed" and not result.event_signals
+    assert "llm_unverifiable_evidence" in result.errors[0]
 
 
 def test_llm_merge_does_not_use_embedding_reranker_or_legacy_thresholds(

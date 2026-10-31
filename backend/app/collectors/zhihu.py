@@ -10,6 +10,7 @@ from typing import Any
 from sqlalchemy.orm import Session
 
 from app.collectors.base import BaseCollector
+from app.core.config import settings
 from app.schemas import CollectorMetadata, CollectorRunConfig, CrawlValidationResult, NormalizedItem
 from app.services.search_enrichment_filter import evaluate_search_enrichment
 from app.services.zhihu_client import (
@@ -60,6 +61,8 @@ class ZhihuHotListCollector(BaseCollector):
         self.client = client or ZhihuClient()
 
     def fetch(self, config: CollectorRunConfig) -> ZhihuHotListResult:
+        if settings.zhihu_hot_list_provider == "native":
+            return self.client.fetch_native_hot_list(limit=config.limit)
         return self.client.fetch_hot_list(limit=config.limit)
 
     def parse(
@@ -101,9 +104,10 @@ class ZhihuHotListCollector(BaseCollector):
                         **effective_config.params,
                         "total": result.total,
                         "fetched_at": result.fetched_at,
+                        "hot_list_provider": result.provider,
                         "list_complete": (
-                            result.total is None
-                            or len(raw_items) >= min(result.total, requested_limit)
+                            result.list_complete and (result.total is None
+                            or len(raw_items) >= min(result.total, requested_limit))
                         ),
                     }
                 }

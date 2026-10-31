@@ -1,6 +1,8 @@
 """Exclusive LLM extraction, relation checks and event resolution (no score fusion)."""
 
 import hashlib
+import logging
+import re
 from datetime import datetime
 
 from app.core.config import settings
@@ -18,6 +20,41 @@ from app.services.llm_client import (
     get_llm_client,
     validate_quotes,
 )
+
+logger = logging.getLogger(__name__)
+COMPLETE_OCCURRENCE_TIME = re.compile(
+    r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}:\d{2})"
+)
+
+
+def normalize_occurrence_time(result):
+    """Clear only a malformed optional time, after schema and all quotes are valid.
+
+    Never mutate the client response: a cached response is checked and normalized
+    in exactly the same way as a fresh one. No time is guessed from metadata.
+    """
+    fact = result.occurred_at
+    if fact is None:
+        return result, []
+    try:
+        occurred = datetime.fromisoformat(fact.value.replace("Z", "+00:00"))
+    except ValueError:
+        code = "llm_invalid_occurrence_time"
+    else:
+        if occurred.tzinfo is None:
+            code = "llm_occurrence_timezone_missing"
+        elif not COMPLETE_OCCURRENCE_TIME.fullmatch(fact.value):
+            code = "llm_invalid_occurrence_time"
+        else:
+            return result, []
+    warning = {
+        "field": "occurred_at",
+        "code": code,
+        "action": "set_null",
+        "discarded_value": fact.value,
+        "evidence": [quote.model_dump(mode="json") for quote in fact.evidence],
+    }
+    return result.model_copy(update={"occurred_at": None}), [warning]
 
 
 def documents_from_item(item, source_id):
@@ -93,15 +130,6 @@ def extract_signal(signal, run_id, *, client=None):
         for fact in facts:
             if fact:
                 validate_quotes(fact.evidence, docs)
-        if result.occurred_at:
-            try:
-                occurred = datetime.fromisoformat(
-                    result.occurred_at.value.replace("Z", "+00:00")
-                )
-            except ValueError as exc:
-                raise LLMFailure("llm_invalid_occurrence_time") from exc
-            if occurred.tzinfo is None:
-                raise LLMFailure("llm_occurrence_timezone_missing")
 
     result, audit = (client or get_llm_client()).complete(
         "event_extraction",
@@ -110,6 +138,14 @@ def extract_signal(signal, run_id, *, client=None):
         LLMExtraction,
         validate,
     )
+    result, warnings = normalize_occurrence_time(result)
+    warning_flags = []
+    for warning in warnings:
+        warning_flags.extend([warning["code"], "llm_occurrence_time_cleared"])
+        logger.warning(
+            "llm_extraction_warning source_id=%s field=%s code=%s action=set_null",
+            signal.source_signal_id, warning["field"], warning["code"],
+        )
     facts = result.model_dump(mode="json")
     summary = "\n".join(doc["body"] for doc in docs if doc["body"])
     return EventSignal(
@@ -132,9 +168,9 @@ def extract_signal(signal, run_id, *, client=None):
         source_statuses=[signal.source_status],
         source_roles=[signal.signal_role],
         platforms=[signal.platform],
-        quality_flags=[*signal.quality_flags, "llm_extraction_used"],
+        quality_flags=[*signal.quality_flags, "llm_extraction_used", *warning_flags],
         reasoning_mode="llm",
-        reasoning_detail={"facts": facts, "audit": audit},
+        reasoning_detail={"facts": facts, "audit": audit, "warnings": warnings},
     )
 
 
@@ -161,13 +197,16 @@ def extract_signals(input_data):
         if errors
         else "skipped"
     )
+    quality_flags = ["llm_extraction_failed"] if errors else ["llm_extraction_used"]
+    for signal in signals:
+        quality_flags.extend(flag for flag in signal.quality_flags if flag.startswith("llm_"))
     return ExtractEventSignalsOutput(
         run_id=input_data.run_id,
         status=status,
         event_signals=signals,
         audit_only_source_signal_ids=audit_ids,
         errors=errors,
-        quality_flags=["llm_extraction_failed"] if errors else ["llm_extraction_used"],
+        quality_flags=list(dict.fromkeys(quality_flags)),
     )
 
 
@@ -203,6 +242,19 @@ def judge_pairs(incoming, candidates, *, client=None):
                 validate_quotes(row.evidence, relevant_docs, required_ids=required)
                 if row.decision == "same_event" and row.conflicts:
                     raise LLMFailure("llm_same_event_has_conflicts")
+                validate_quotes(row.same_event_clues, relevant_docs)
+                if row.decision == "insufficient_evidence":
+                    if row.uncertainty_kind is None:
+                        raise LLMFailure("llm_uncertainty_kind_missing")
+                    if row.uncertainty_kind == "possible_same_event":
+                        validate_quotes(
+                            row.same_event_clues, relevant_docs,
+                            required_ids=(incoming["source_id"], row.candidate_id),
+                        )
+                        if not any(value.strip() for value in row.missing_information):
+                            raise LLMFailure("llm_uncertainty_missing_critical_detail")
+                    elif row.same_event_clues:
+                        raise LLMFailure("llm_context_only_has_same_event_clues")
 
         output, audit = client.complete(
             "event_comparison",
@@ -296,6 +348,27 @@ def evaluate_relevance(
     )
 
 
+REVIEW_POLICY_VERSION = "qualified-uncertainty-v1"
+
+
+def comparison_groups(judgements):
+    """Route only the LLM's validated, event-specific uncertainty to semantic review.
+
+    Retain unclassified legacy uncertainty conservatively. Absence of a new field
+    in an old response is not evidence that the model found no same-event clues.
+    """
+    groups = {"same": [], "plausible": [], "context_only": [], "legacy": []}
+    for row, _ in judgements:
+        if row.decision == "same_event":
+            groups["same"].append(row)
+        elif row.decision == "insufficient_evidence":
+            name = {
+                "possible_same_event": "plausible", "insufficient_context": "context_only",
+            }.get(row.uncertainty_kind, "legacy")
+            groups[name].append(row)
+    return groups
+
+
 def resolve_signal(signal, candidates, source_refs):
     from app.agents.event_matcher import build_event_fingerprint, build_event_id
     from app.schemas.matching import EventResolution, MatchFeatures
@@ -328,6 +401,12 @@ def resolve_signal(signal, candidates, source_refs):
         judgements = judge_pairs(incoming, docs)
     except LLMFailure as exc:
         features.semantic_quality_flags = [str(exc)]
+        features.llm_detail = {
+            "review_policy": REVIEW_POLICY_VERSION,
+            "review_category": "technical_error", "error_code": str(exc),
+        }
+        logger.warning("llm_review_policy signal=%s action=technical_review error=%s",
+                       signal.event_signal_id, str(exc))
         return EventResolution(
             event_signal_id=signal.event_signal_id,
             event_id=new_id,
@@ -340,11 +419,13 @@ def resolve_signal(signal, candidates, source_refs):
             blocks_publish=True,
             match_features_json=features,
         )
-    same = [row for row, _ in judgements if row.decision == "same_event"]
-    uncertain = [
-        row for row, _ in judgements if row.decision == "insufficient_evidence"
-    ]
+    groups = comparison_groups(judgements)
+    same = groups["same"]
+    uncertain = groups["plausible"] + groups["legacy"]
     features.llm_detail = {
+        "review_policy": REVIEW_POLICY_VERSION,
+        "candidate_groups": {name: [row.candidate_id for row in rows]
+                             for name, rows in groups.items()},
         "comparisons": [
             {"judgement": row.model_dump(mode="json"), "audit": audit}
             for row, audit in judgements
@@ -362,6 +443,21 @@ def resolve_signal(signal, candidates, source_refs):
         features.matched_by = ["llm_event_judgement"]
     else:
         selected, action, review, score = None, "create", False, 0.75
+    category = (
+        "competing_matches" if len(same) > 1
+        else "legacy_uncertainty" if groups["legacy"]
+        else "plausible_uncertainty" if uncertain
+        else "automatic_merge" if same else "independent_topic"
+    )
+    features.llm_detail["review_category"] = category
+    if groups["context_only"]:
+        features.semantic_quality_flags.append("llm_context_only_candidates_retained")
+    logger.info(
+        "llm_review_policy signal=%s action=%s category=%s same=%d plausible=%d "
+        "context_only=%d legacy=%d",
+        signal.event_signal_id, action, category, len(same), len(groups["plausible"]),
+        len(groups["context_only"]), len(groups["legacy"]),
+    )
     return EventResolution(
         event_signal_id=signal.event_signal_id,
         event_id=selected.candidate_id if selected else new_id,
@@ -374,7 +470,9 @@ def resolve_signal(signal, candidates, source_refs):
             if selected
             else "LLM: no candidate describes the same event"
         )
-        + ("; competing or insufficient candidates require review" if review else ""),
+        + ("; concrete competing or critical uncertain candidates require review" if review else "")
+        + ("; context-only uncertainty retained without a merge association"
+           if groups["context_only"] else ""),
         review_required=review,
         matched_by=features.matched_by,
         match_features_json=features,

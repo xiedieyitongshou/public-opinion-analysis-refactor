@@ -183,6 +183,10 @@ class BaseCollector(ABC):
             "cli_topic_limit": config.params.get("cli_topic_limit"),
             "query": config.params.get("query"),
         }
+        if self.metadata.source_id == "zhihu_hot_list":
+            sampling_params["hot_list_provider"] = config.params.get(
+                "hot_list_provider", "official"
+            )
         if self.metadata.source_id == "weibo_rsshub_hot_search":
             sampling_params.update({
                 key: config.params.get(key)

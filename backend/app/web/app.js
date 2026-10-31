@@ -298,8 +298,47 @@ function citationList(citations) {
   });
   return ul;
 }
+function reviewCategory(payload) {
+  const detail = payload.match_features_json?.llm_detail || {};
+  if (detail.review_category === "technical_error"
+      || (payload.reason || "").includes("LLM comparison unavailable")) return "技术异常待处理";
+  if (detail.review_category === "competing_matches") return "多个归并目标待复核";
+  if (detail.review_category === "plausible_uncertainty") return "具体关联线索待核实";
+  if (detail.review_category === "legacy_uncertainty") return "历史不确定关系待复核";
+  return "事件关系待复核";
+}
+
 function reviewEvidence(payload, context) {
   const root = node("div", null, "review-evidence");
+  const features = payload.match_features_json || {};
+  const detail = features.llm_detail || {};
+  if (reviewCategory(payload) === "技术异常待处理") {
+    root.append(node("h4", "LLM 技术异常"), node("p",
+      "模型响应没有通过格式、引用或调用检查，本条尚无可采用的归并结论；这不代表模型建议合并。"),
+      node("p", `错误代码：${detail.error_code || (features.semantic_quality_flags || []).join("、") || "请查看运行日志"}`, "quality"));
+    return root;
+  }
+  if (features.reasoning_mode === "llm" && detail.comparisons?.length) {
+    root.append(node("h4", "LLM 判断依据"), node("p", reviewCategory(payload), "quality"));
+    const target = payload.candidate_event_id;
+    const selected = detail.comparisons.filter(row => target
+      ? row.judgement?.candidate_id === target
+      : ["same_event", "insufficient_evidence"].includes(row.judgement?.decision)).slice(0, 5);
+    if (!selected.length)
+      root.append(node("p", "当前没有具体的归并目标；请核对线索本身是否足以作为独立事件保留。"));
+    const labels = {same_event: "同一事件", different_event: "不同事件",
+      related_but_distinct: "相关但不是同一事件", insufficient_evidence: "证据不足"};
+    for (const row of selected) {
+      const judgement = row.judgement || {};
+      root.append(node("p", `${labels[judgement.decision] || judgement.decision}：${judgement.reason || ""}`));
+      if (judgement.missing_information?.length)
+        root.append(node("p", "缺少的关键信息：" + judgement.missing_information.join("；")));
+      if (judgement.same_event_clues?.length)
+        root.append(node("p", "具体关联线索：" + judgement.same_event_clues.map(q => q.quote).join("；")));
+    }
+    root.append(node("p", "依据模型的分类判断及可核查引用处理；不使用固定兼容数值作为合并概率。", "small muted"));
+    return root;
+  }
   if (!context.existing) {
     root.append(node("h4", "没有已接纳的归并目标"), node("p",
       (payload.reason || "").includes("discovery parent")
@@ -307,7 +346,6 @@ function reviewEvidence(payload, context) {
         : "这是独立话题的处理，并非与某个目标的合并确认。历史检索分数不代表当前匹配。"));
     return root;
   }
-  const features = payload.match_features_json || {};
   const incoming = payload.event_signal || {};
   const existing = context.existing?.detail?.match_features || {};
   const missing = new Set(features.missing_features || []);
@@ -366,7 +404,8 @@ async function listReviews(tasks, paging) {
   const toolbar = $("review-batch");
   root.replaceChildren();
   toolbar.replaceChildren();
-  const eligible = new Map(tasks.filter(t => t.status === "pending" && t.merge_selection?.eligible)
+  const eligible = new Map(tasks.filter(t => t.status === "pending" && t.merge_selection?.eligible
+    && reviewCategory(t.payload || {}) !== "技术异常待处理")
     .map(t => [t.id, t]));
   for (const [id, target] of selectedReviews) {
     if (tasks.some(t => t.id === id) && eligible.get(id)?.merge_selection.target_event_id !== target) selectedReviews.delete(id);
@@ -450,12 +489,12 @@ async function listReviews(tasks, paging) {
     const payload = task.payload || {},
       panel = node("article", null, "panel");
     panel.append(
-      node("p", `REVIEW ${task.id} · ${time(task.created_at)}`, "eyebrow"),
+      node("p", `REVIEW ${task.id} · ${time(task.created_at)} · ${reviewCategory(payload)}`, "eyebrow"),
       node("h2", payload.title || payload.event_signal?.title || "候选事件"),
       node("p", `累计涉及 ${new Set([...(payload.run_ids || []), payload.run_id].filter(Boolean)).size} 轮采集`, "muted"),
       node("p", payload.reason || "需要人工核对是否属于同一事件", "muted"),
     );
-    if (task.status === "pending") {
+    if (task.status === "pending" && reviewCategory(payload) !== "技术异常待处理") {
       const selection = task.merge_selection || {};
       const label = node("label", null, "review-select");
       const checkbox = node("input");

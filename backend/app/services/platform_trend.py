@@ -104,7 +104,8 @@ def analyze_platform_trend(data: PlatformTrendInput) -> PlatformTrendResult:
                     flags.append("insufficient_history")
                 result.latest_platform_heat = latest.platform_heat
                 _set_trend(result, main, gap, data.config.rank_delta_threshold,
-                           data.config.score_delta_threshold, flags)
+                           data.config.score_delta_threshold, flags,
+                           data.config.native_heat_change_threshold)
         elif result.current_topn_present is None:
             flags.append("current_presence_unknown")
 
@@ -129,6 +130,7 @@ def _set_trend(
     rank_threshold: int,
     score_threshold: float,
     flags: list[str],
+    native_threshold: float = 0.05,
 ) -> None:
     if len(main) < 2:
         flags.append("insufficient_history")
@@ -149,6 +151,28 @@ def _set_trend(
     if not current.topn_scope or previous.topn_scope != current.topn_scope:
         flags.append("incomparable_scope")
         return
+    if result.platform == "zhihu":
+        before = previous.platform_heat.raw_metrics_used if previous.platform_heat else {}
+        after = current.platform_heat.raw_metrics_used if current.platform_heat else {}
+        if before.get("hot_value") is not None or after.get("hot_value") is not None:
+            if (before.get("hot_value") is None or after.get("hot_value") is None
+                    or not _comparable_scores(previous, current)):
+                flags.append("incomparable_scores")
+                return
+            old, new = before["hot_value"], after["hot_value"]
+            delta = new - old
+            ratio = delta / old if old > 0 else None
+            result.native_heat_delta = delta
+            result.native_heat_change_ratio = ratio
+            result.trend_basis = "native_heat"
+            result.trend_status = (
+                _direction(ratio, native_threshold) if ratio is not None
+                else ("rising" if new > 0 else "stable")
+            )
+            result.comparison_observation_ids = [previous.observation_id, current.observation_id]
+            if previous.rank is not None and current.rank is not None:
+                result.rank_delta = previous.rank - current.rank
+            return
     if result.platform == "zhihu" and previous.rank is not None and current.rank is not None:
         delta = previous.rank - current.rank
         result.rank_delta = delta
