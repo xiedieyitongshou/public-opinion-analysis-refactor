@@ -371,10 +371,13 @@ def test_cache_reuses_valid_response_and_budget_stops_new_calls(llm, monkeypatch
     assert len(llm[1]) == 1
     monkeypatch.setattr(settings, "llm_max_calls_per_run", 1)
     llm[0]["output"] = {"judgements": [same_pair()]}
-    result = EventMatcher().match_event(
-        signal=signal(), candidates=[candidate()], config=EventMatchConfig()
-    )
-    assert result.action == "candidate_review" and len(llm[1]) == 1
+    from app.services.llm_client import LLMBudgetExceeded
+
+    with pytest.raises(LLMBudgetExceeded, match="llm_call_budget_exceeded"):
+        EventMatcher().match_event(
+            signal=signal(), candidates=[candidate()], config=EventMatchConfig()
+        )
+    assert len(llm[1]) == 1
 
 
 def test_relevance_accepts_contextual_opinion_without_old_reranker(llm, monkeypatch):

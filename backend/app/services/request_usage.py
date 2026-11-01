@@ -7,6 +7,7 @@ from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
+from threading import RLock
 from time import monotonic
 from urllib.parse import urljoin
 
@@ -30,26 +31,32 @@ class RequestScope:
     counts: Counter = field(default_factory=Counter)
     started: float = field(default_factory=monotonic)
     sink: object = None
+    lock: object = field(default_factory=RLock, repr=False, compare=False)
 
     def reserve(self, source):
-        if monotonic() - self.started >= self.timeout_seconds:
-            raise RequestBudgetExceeded("job_request_deadline_exceeded")
-        if self.counts[source] >= self.limits.get(source, 3):
-            raise RequestBudgetExceeded(f"source_request_limit:{source}")
-        self.counts[source] += 1
+        with self.lock:
+            if monotonic() - self.started >= self.timeout_seconds:
+                raise RequestBudgetExceeded("job_request_deadline_exceeded")
+            if self.counts[source] >= self.limits.get(source, 3):
+                raise RequestBudgetExceeded(f"source_request_limit:{source}")
+            self.counts[source] += 1
 
     def record(self, value):
-        value["run_id"] = self.run_id
-        if self.sink is not None:
-            self.sink(value)
-        else:
-            self.records.append(value)
+        # The worker sink owns its own DB session. Serialize its short writes,
+        # never share the business Session with parallel request threads.
+        with self.lock:
+            value["run_id"] = self.run_id
+            if self.sink is not None:
+                self.sink(value)
+            else:
+                self.records.append(value)
 
     def flush(self, db):
-        for value in self.records:
-            db.add(RequestLog(**value))
-        db.commit()
-        self.records.clear()
+        with self.lock:
+            for value in self.records:
+                db.add(RequestLog(**value))
+            db.commit()
+            self.records.clear()
 
 
 _scope: ContextVar[RequestScope | None] = ContextVar("external_request_scope", default=None)
@@ -57,7 +64,7 @@ _scope: ContextVar[RequestScope | None] = ContextVar("external_request_scope", d
 
 @contextmanager
 def request_scope(run_id, limits, timeout_seconds, *, sink=None):
-    value = RequestScope(run_id, limits, timeout_seconds, sink=sink)
+    value = RequestScope(run_id, dict(limits), timeout_seconds, sink=sink)
     token = _scope.set(value)
     try:
         yield value
@@ -65,11 +72,16 @@ def request_scope(run_id, limits, timeout_seconds, *, sink=None):
         _scope.reset(token)
 
 
+def current_request_scope():
+    return _scope.get()
+
+
 def register_default_limit(source, limit):
     """Supply a new source budget without overriding an explicitly configured one."""
     scope = _scope.get()
     if scope is not None:
-        scope.limits.setdefault(source, limit)
+        with scope.lock:
+            scope.limits.setdefault(source, limit)
 
 
 def measured_call(source, operation, unit, call):

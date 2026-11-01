@@ -3,6 +3,7 @@
 import hashlib
 import json
 import logging
+import sqlite3
 from contextlib import contextmanager
 from contextvars import ContextVar
 from datetime import UTC, datetime
@@ -101,7 +102,19 @@ def current_progress(db):
         started = started.replace(tzinfo=UTC)
     end = row.finished_at or datetime.now(UTC)
     end = end.replace(tzinfo=UTC) if end.tzinfo is None else end
+    llm_usage = None
+    if row.input_json.get("reasoning_mode") == "llm":
+        from app.core.config import settings
+        from app.services.llm_client import DeepSeekJSONClient
+
+        try:
+            llm_usage = {**DeepSeekJSONClient(run_id=row.run_id).budget.summary(),
+                         "token_budget": settings.llm_token_budget_per_run,
+                         "call_budget": settings.llm_max_calls_per_run}
+        except (OSError, sqlite3.Error):
+            logging.getLogger(__name__).warning("llm_usage_read_unavailable")
     return {
+        "llm_usage": llm_usage,
         "run_id": row.run_id, "status": row.status, "started_at": started,
         "elapsed_seconds": max(0, int((end - started).total_seconds())),
         "stage": state.get("stage") if active else row.status,

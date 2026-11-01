@@ -55,6 +55,10 @@ class EventMatcher:
                     )
                 )
             except (TypeError, ValueError, ValidationError) as exc:
+                from app.services.llm_client import LLMBudgetExceeded
+
+                if isinstance(exc, LLMBudgetExceeded):
+                    raise
                 errors.append(f"{signal.event_signal_id}: {exc}")
 
         if resolutions:

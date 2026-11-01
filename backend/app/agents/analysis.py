@@ -176,8 +176,9 @@ class HotspotAnalysisAgent:
         )
         for output in outputs.values():
             errors.extend(output.get("errors") or [])
-        if len(tasks) != len(plan.steps) or tasks[-1].status in {"failed", "blocked"}:
-            status = "failed"
+        incomplete = len(tasks) != len(plan.steps) or tasks[-1].status in {"failed", "blocked"}
+        if incomplete:
+            status = "partial" if data.reasoning_mode == "llm" and source_results else "failed"
         elif any(task.status in {"failed", "partial"} for task in tasks):
             status = "partial" if resolved.get("event_ids") else "failed"
             if resolved.get("review_required_count"):
@@ -200,6 +201,11 @@ class HotspotAnalysisAgent:
             errors=list(dict.fromkeys(errors)),
             quality_flags=sorted(
                 {flag for output in outputs.values() for flag in output.get("quality_flags", [])}
+                | (
+                    {"analysis_incomplete", "checkpoint_available"}
+                    if incomplete and data.reasoning_mode == "llm"
+                    else set()
+                )
             ),
             tasks=[
                 {
@@ -216,6 +222,17 @@ class HotspotAnalysisAgent:
         # run_id identifies a collection round. Retrying it reuses the recorded
         # source response instead of turning a retry into another observation.
         fetch_input = plan.steps[0].input_json
+        base_registry = self.registry
+        if plan.metadata.get("reasoning_mode") == "llm":
+            base_registry = ToolRegistry()
+            for tool in self.registry.list_tools():
+                if tool.name in {
+                    "extract_event_signals",
+                    "match_and_resolve_events",
+                    "classify_events",
+                }:
+                    tool = replace(tool, retryable=False, max_retries=0)
+                base_registry.register(tool)
         previous = db.scalars(
             select(AgentTask)
             .where(
@@ -246,12 +263,53 @@ class HotspotAnalysisAgent:
                 plan.steps[2].input_json["window_end"] = original_end
             cached = FetchSourceItemsOutput.model_validate(task.output_json)
             registry = ToolRegistry()
-            for tool in self.registry.list_tools():
+            from app.services.analysis_checkpoint import version
+
+            reusable = (
+                list(
+                    db.scalars(
+                        select(AgentTask).where(
+                            AgentTask.plan_id == task.plan_id,
+                            AgentTask.status.in_(["succeeded", "skipped"]),
+                        )
+                    )
+                )
+                if plan.metadata.get("reasoning_mode") == "llm"
+                else []
+            )
+            for tool in base_registry.list_tools():
                 if tool.name == "fetch_source_items":
                     tool = replace(
                         tool,
                         handler=lambda data, context, value=cached: value.model_copy(deep=True),
                     )
+                elif tool.name in {
+                    "normalize_raw_items",
+                    "prepare_source_signals",
+                    "extract_event_signals",
+                    "create_human_review_task",
+                }:
+                    original_handler, output_model = tool.handler, tool.output_model
+                    candidates = [old for old in reusable if old.task_type == tool.name]
+
+                    def reuse(
+                        data,
+                        context,
+                        handler=original_handler,
+                        model=output_model,
+                        candidates=candidates,
+                    ):
+                        for old in candidates:
+                            checkpoint = (old.output_json or {}).get("_checkpoint", {})
+                            saved_version = checkpoint.get("version")
+                            if (
+                                old.input_json == data.model_dump(mode="json")
+                                and saved_version == version()
+                            ):
+                                return model.model_validate(old.output_json)
+                        return handler(data, context)
+
+                    tool = replace(tool, handler=reuse)
                 registry.register(tool)
             return registry
-        return self.registry
+        return base_registry

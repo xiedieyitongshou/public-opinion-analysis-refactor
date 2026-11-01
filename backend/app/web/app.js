@@ -696,6 +696,14 @@ function renderOvernight(night) {
 }
 
 function renderRunProgress(run) {
+  const budgetLine = $("run-llm-budget");
+  const llm = run.llm_usage;
+  if (budgetLine) {
+    budgetLine.hidden = !llm;
+    budgetLine.textContent = llm ? (llm.requests
+      ? `LLM 请求 ${llm.requests}/${llm.call_budget} · 已报告 ${llm.reported_tokens} tokens · 预算占用 ${llm.charged_tokens}/${llm.token_budget}（含在途及未知用量保守预留）`
+      : "本轮尚无新版本 LLM token 用量记录；旧日志不补记为0。") : "";
+  }
   activeRun = ["queued", "running"].includes(run.status);
   syncStartButtons();
   const stages = {
@@ -801,13 +809,20 @@ async function load() {
   }
   table(
     $("jobs"),
-    ["轮次", "状态", "开始 / 完成", "结果"],
-    jobs.map((j) => [
-      j.run_id,
-      badge(j.status),
-      `${time(j.started_at)} / ${time(j.finished_at)}`,
-      j.error || (j.report_id ? `简报 #${j.report_id}` : "—"),
-    ]),
+    ["轮次", "状态", "开始 / 完成", "结果", "操作"],
+    jobs.map((j) => {
+      const actions = node("div");
+      if (j.can_resume) {
+        const resume = node("button", "继续分析（复用采集）");
+        resume.addEventListener("click", () => busy(resume, async () => {
+          await api(`/api/jobs/${encodeURIComponent(j.run_id)}/resume`, {});
+          await load();
+        }));
+        actions.append(resume);
+      }
+      return [j.run_id, badge(j.status), `${time(j.started_at)} / ${time(j.finished_at)}`,
+        j.error || (j.report_id ? `简报 #${j.report_id}` : "—"), actions];
+    }),
   );
   await listReviews(reviews.items, reviews);
   listDeliveries(deliveries);

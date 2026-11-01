@@ -22,9 +22,9 @@ def stamp(value, timezone):
     return as_utc(value).astimezone(ZoneInfo(timezone)).strftime("%m-%d %H:%M")
 
 
-def trend_label(card, platform):
+def trend_label(card, platform, timezone="Asia/Shanghai"):
     if platform == "shared":
-        return "知乎：" + trend_label(card, "zhihu") + "；微博：" + trend_label(card, "weibo")
+        return "知乎：" + trend_label(card, "zhihu", timezone) + "；微博：" + trend_label(card, "weibo", timezone)
     if platform == "official":
         count = len(
             {c.source_name for c in card.source_citations if c.source_type == "official_news"}
@@ -38,6 +38,9 @@ def trend_label(card, platform):
     labels = {"rising": "升温 ↑", "stable": "平稳 →", "cooling": "降温 ↓", "unknown": "趋势待确认"}
     movement = labels.get(trend.trend_status, "趋势待确认") if trend else "趋势待确认"
     heat = trend.latest_platform_heat if trend else None
+    historical = bool(trend and heat is None and trend.last_observed_heat is not None)
+    if historical:
+        heat = trend.last_observed_heat
     if platform == "zhihu" and heat and heat.primary_platform_rank is not None:
         presence += f" · 第 {heat.primary_platform_rank} 名"
     if platform == "zhihu":
@@ -50,7 +53,9 @@ def trend_label(card, platform):
         else:
             presence += " · 知乎站内热度暂不可用"
     elif platform == "weibo" and heat and heat.platform_score is not None:
-        presence += f" · 本平台热度 {heat.platform_score:.3f}"
+        presence += f" · {'最近采集热度' if historical else '本平台热度'} {heat.platform_score:.3f}"
+    if historical and trend.last_observed_at:
+        presence += f"（{stamp(trend.last_observed_at, timezone)}，非当前值）"
     if trend and trend.trend_status != "unknown":
         if trend.trend_basis == "native_heat" and trend.native_heat_change_ratio is not None:
             movement += f" · 热度变化 {trend.native_heat_change_ratio:+.1%}"
@@ -144,7 +149,7 @@ def render_report(briefing: DailyBriefing, *, email=False, status="draft") -> st
                 for row in card.classification_detail.get("summary_excerpts", [])
                 if safe_url(row.get("url"))
             )
-            label = ("知乎：" + trend_label(card, "zhihu") + "；微博：" + trend_label(card, "weibo")) if key == "shared" else trend_label(card, key)
+            label = ("知乎：" + trend_label(card, "zhihu", briefing.timezone) + "；微博：" + trend_label(card, "weibo", briefing.timezone)) if key == "shared" else trend_label(card, key, briefing.timezone)
             body.append(f'''<article id="{e(anchor)}" style="padding:16px 0 20px;border-bottom:1px solid #e1e8e9">
                 <p style="color:{TEAL};font-size:12px;margin:0 0 9px">{e(category)} 类 · {e(label)}</p>
                 <h4 style="font-size:18px;line-height:1.6;margin:0 0 9px">{e(display_title(card))}</h4>
@@ -195,7 +200,7 @@ def render_text(briefing: DailyBriefing) -> str:
         for card in section.event_cards:
             lines.append(f"[{card.priority_category.split('_')[0]}] {display_title(card)}")
             if section.section_type == "platform_hotspots":
-                lines.extend([trend_label(card, section.key), card.source_summary, card.summary])
+                lines.extend([trend_label(card, section.key, briefing.timezone), card.source_summary, card.summary])
                 lines.extend(
                     "摘要原文: " + row["url"]
                     for row in card.classification_detail.get("summary_excerpts", [])

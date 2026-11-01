@@ -61,13 +61,17 @@ class AgentTaskRunner:
                 break
             task.input_json = resolved_input
             db.commit()
-            result = self.registry.call(
-                step.tool_name,
-                resolved_input,
-                context=ToolContext(task_id=task.id, actor=self.actor),
-                db=db,
-            )
-            task.output_json = result.output
+            from app.services.analysis_checkpoint import task_checkpoint
+
+            with task_checkpoint(db, task, enabled=plan.metadata.get("reasoning_mode") == "llm"):
+                result = self.registry.call(
+                    step.tool_name,
+                    resolved_input,
+                    context=ToolContext(task_id=task.id, actor=self.actor),
+                    db=db,
+                )
+            if result.output is not None:
+                task.output_json = result.output
             task.error_message = result.error_message
             business_status = (result.output or {}).get("status")
             status = TaskStatus.SUCCEEDED
@@ -81,13 +85,31 @@ class AgentTaskRunner:
             elif business_status in {"partial", "skipped"}:
                 status = TaskStatus(business_status)
             transition_task(task, status)
+            if (
+                plan.metadata.get("reasoning_mode") == "llm"
+                and result.output is not None
+                and status in {TaskStatus.SUCCEEDED, TaskStatus.PARTIAL, TaskStatus.SKIPPED}
+            ):
+                from app.services.analysis_checkpoint import version
+
+                task.output_json = {
+                    **result.output,
+                    "_checkpoint": {
+                        "version": version(),
+                        "complete": True,
+                    },
+                }
             db.add(task)
             db.commit()
             db.refresh(task)
             tasks.append(task)
             logging.getLogger(__name__).info(
                 "task_finished plan=%s task=%s tool=%s status=%s seconds=%.3f",
-                plan.plan_id, task.id, step.tool_name, task.status, perf_counter() - started,
+                plan.plan_id,
+                task.id,
+                step.tool_name,
+                task.status,
+                perf_counter() - started,
             )
             if result.output is not None:
                 outputs[step.step_id] = result.output

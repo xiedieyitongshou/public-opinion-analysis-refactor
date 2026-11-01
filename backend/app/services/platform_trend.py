@@ -50,6 +50,13 @@ def analyze_platform_trend(data: PlatformTrendInput) -> PlatformTrendResult:
     result.snapshot_presence_count = len(positive)
     result.first_topn_seen_at = positive[0].observed_at if positive else None
     result.last_topn_seen_at = positive[-1].observed_at if positive else None
+    scored = [item for item in observations if item.platform_heat is not None
+              and item.platform_heat.platform_score is not None
+              and item.collection_status not in {"failed", "skipped"}
+              and item.topn_present is not False]
+    if scored:
+        result.last_observed_heat = scored[-1].platform_heat
+        result.last_observed_at = scored[-1].observed_at
 
     gap = data.config.max_gap_minutes
     if gap is None:

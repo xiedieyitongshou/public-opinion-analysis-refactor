@@ -3,6 +3,8 @@
 import hashlib
 import logging
 import re
+from concurrent.futures import ThreadPoolExecutor
+from contextvars import copy_context
 from datetime import datetime
 
 from app.core.config import settings
@@ -12,9 +14,11 @@ from app.schemas.llm import (
     RELEVANCE_PROMPT,
     LLMBatchDecision,
     LLMExtraction,
+    LLMPairDecision,
     LLMRelevance,
 )
 from app.services.llm_client import (
+    LLMBudgetExceeded,
     LLMFailure,
     document,
     get_llm_client,
@@ -131,13 +135,27 @@ def extract_signal(signal, run_id, *, client=None):
             if fact:
                 validate_quotes(fact.evidence, docs)
 
-    result, audit = (client or get_llm_client()).complete(
-        "event_extraction",
-        EXTRACTION_PROMPT,
-        {"documents": docs},
-        LLMExtraction,
-        validate,
-    )
+    from app.services.llm_material import canonical_documents, remap_result
+
+    runtime = client or get_llm_client()
+    canonical, aliases = canonical_documents(docs, fetched_at=signal.fetched_at)
+
+    def validate_content(result):
+        # Rebind before validating: old round IDs can never satisfy new citations.
+        validate(remap_result(result, aliases))
+
+    content_payload = {"documents": canonical}
+    cached = runtime.read_cached("event_extraction_content", EXTRACTION_PROMPT,
+                                 content_payload, LLMExtraction, validate_content)
+    if cached:
+        result, audit = cached
+        result = remap_result(result, aliases)
+    else:
+        result, audit = runtime.complete("event_extraction", EXTRACTION_PROMPT,
+                                         {"documents": docs}, LLMExtraction, validate)
+        runtime.store_cached("event_extraction_content", EXTRACTION_PROMPT, content_payload,
+                             remap_result(result, {v: k for k, v in aliases.items()}))
+    audit = {**audit, "source_id_map": aliases}
     result, warnings = normalize_occurrence_time(result)
     warning_flags = []
     for warning in warnings:
@@ -175,11 +193,17 @@ def extract_signal(signal, run_id, *, client=None):
 
 
 def extract_signals(input_data):
-    from app.schemas.signals import ExtractEventSignalsOutput
+    from app.schemas.signals import EventSignal, ExtractEventSignalsOutput
+    from app.services.analysis_checkpoint import load_checkpoint, save_checkpoint
 
-    signals, audit_ids, errors = [], [], []
+    previous = load_checkpoint()
+    signals = [EventSignal.model_validate(value) for value in previous.get("event_signals", [])]
+    audit_ids, errors = [], []
+    processed = {key for value in signals for key in value.source_signal_ids}
     client = get_llm_client()
     for source in input_data.source_signals:
+        if source.source_signal_id in processed:
+            continue
         if source.audit_only or not source.contributes_to_classification:
             audit_ids.append(source.source_signal_id)
             continue
@@ -188,6 +212,13 @@ def extract_signals(input_data):
             continue
         try:
             signals.append(extract_signal(source, input_data.run_id, client=client))
+            processed.add(source.source_signal_id)
+            save_checkpoint(ExtractEventSignalsOutput(
+                run_id=input_data.run_id, status="partial", event_signals=signals,
+                audit_only_source_signal_ids=audit_ids, errors=errors,
+            ), processed)
+        except LLMBudgetExceeded:
+            raise
         except LLMFailure as exc:
             errors.append(f"{source.source_signal_id}: {exc}")
     status = (
@@ -210,61 +241,104 @@ def extract_signals(input_data):
     )
 
 
-def judge_pairs(incoming, candidates, *, client=None):
-    """Evaluate every supplied candidate in bounded batches; never discard by old scores."""
-    client = client or get_llm_client()
-    results = []
-    size = settings.llm_candidates_per_request
-    for offset in range(0, len(candidates), size):
-        chunk = candidates[offset : offset + size]
-        docs = [incoming, *chunk]
-        expected = {row["source_id"] for row in chunk}
+def validate_pair(row, incoming, candidate):
+    if row.candidate_id != candidate["source_id"]:
+        raise LLMFailure("llm_candidate_set_mismatch")
+    docs = [incoming, candidate]
+    required = ((incoming["source_id"], candidate["source_id"])
+                if row.decision == "same_event" else ())
+    validate_quotes(row.evidence, docs, required_ids=required)
+    if row.decision == "same_event" and row.conflicts:
+        raise LLMFailure("llm_same_event_has_conflicts")
+    validate_quotes(row.same_event_clues, docs)
+    if row.decision == "insufficient_evidence":
+        if row.uncertainty_kind is None:
+            raise LLMFailure("llm_uncertainty_kind_missing")
+        if row.uncertainty_kind == "possible_same_event":
+            validate_quotes(row.same_event_clues, docs,
+                            required_ids=(incoming["source_id"], candidate["source_id"]))
+            if not any(value.strip() for value in row.missing_information):
+                raise LLMFailure("llm_uncertainty_missing_critical_detail")
+        elif row.same_event_clues:
+            raise LLMFailure("llm_context_only_has_same_event_clues")
 
-        def validate(output, expected=expected, docs=docs):
-            ids = [row.candidate_id for row in output.judgements]
-            if len(ids) != len(expected) or set(ids) != expected:
+
+def judge_pairs(incoming, candidates, *, client=None):
+    """Cache each pair independently; pack only misses, compare in bounded parallel batches."""
+    from app.services.llm_material import canonical_pair, remap_result
+
+    client = client or get_llm_client()
+    ids = [c["source_id"] for c in candidates]
+    if len(set(ids)) != len(ids) or incoming["source_id"] in ids:
+        raise LLMFailure("llm_candidate_set_mismatch")
+    found, pending = {}, []
+    for candidate in candidates:
+        payload = canonical_pair(incoming, candidate)
+
+        def validate_cached(row, payload=payload):
+            validate_pair(row, payload["incoming"], payload["candidate"])
+
+        cached = client.read_cached("event_pair", MATCH_PROMPT, payload,
+                                    LLMPairDecision, validate_cached)
+        if cached:
+            row, audit = cached
+            row = remap_result(row, {"incoming": incoming["source_id"],
+                                     "candidate": candidate["source_id"]})
+            validate_pair(row, incoming, candidate)
+            found[candidate["source_id"]] = (row, audit)
+        else:
+            pending.append(candidate)
+
+    def run_batch(chunk):
+        by_id = {c["source_id"]: c for c in chunk}
+
+        def validate(output):
+            actual = [r.candidate_id for r in output.judgements]
+            if len(actual) != len(by_id) or set(actual) != set(by_id):
                 raise LLMFailure("llm_candidate_set_mismatch")
             for row in output.judgements:
-                relevant_docs = [
-                    doc
-                    for doc in docs
-                    if doc["source_id"]
-                    in {
-                        incoming["source_id"],
-                        row.candidate_id,
-                    }
-                ]
-                required = (
-                    (incoming["source_id"], row.candidate_id)
-                    if row.decision == "same_event"
-                    else ()
-                )
-                validate_quotes(row.evidence, relevant_docs, required_ids=required)
-                if row.decision == "same_event" and row.conflicts:
-                    raise LLMFailure("llm_same_event_has_conflicts")
-                validate_quotes(row.same_event_clues, relevant_docs)
-                if row.decision == "insufficient_evidence":
-                    if row.uncertainty_kind is None:
-                        raise LLMFailure("llm_uncertainty_kind_missing")
-                    if row.uncertainty_kind == "possible_same_event":
-                        validate_quotes(
-                            row.same_event_clues, relevant_docs,
-                            required_ids=(incoming["source_id"], row.candidate_id),
-                        )
-                        if not any(value.strip() for value in row.missing_information):
-                            raise LLMFailure("llm_uncertainty_missing_critical_detail")
-                    elif row.same_event_clues:
-                        raise LLMFailure("llm_context_only_has_same_event_clues")
+                validate_pair(row, incoming, by_id[row.candidate_id])
 
-        output, audit = client.complete(
-            "event_comparison",
-            MATCH_PROMPT,
-            {"incoming": incoming, "candidates": chunk},
-            LLMBatchDecision,
-            validate,
-        )
-        results.extend((row, audit) for row in output.judgements)
-    return results
+        output, audit = client.complete("event_comparison", MATCH_PROMPT,
+                                        {"incoming": incoming, "candidates": chunk},
+                                        LLMBatchDecision, validate)
+        result = []
+        for row in output.judgements:
+            candidate = by_id[row.candidate_id]
+            canonical = remap_result(row, {incoming["source_id"]: "incoming",
+                                          candidate["source_id"]: "candidate"})
+            client.store_cached("event_pair", MATCH_PROMPT,
+                                canonical_pair(incoming, candidate), canonical)
+            result.append((row, audit))
+        return result
+
+    size = settings.llm_candidates_per_request
+    chunks = [pending[i:i+size] for i in range(0, len(pending), size)]
+    errors = []
+    if len(chunks) > 1 and settings.llm_max_concurrent_requests > 1:
+        with ThreadPoolExecutor(max_workers=settings.llm_max_concurrent_requests) as pool:
+            futures = [pool.submit(copy_context().run, run_batch, chunk) for chunk in chunks]
+            for future in futures:
+                try:
+                    for row, audit in future.result():
+                        found[row.candidate_id] = (row, audit)
+                except LLMFailure as exc:
+                    errors.append(exc)
+    else:
+        for chunk in chunks:
+            try:
+                for row, audit in run_batch(chunk):
+                    found[row.candidate_id] = (row, audit)
+            except LLMFailure as exc:
+                errors.append(exc)
+                if isinstance(exc, LLMBudgetExceeded):
+                    break
+    logger.info("llm_pairs candidates=%d cache_hits=%d pending=%d batches=%d",
+                len(candidates), len(candidates)-len(pending), len(pending), len(chunks))
+    if errors:
+        # Successful other batches remain cached, but unresolved competitors block merging.
+        raise next((e for e in errors if isinstance(e, LLMBudgetExceeded)), errors[0])
+    return [found[key] for key in ids]
 
 
 def relevance(parent, text, *, client=None):
@@ -375,8 +449,42 @@ def resolve_signal(signal, candidates, source_refs):
 
     fingerprint = build_event_fingerprint(signal, source_refs=source_refs)
     new_id = build_event_id(signal, fingerprint)
-    # Identity only affects fingerprint/ownership; every semantic relation is decided by LLM.
+    from app.agents.event_matcher import hard_platform_id_match
+    from app.services.llm_material import source_url_match
+    from app.services.match_documents import canonical_ids
+
     features = MatchFeatures(reasoning_mode="llm")
+    source_keys = {key for ref in source_refs for key in (
+        *ref.canonical_ids, *canonical_ids([ref.url] if ref.url else []))}
+    exact = [candidate for candidate in candidates if (
+        hard_platform_id_match(source_refs, candidate.platform_ids)
+        or source_url_match(source_refs, candidate.source_urls)
+        or source_keys.intersection(candidate.canonical_ids + canonical_ids(candidate.source_urls))
+        or set(signal.source_signal_ids).intersection(candidate.source_signal_ids)
+    )]
+    if exact:
+        target = exact[0]
+        conflict = len({candidate.event_id for candidate in exact}) != 1
+        features.id_match = bool(
+            hard_platform_id_match(source_refs, target.platform_ids)
+            or source_keys.intersection(target.canonical_ids + canonical_ids(target.source_urls))
+            or set(signal.source_signal_ids).intersection(target.source_signal_ids))
+        features.url_match = source_url_match(source_refs, target.source_urls)
+        features.hard_constraints_passed = not conflict
+        features.matched_by = ["id_match" if features.id_match else "url_match"]
+        features.llm_detail = {"review_policy": REVIEW_POLICY_VERSION,
+                               "review_category": (
+                                   "competing_matches" if conflict else "identity_reuse"),
+                               "identity_targets": [c.event_id for c in exact]}
+        return EventResolution(
+            event_signal_id=signal.event_signal_id, event_id=target.event_id,
+            event_fingerprint=fingerprint, action="candidate_review" if conflict else "merge",
+            confidence=0.6 if conflict else 1.0, review_required=conflict,
+            matched_candidate_event_id=target.event_id, matched_by=features.matched_by,
+            reason=("Source identity has competing owners" if conflict
+                    else "Reuse established source ID/URL ownership"),
+            match_features_json=features,
+        )
     if not candidates:
         return EventResolution(
             event_signal_id=signal.event_signal_id,
@@ -397,12 +505,18 @@ def resolve_signal(signal, candidates, source_refs):
         document(candidate.event_id, candidate.title, candidate.summary)
         for candidate in candidates
     ]
+    from app.services.llm_candidates import select_candidates
+
+    retrieval = {}
     try:
+        docs, retrieval = select_candidates(incoming, docs)
         judgements = judge_pairs(incoming, docs)
+    except LLMBudgetExceeded:
+        raise
     except LLMFailure as exc:
         features.semantic_quality_flags = [str(exc)]
         features.llm_detail = {
-            "review_policy": REVIEW_POLICY_VERSION,
+            "review_policy": REVIEW_POLICY_VERSION, "retrieval": retrieval,
             "review_category": "technical_error", "error_code": str(exc),
         }
         logger.warning("llm_review_policy signal=%s action=technical_review error=%s",
@@ -423,7 +537,7 @@ def resolve_signal(signal, candidates, source_refs):
     same = groups["same"]
     uncertain = groups["plausible"] + groups["legacy"]
     features.llm_detail = {
-        "review_policy": REVIEW_POLICY_VERSION,
+        "review_policy": REVIEW_POLICY_VERSION, "retrieval": retrieval,
         "candidate_groups": {name: [row.candidate_id for row in rows]
                              for name, rows in groups.items()},
         "comparisons": [
@@ -490,11 +604,19 @@ def match_official(event, event_data, evidence_items, config):
     target = official_match_document(event)
     incoming = document("incoming", target.title, target.summary)
     docs = [
-        document(f"official:{index}", item.title, item.content or item.summary)
+        document(f"official:{index}", item.title, item.content or item.summary,
+                 published_at=item.published_at.isoformat() if item.published_at else None,
+                 url=item.url)
         for index, item in enumerate(evidence_items)
     ]
+    from app.services.llm_candidates import select_candidates
+
+    retrieval = {}
     try:
+        docs, retrieval = select_candidates(incoming, docs)
         judgements = judge_pairs(incoming, docs)
+    except LLMBudgetExceeded:
+        raise
     except LLMFailure as exc:
         return OfficialSupportResult(
             event_id=event_data.event_id,

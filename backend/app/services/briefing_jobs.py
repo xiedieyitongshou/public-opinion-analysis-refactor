@@ -97,7 +97,8 @@ def default_analysis_input(run_id=None):
         sources.insert(1, "zhihu_search")
     logging.getLogger(__name__).info(
         "zhihu_collection_policy provider=%s search_enrichment_enabled=%s",
-        settings.zhihu_hot_list_provider, search_enabled,
+        settings.zhihu_hot_list_provider,
+        search_enabled,
     )
     return HotspotAnalysisInput(
         run_id=run_id or str(uuid4()),
@@ -108,8 +109,7 @@ def default_analysis_input(run_id=None):
             validate_only=False,
             dry_run=False,
             per_source_params=(
-                {"zhihu_search": {"from_hotlist": True, "max_queries": 3}}
-                if search_enabled else {}
+                {"zhihu_search": {"from_hotlist": True, "max_queries": 3}} if search_enabled else {}
             ),
             per_source_limits={"zhihu_search": 5} if search_enabled else {},
         ),
@@ -208,9 +208,12 @@ def execute_analysis(db, data, *, agent=None, sink=None):
     db.commit()
     logger.info("analysis_started run=%s profile=%s", data.run_id, data.matching_profile)
     try:
-        with progress_scope(db.get_bind(), data.run_id), request_scope(
-            data.run_id, settings.request_limits, settings.job_timeout_seconds, sink=sink
-        ) as scope:
+        with (
+            progress_scope(db.get_bind(), data.run_id),
+            request_scope(
+                data.run_id, settings.request_limits, settings.job_timeout_seconds, sink=sink
+            ) as scope,
+        ):
             try:
                 if settings.quota_probe_enabled:
                     probe_quota(db)
@@ -226,6 +229,7 @@ def execute_analysis(db, data, *, agent=None, sink=None):
                 if (
                     output.window_end
                     and output.status != "failed"
+                    and "analysis_incomplete" not in output.quality_flags
                     and not is_trial_run(db, data.run_id)
                 ):
                     from app.agents.planning import Planner
@@ -254,6 +258,10 @@ def execute_analysis(db, data, *, agent=None, sink=None):
         db.rollback()
         row = db.get(AnalysisRun, data.run_id)
         row.status, row.error = "failed", f"{type(exc).__name__}: {str(exc)[:500]}"
+        if row.input_json.get("reasoning_mode") == "llm":
+            from app.services.analysis_checkpoint import recover_interrupted_run
+
+            recover_interrupted_run(db, row, row.error)
         row.finished_at = datetime.now(UTC)
         db.commit()
         finish_interrupted_tasks(db, data.run_id, row.error)
@@ -341,6 +349,10 @@ class JobCoordinator:
         row = db.get(AnalysisRun, run_id)
         if row and row.status in {"queued", "running"}:
             row.status, row.error, row.finished_at = "failed", reason, datetime.now(UTC)
+            if row.input_json.get("reasoning_mode") == "llm":
+                from app.services.analysis_checkpoint import recover_interrupted_run
+
+                recover_interrupted_run(db, row, reason)
             db.commit()
             finish_interrupted_tasks(db, run_id, reason)
             logger.error("analysis_interrupted run=%s reason=%s", run_id, reason)
@@ -440,6 +452,67 @@ class JobCoordinator:
                 self.last_error = redact(f"{type(exc).__name__}: {str(exc)[:200]}")
                 logger.error("coordinator_error %s", redact(self.last_error))
             self.stop_event.wait(5)
+
+
+def resume_analysis(db, run_id):
+    row = db.get(AnalysisRun, run_id)
+    if row is None or row.input_json.get("reasoning_mode") != "llm":
+        raise ValueError("仅支持有保存采集数据的LLM任务续跑")
+    if row.status not in {"failed", "partial"}:
+        raise ValueError("只能继续已中断或部分完成的任务")
+    if row.status == "partial" and "analysis_incomplete" not in (row.output_json or {}).get(
+        "quality_flags", []
+    ):
+        raise ValueError("任务已完成；语义待审核或数据质量警告不属于断点续跑")
+    if db.scalar(select(AnalysisRun.run_id).where(AnalysisRun.status.in_(["queued", "running"]))):
+        raise ValueError("已有采集或分析任务在运行")
+    collected = db.scalar(
+        select(AgentTask.id).where(
+            AgentTask.task_type == "fetch_source_items",
+            AgentTask.output_json.is_not(None),
+            AgentTask.input_json["run_id"].as_string() == run_id,
+        )
+    )
+    if collected is None:
+        raise ValueError("没有可复用的采集结果，拒绝在续跑时重新采集")
+    # Item rows represent their latest content. Never rewind them over a newer
+    # collection when continuing an old window in the live database.
+    prepared = db.scalar(
+        select(AgentTask)
+        .where(
+            AgentTask.task_type == "prepare_source_signals",
+            AgentTask.input_json["run_id"].as_string() == run_id,
+            AgentTask.output_json.is_not(None),
+        )
+        .order_by(AgentTask.id.desc())
+    )
+    if prepared:
+        from app.models import Item
+
+        original_end = as_utc(row.window_end or prepared.output_json["window_end"])
+        observations = {}
+        for source in prepared.output_json.get("source_signals", []):
+            item_id = int(source["item_id"])
+            observed = as_utc(source.get("fetched_at") or original_end)
+            observations[item_id] = max(observations.get(item_id, observed), observed)
+        # A fetch may legitimately finish after an explicitly anchored window.
+        # Compare with the saved observation, rather than that window boundary.
+        if any(
+            as_utc(item.fetched_at) > observations[item.id]
+            for item in db.scalars(select(Item).where(Item.id.in_(observations)))
+        ):
+            raise ValueError("来源已有更新观测；请在隔离库回放旧轮次，避免覆盖新数据")
+    from app.services.llm_client import DeepSeekJSONClient
+
+    usage = DeepSeekJSONClient(run_id=run_id).budget.summary()
+    if (
+        usage["charged_tokens"] >= settings.llm_token_budget_per_run
+        or usage["requests"] >= settings.llm_max_calls_per_run
+    ):
+        raise ValueError("本轮累计预算已耗尽；需明确提高配置预算后再继续，不会自动重置")
+    row.status, row.error, row.finished_at = "queued", None, None
+    db.commit()
+    return row
 
 
 if __name__ == "__main__":

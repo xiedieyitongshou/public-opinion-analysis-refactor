@@ -273,11 +273,60 @@ def resolve_and_persist_events(
     window_end = data.window_end or datetime.now(UTC)
     sources = {signal.source_signal_id: signal for signal in data.source_signals}
     items = {str(item.source_citation.get("item_id")): item for item in data.normalized_items}
-    result = MatchAndResolveEventsOutput(run_id=data.run_id, status="succeeded")
+    from app.services.analysis_checkpoint import (
+        checkpoint_enabled,
+        load_checkpoint,
+        save_checkpoint,
+    )
+
+    saved = load_checkpoint()
+    result = (
+        MatchAndResolveEventsOutput.model_validate(saved)
+        if saved
+        else MatchAndResolveEventsOutput(run_id=data.run_id, status="succeeded")
+    )
+    processed = set(saved.get("_checkpoint", {}).get("completed_ids", []))
+    source_item_ids = [int(source.item_id) for source in data.source_signals]
+
+    def owners():
+        return {
+            str(i): eid
+            for i, eid in db.execute(
+                select(Item.id, Item.event_id).where(Item.id.in_(source_item_ids))
+            )
+        }
+
+    if saved and saved.get("_checkpoint", {}).get("item_owners") not in (None, owners()):
+        result = MatchAndResolveEventsOutput(run_id=data.run_id, status="succeeded")
+        processed.clear()
+    # A manual merge or changed ownership invalidates the old resolution checkpoint.
+    if any(
+        not db.scalar(
+            select(Event.id).where(Event.event_id == eid, Event.lifecycle_status == "active")
+        )
+        for eid in result.event_ids
+    ):
+        result = MatchAndResolveEventsOutput(run_id=data.run_id, status="succeeded")
+        processed.clear()
     matcher = EventMatcher()
     resolver = EventResolverAgent(matcher)
-    touched: set[str] = set()
-    accepted_discovery_sources: set[str] = set()
+    touched: set[str] = set(result.event_ids)
+    accepted_discovery_sources: set[str] = set(
+        saved.get("_checkpoint", {}).get("accepted_source_ids", []) if processed else []
+    )
+
+    def checkpoint(signal):
+        if not checkpoint_enabled():
+            return
+        processed.add(signal.event_signal_id)
+        result.event_ids = sorted(touched)
+        save_checkpoint(
+            result,
+            processed,
+            accepted_source_ids=sorted(accepted_discovery_sources),
+            item_owners=owners(),
+        )
+
     # Resolve discovery seeds before their search results, regardless of source order.
     ordered_signals = sorted(
         data.event_signals,
@@ -287,6 +336,8 @@ def resolve_and_persist_events(
         ),
     )
     for signal in ordered_signals:
+        if signal.event_signal_id in processed:
+            continue
         EventSignalTraceabilityCheck(
             event_signal=signal,
             source_signals=data.source_signals,
@@ -370,6 +421,7 @@ def resolve_and_persist_events(
         if resolution.action == "reject" and resolution.reason.startswith("reused explicit human"):
             result.event_resolutions.append(resolution)
             result.rejected_event_count += 1
+            checkpoint(signal)
             continue
         if automatic_enrichment and (
             parent_event_id is None
@@ -397,6 +449,7 @@ def resolve_and_persist_events(
         ):
             result.review_required_count += int(resolution.review_required)
             result.rejected_event_count += int(resolution.action == "reject")
+            checkpoint(signal)
             continue
         event = db.scalar(select(Event).where(Event.event_id == resolution.event_id))
         if event is None:
@@ -476,6 +529,7 @@ def resolve_and_persist_events(
             for source in source_signals
             if source.source_id in {"zhihu_hot_list", "weibo_rsshub_hot_search"}
         )
+        checkpoint(signal)
     # Retain recent events to record explicit absence or failure in subsequent rounds.
     tracked = db.scalars(
         select(Event).where(
@@ -586,7 +640,27 @@ def _review_unattached_enrichment(
 
 
 def classify_events(db: Session, data: ClassifyEventsInput) -> ClassifyEventsOutput:
-    output = ClassifyEventsOutput(status="succeeded" if data.event_ids else "skipped")
+    from app.services.analysis_checkpoint import (
+        checkpoint_enabled,
+        load_checkpoint,
+        save_checkpoint,
+    )
+
+    saved = load_checkpoint()
+    output = (
+        ClassifyEventsOutput.model_validate(saved)
+        if saved
+        else ClassifyEventsOutput(status="succeeded" if data.event_ids else "skipped")
+    )
+    processed = set(saved.get("_checkpoint", {}).get("completed_ids", []))
+    from app.services.analysis_checkpoint import event_material_version
+
+    versions = saved.get("_checkpoint", {}).get("event_versions", {})
+    for eid in list(processed):
+        current = db.scalar(select(Event).where(Event.event_id == eid))
+        if current is None or versions.get(eid) != event_material_version(current):
+            processed.discard(eid)
+    output.classifications = [c for c in output.classifications if c.event_id in processed]
     start = data.window_end - timedelta(hours=24)
     official_items = list(
         db.scalars(
@@ -617,6 +691,8 @@ def classify_events(db: Session, data: ClassifyEventsInput) -> ClassifyEventsOut
     for event in db.scalars(
         select(Event).where(Event.event_id.in_(data.event_ids)).order_by(Event.id)
     ).all():
+        if event.event_id in processed:
+            continue
         pool = official_items if checked or official_items else None
         config = official_config(data.matching_profile)
         community = any(item.source.platform in {"zhihu", "weibo"} for item in event.items)
@@ -674,6 +750,10 @@ def classify_events(db: Session, data: ClassifyEventsInput) -> ClassifyEventsOut
                 ).model_dump(mode="json"),
             }
             db.commit()
+        processed.add(event.event_id)
+        if checkpoint_enabled():
+            versions[event.event_id] = event_material_version(event)
+            save_checkpoint(output, processed, event_versions=versions)
     return output
 
 

@@ -116,14 +116,24 @@ def rebuild_window(db, run):
                             )
                             if str(v).isdigit()
                         )
-            support = match_official_support(
-                event,
-                [item for item in items if item.id in evidence_ids],
-                OfficialSupportConfig(),
-                window_start=start,
-                window_end=end,
-                allow_prior_reports=True,
-            )
+            from app.services.llm_client import cache_only
+
+            # A historical report refresh is never permission for new paid inference.
+            with cache_only():
+                checked_support = match_official_support(
+                    event,
+                    [item for item in items if item.id in evidence_ids],
+                    OfficialSupportConfig(),
+                    window_start=start,
+                    window_end=end,
+                    allow_prior_reports=True,
+                )
+            if checked_support.official_support_status != "not_checked" or not official:
+                support = checked_support
+            else:
+                # Keep already accepted, current-window article membership even if
+                # the new prompt has no cached judgement for a historical report.
+                support.quality_flags.append("historical_official_association_reused")
         assembly = assemble_hotspot_classification_from_db(
             db=db,
             run_id=run.run_id,

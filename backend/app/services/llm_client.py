@@ -7,8 +7,11 @@ import sqlite3
 from contextlib import contextmanager
 from contextvars import ContextVar
 from datetime import UTC, datetime, timedelta
+from functools import lru_cache
 from pathlib import Path
+from threading import BoundedSemaphore, RLock
 from urllib.parse import urlsplit
+from uuid import uuid4
 
 import httpx
 from pydantic import ValidationError
@@ -20,8 +23,24 @@ _mode = ContextVar("event_reasoning_mode", default=None)
 _client = ContextVar("event_llm_client", default=None)
 
 
+_cache_only = ContextVar("llm_cache_only", default=False)
+
+
 class LLMFailure(ValueError):
     """Sanitized, observable failure; never triggers the legacy reasoning backend."""
+
+
+class LLMBudgetExceeded(LLMFailure):
+    """Stop the current phase without creating a semantic review or automatic retry."""
+
+
+@contextmanager
+def cache_only():
+    token = _cache_only.set(True)
+    try:
+        yield
+    finally:
+        _cache_only.reset(token)
 
 
 def reasoning_mode():
@@ -74,10 +93,18 @@ def document(source_id, title, body="", **metadata):
     }
 
 
+@lru_cache(maxsize=4)
+def request_slots(limit):
+    # Shared by clients in this worker; waiting requests have not reserved API quota.
+    return BoundedSemaphore(limit)
+
+
 class DeepSeekJSONClient:
-    def __init__(self, *, http_client=None, cache_path=None):
+    def __init__(self, *, http_client=None, cache_path=None, run_id=None):
         self.http_client = http_client
         self.calls = 0
+        self._call_lock = RLock()
+        self._slots = request_slots(settings.llm_max_concurrent_requests)
         if cache_path is None:
             from sqlalchemy.engine import make_url
 
@@ -89,6 +116,12 @@ class DeepSeekJSONClient:
             )
             cache_path = settings.llm_cache_path or str(directory / "llm-cache.db")
         self.cache_path = Path(cache_path)
+        from app.services.llm_budget import RunTokenBudget
+        from app.services.request_usage import current_request_scope
+
+        scope = current_request_scope()
+        self.run_id = run_id or (scope.run_id if scope else "isolated:" + uuid4().hex)
+        self.budget = RunTokenBudget(self.cache_path, self.run_id)
 
     def validate_configuration(self):
         if settings.llm_provider != "deepseek":
@@ -122,8 +155,7 @@ class DeepSeekJSONClient:
         finally:
             connection.close()
 
-    def complete(self, task, prompt, payload, output_type, validator):
-        self.validate_configuration()
+    def cache_identity(self, task, prompt, payload, output_type):
         schema = output_type.model_json_schema()
         material = json.dumps(payload, ensure_ascii=False, sort_keys=True, default=str)
         if len(material) > settings.llm_input_max_chars:
@@ -151,6 +183,11 @@ class DeepSeekJSONClient:
             "input_hash": key,
             "task": task,
         }
+        return key, audit
+
+    def read_cached(self, task, prompt, payload, output_type, validator):
+        self.validate_configuration()
+        key, audit = self.cache_identity(task, prompt, payload, output_type)
         try:
             with self._cache() as db:
                 row = db.execute(
@@ -164,9 +201,33 @@ class DeepSeekJSONClient:
                 return parsed, {**audit, "cache_hit": True}
         except (sqlite3.Error, OSError, ValidationError):
             logging.getLogger(__name__).warning("llm_cache_read_unavailable")
-        if self.calls >= settings.llm_max_calls_per_run:
-            raise LLMFailure("llm_call_budget_exceeded")
-        self.calls += 1
+        return None
+
+    def store_cached(self, task, prompt, payload, result):
+        key, _ = self.cache_identity(task, prompt, payload, type(result))
+        try:
+            with self._cache() as db:
+                db.execute(
+                    "INSERT OR REPLACE INTO llm_results VALUES (?,?,?)",
+                    (key, result.model_dump_json(), datetime.now(UTC).isoformat()),
+                )
+                db.execute(
+                    "DELETE FROM llm_results WHERE saved < ?",
+                    ((datetime.now(UTC) - timedelta(hours=settings.llm_cache_hours)).isoformat(),),
+                )
+        except (sqlite3.Error, OSError):
+            logging.getLogger(__name__).warning("llm_cache_write_unavailable")
+
+    def complete(self, task, prompt, payload, output_type, validator):
+        self.validate_configuration()
+        cached = self.read_cached(task, prompt, payload, output_type, validator)
+        if cached is not None:
+            return cached
+        if _cache_only.get():
+            raise LLMFailure("llm_cache_miss")
+        _, audit = self.cache_identity(task, prompt, payload, output_type)
+        material = json.dumps(payload, ensure_ascii=False, sort_keys=True, default=str)
+        schema = output_type.model_json_schema()
         from app.services.request_usage import (
             RequestBudgetExceeded,
             measured_call,
@@ -184,15 +245,17 @@ class DeepSeekJSONClient:
             "messages": [
                 {
                     "role": "system",
-                    "content": prompt
-                    + "\nJSON Schema:\n"
-                    + json.dumps(schema, ensure_ascii=False),
+                    "content": prompt + "\nJSON Schema:\n" + json.dumps(schema, ensure_ascii=False),
                 },
                 {"role": "user", "content": material},
             ],
         }
 
+        usage, sent, final_status = {}, False, "failed"
+
         def send():
+            nonlocal usage, sent
+            sent = True
             client = self.http_client or httpx.Client(
                 timeout=settings.llm_timeout_seconds,
                 follow_redirects=False,
@@ -213,6 +276,18 @@ class DeepSeekJSONClient:
                         if len(content) > 256 * 1024:
                             raise LLMFailure("llm_response_too_large")
                     data = json.loads(content)
+                response_usage = data.get("usage")
+                if isinstance(response_usage, dict):
+                    usage = {
+                        name: response_usage.get(name)
+                        for name in (
+                            "prompt_tokens",
+                            "completion_tokens",
+                            "total_tokens",
+                            "prompt_cache_hit_tokens",
+                            "prompt_cache_miss_tokens",
+                        )
+                    }
                 choice = data["choices"][0]
                 if choice.get("finish_reason") != "stop":
                     raise LLMFailure("llm_incomplete_response")
@@ -221,27 +296,39 @@ class DeepSeekJSONClient:
                     raise LLMFailure("llm_empty_response")
                 parsed = output_type.model_validate_json(body)
                 validator(parsed)
-                response_usage = data.get("usage")
-                response_usage = (
-                    response_usage if isinstance(response_usage, dict) else {}
-                )
-                usage = {
-                    name: response_usage.get(name)
-                    for name in (
-                        "prompt_tokens",
-                        "completion_tokens",
-                        "total_tokens",
-                    )
-                }
                 return parsed, usage
             finally:
                 if self.http_client is None:
                     client.close()
 
+        # UTF-8 bytes are a conservative token bound, not a billing estimate.
+        # Reserve output capacity too; in-flight requests share the same budget.
+        estimate = (
+            sum(len(message["content"].encode("utf-8")) for message in request["messages"])
+            + request["max_tokens"]
+            + 256
+        )
+        key = None
+        from app.services.llm_budget import LLMBudgetLimit
+
         try:
-            parsed, usage = measured_call("deepseek", task, "llm_request", send)
+            with self._slots:
+                key = self.budget.reserve(
+                    task,
+                    estimate,
+                    token_limit=settings.llm_token_budget_per_run,
+                    call_limit=settings.llm_max_calls_per_run,
+                )
+                with self._call_lock:
+                    if self.calls >= settings.llm_max_calls_per_run:
+                        raise LLMBudgetExceeded("llm_call_budget_exceeded")
+                    self.calls += 1
+                parsed, usage = measured_call("deepseek", task, "llm_request", send)
+                final_status = "succeeded"
+        except LLMBudgetLimit as exc:
+            raise LLMBudgetExceeded(str(exc)) from exc
         except RequestBudgetExceeded as exc:
-            raise LLMFailure("llm_request_budget_exceeded") from exc
+            raise LLMBudgetExceeded("llm_request_budget_exceeded") from exc
         except LLMFailure:
             raise
         except httpx.TimeoutException as exc:
@@ -249,29 +336,18 @@ class DeepSeekJSONClient:
         except httpx.HTTPError as exc:
             raise LLMFailure("llm_network_error") from exc
         except (ValueError, KeyError, IndexError, TypeError, AttributeError) as exc:
-            # Never put provider response bodies or authentication data in task errors.
             raise LLMFailure("llm_invalid_response") from exc
-        try:
-            with self._cache() as db:
-                db.execute(
-                    "INSERT OR REPLACE INTO llm_results VALUES (?,?,?)",
-                    (
-                        key,
-                        parsed.model_dump_json(),
-                        datetime.now(UTC).isoformat(),
-                    ),
+        finally:
+            if key is not None:
+                self.budget.finish(key, usage, sent=sent, status=final_status)
+                logging.getLogger(__name__).info(
+                    "llm_usage run=%s task=%s status=%s usage=%s",
+                    self.run_id,
+                    task,
+                    final_status,
+                    usage,
                 )
-                db.execute(
-                    "DELETE FROM llm_results WHERE saved < ?",
-                    (
-                        (
-                            datetime.now(UTC)
-                            - timedelta(hours=settings.llm_cache_hours)
-                        ).isoformat(),
-                    ),
-                )
-        except (sqlite3.Error, OSError):
-            logging.getLogger(__name__).warning("llm_cache_write_unavailable")
+        self.store_cached(task, prompt, payload, parsed)
         logging.getLogger(__name__).info(
             "llm_call task=%s model=%s usage=%s", task, settings.deepseek_model, usage
         )

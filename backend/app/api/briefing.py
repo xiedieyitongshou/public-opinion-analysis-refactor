@@ -142,6 +142,10 @@ def jobs(db: Db, limit: int = Query(30, ge=1, le=200)):
             "window_end": row.window_end,
             "report_id": row.report_id,
             "error": row.error,
+            "can_resume": (row.input_json.get("reasoning_mode") == "llm"
+                           and row.status in {"failed", "partial"}
+                           and (row.status == "failed" or "analysis_incomplete"
+                                in (row.output_json or {}).get("quality_flags", []))),
         }
         for row in db.scalars(
             select(AnalysisRun).order_by(AnalysisRun.started_at.desc()).limit(limit)
@@ -153,6 +157,28 @@ class JobInput(BaseModel):
     run_id: str | None = Field(
         default=None, min_length=1, max_length=100, pattern=r"^[a-zA-Z0-9_-]+$"
     )
+
+
+@router.post("/jobs/{run_id}/resume", status_code=202)
+def resume_job(run_id: str, db: Db):
+    from app.services.briefing_jobs import resume_analysis
+
+    try:
+        row = resume_analysis(db, run_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return {"run_id": row.run_id, "status": row.status}
+
+
+@router.get("/jobs/{run_id}/llm-usage")
+def llm_usage(run_id: str, db: Db):
+    from app.services.llm_client import DeepSeekJSONClient
+
+    if db.get(AnalysisRun, run_id) is None:
+        raise HTTPException(status_code=404, detail="任务不存在")
+    return {**DeepSeekJSONClient(run_id=run_id).budget.summary(),
+            "token_budget": settings.llm_token_budget_per_run,
+            "call_budget": settings.llm_max_calls_per_run}
 
 
 @router.get("/overnight-test")

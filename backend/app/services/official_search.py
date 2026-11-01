@@ -332,7 +332,11 @@ def enrich_event_support(
     succeeded = any(result["status"] == "succeeded" for result in results)
     failed = any(result["status"] != "succeeded" for result in results)
     if support.official_support_status not in {"supported", "weak_supported"}:
-        support.official_support_status = "not_found" if succeeded else "not_checked"
+        incomplete_judgement = any(flag.startswith("llm_") and not flag.endswith("_used")
+                                   for flag in support.quality_flags)
+        support.official_support_status = (
+            "not_found" if succeeded and not incomplete_judgement else "not_checked"
+        )
     if failed:
         support.quality_flags.append("official_query_incomplete")
     support.official_support_detail = enrich_support_detail(support, official_query=query)

@@ -125,6 +125,15 @@ class Settings(BaseSettings):
     llm_candidates_per_request: int = Field(
         default=4, alias="LLM_CANDIDATES_PER_REQUEST", ge=1, le=10
     )
+    llm_candidate_limit: int = Field(default=20, alias="LLM_CANDIDATE_LIMIT", ge=1, le=100)
+    llm_retrieval_enabled: bool = Field(default=True, alias="LLM_RETRIEVAL_ENABLED")
+    llm_retrieval_use_embedding: bool = Field(default=True, alias="LLM_RETRIEVAL_USE_EMBEDDING")
+    llm_max_concurrent_requests: int = Field(
+        default=2, alias="LLM_MAX_CONCURRENT_REQUESTS", ge=1, le=4
+    )
+    llm_token_budget_per_run: int = Field(
+        default=500000, alias="LLM_TOKEN_BUDGET_PER_RUN", ge=1000
+    )
     llm_cache_path: str | None = Field(default=None, alias="LLM_CACHE_PATH")
     llm_cache_hours: int = Field(default=24, alias="LLM_CACHE_HOURS", ge=1, le=168)
     # Deprecated: exclusive backend selection supersedes mixed refinement.
