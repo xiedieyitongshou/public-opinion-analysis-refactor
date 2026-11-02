@@ -16,7 +16,7 @@ _current = ContextVar("analysis_checkpoint", default=None)
 
 def version():
     data = [
-        "llm-opt-v1",
+        "llm-opt-v2-official-independent",
         PROMPT_VERSION,
         settings.deepseek_model,
         settings.deepseek_base_url,

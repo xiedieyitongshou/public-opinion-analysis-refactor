@@ -65,6 +65,12 @@ def build_hotspot_analysis_plan(data: HotspotAnalysisInput) -> Plan:
         {"items": "normalize.items", "collection": "collect"},
     )
     step(
+        "official",
+        "build_official_agenda",
+        {"run_id": data.run_id},
+        {"item_ids": "prepare.official_item_ids", "window_end": "prepare.window_end"},
+    )
+    step(
         "extract",
         "extract_event_signals",
         {
@@ -270,7 +276,7 @@ class HotspotAnalysisAgent:
                     db.scalars(
                         select(AgentTask).where(
                             AgentTask.plan_id == task.plan_id,
-                            AgentTask.status.in_(["succeeded", "skipped"]),
+                            AgentTask.status.in_(["succeeded", "partial", "skipped"]),
                         )
                     )
                 )
@@ -305,8 +311,15 @@ class HotspotAnalysisAgent:
                             if (
                                 old.input_json == data.model_dump(mode="json")
                                 and saved_version == version()
+                                and checkpoint.get("complete")
                             ):
-                                return model.model_validate(old.output_json)
+                                return model.model_validate(
+                                    {
+                                        key: value
+                                        for key, value in old.output_json.items()
+                                        if key != "_checkpoint"
+                                    }
+                                )
                         return handler(data, context)
 
                     tool = replace(tool, handler=reuse)

@@ -147,6 +147,11 @@ def prepare_source_signals(
             output.quality_flags = sorted(set([*output.quality_flags, exclusion]))
             continue
         output.items.append(item)
+        if item.source_type == "official_news":
+            # Official news is a separate F-class stream, not an LLM/rule event seed.
+            if item.source_origin == "official_rss":
+                output.official_item_ids.append(row.id)
+            continue
         output.source_signals.append(signal)
         output.source_refs_by_signal_id[signal.source_signal_id] = SourceSignalMatchRef(
             source_signal_id=signal.source_signal_id,
@@ -281,7 +286,9 @@ def resolve_and_persist_events(
 
     saved = load_checkpoint()
     result = (
-        MatchAndResolveEventsOutput.model_validate(saved)
+        MatchAndResolveEventsOutput.model_validate(
+            {k: v for k, v in saved.items() if k != "_checkpoint"}
+        )
         if saved
         else MatchAndResolveEventsOutput(run_id=data.run_id, status="succeeded")
     )
@@ -296,7 +303,24 @@ def resolve_and_persist_events(
             )
         }
 
-    if saved and saved.get("_checkpoint", {}).get("item_owners") not in (None, owners()):
+    metadata = saved.get("_checkpoint", {})
+    expected_owners = metadata.get("item_owners")
+    if metadata.get("complete") and "completed_ids" not in metadata:
+        # Compatibility with completed stages saved before metadata preservation.
+        # Reconstruct ownership from accepted resolutions; never trust live owners
+        # as the checkpoint's expected state after a manual edit.
+        processed = {r.event_signal_id for r in result.event_resolutions}
+        accepted_rows = db.scalars(select(Event).where(Event.event_id.in_(result.event_ids))).all()
+        accepted_ids = {event.event_id: event.id for event in accepted_rows}
+        event_sources = {s.event_signal_id: s.source_signal_ids for s in data.event_signals}
+        expected_owners = {str(item_id): None for item_id in source_item_ids}
+        for resolution in result.event_resolutions:
+            owner = (
+                accepted_ids.get(resolution.event_id) if not resolution.review_required else None
+            )
+            for source_id in event_sources.get(resolution.event_signal_id, []):
+                expected_owners[str(sources[source_id].item_id)] = owner
+    if saved and expected_owners not in (None, owners()):
         result = MatchAndResolveEventsOutput(run_id=data.run_id, status="succeeded")
         processed.clear()
     # A manual merge or changed ownership invalidates the old resolution checkpoint.
@@ -312,7 +336,16 @@ def resolve_and_persist_events(
     resolver = EventResolverAgent(matcher)
     touched: set[str] = set(result.event_ids)
     accepted_discovery_sources: set[str] = set(
-        saved.get("_checkpoint", {}).get("accepted_source_ids", []) if processed else []
+        metadata.get(
+            "accepted_source_ids",
+            [
+                source.source_signal_id
+                for source in data.source_signals
+                if expected_owners and expected_owners.get(str(source.item_id)) is not None
+            ],
+        )
+        if processed
+        else []
     )
 
     def checkpoint(signal):
@@ -362,7 +395,10 @@ def resolve_and_persist_events(
                 ),
             )
         ).all()
-        candidates = [_candidate(event) for event in candidate_rows]
+        from app.services.official_agenda import is_official_agenda_event
+
+        candidates = [_candidate(event) for event in candidate_rows
+                      if not is_official_agenda_event(event)]
         parent_event_id = None
         if automatic_enrichment:
             parent_event_id = _resolved_discovery_parent(
@@ -523,6 +559,12 @@ def resolve_and_persist_events(
                     result.event_ids_by_content_hash[content_hash] = event.event_id
         event.source_citations_json = list(citations.values())
         touched.add(event.event_id)
+        from app.services.review_recovery import recover_technical_reviews
+
+        recover_technical_reviews(
+            db, resolution=resolution, sources=source_signals, run_id=data.run_id,
+            observed_at=window_end, agent_task_id=task_id,
+        )
         db.commit()
         accepted_discovery_sources.update(
             source.source_signal_id
@@ -648,7 +690,7 @@ def classify_events(db: Session, data: ClassifyEventsInput) -> ClassifyEventsOut
 
     saved = load_checkpoint()
     output = (
-        ClassifyEventsOutput.model_validate(saved)
+        ClassifyEventsOutput.model_validate({k: v for k, v in saved.items() if k != "_checkpoint"})
         if saved
         else ClassifyEventsOutput(status="succeeded" if data.event_ids else "skipped")
     )
@@ -661,14 +703,15 @@ def classify_events(db: Session, data: ClassifyEventsInput) -> ClassifyEventsOut
         if current is None or versions.get(eid) != event_material_version(current):
             processed.discard(eid)
     output.classifications = [c for c in output.classifications if c.event_id in processed]
-    start = data.window_end - timedelta(hours=24)
     official_items = list(
         db.scalars(
             select(Item)
             .join(Source)
             .where(
                 Source.source_type == "official_news",
-                Item.fetched_at > start,
+                Item.fetched_at > data.window_end - timedelta(
+                    days=settings.official_support_lookback_days
+                ),
                 Item.fetched_at <= data.window_end,
                 Item.status == "active",
             )
@@ -696,7 +739,11 @@ def classify_events(db: Session, data: ClassifyEventsInput) -> ClassifyEventsOut
         pool = official_items if checked or official_items else None
         config = official_config(data.matching_profile)
         community = any(item.source.platform in {"zhihu", "weibo"} for item in event.items)
-        if data.official_search_enabled and community:
+        from app.services.official_agenda import agenda_support, is_official_agenda_event
+
+        if is_official_agenda_event(event):
+            support = agenda_support(event, data.window_end)
+        elif community:
             support = enrich_event_support(
                 db,
                 event,
@@ -705,6 +752,7 @@ def classify_events(db: Session, data: ClassifyEventsInput) -> ClassifyEventsOut
                 config=config,
                 budget=budget,
                 window_end=data.window_end,
+                allow_external=data.official_search_enabled,
             )
         else:
             support = match_official_support(

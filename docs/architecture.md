@@ -12,24 +12,25 @@
 | [`app.briefing_cli`](../backend/app/briefing_cli.py) | 初始化、日报采集任务、观察、状态和导出 |
 | [`app.analysis_cli`](../backend/app/analysis_cli.py) | 执行一轮分析或回放采集响应，不启动周期调度 |
 | [`JobCoordinator`](../backend/app/services/briefing_jobs.py) | 单实例数据库队列、租约、工作子进程与超时处理 |
-| [`HotspotAnalysisAgent`](../backend/app/agents/analysis.py) | 构造并执行固定九步分析 Plan |
+| [`HotspotAnalysisAgent`](../backend/app/agents/analysis.py) | 构造并执行固定十步分析 Plan |
 | [`Planner`](../backend/app/agents/planning.py) | 日报三步 Plan，以及独立采集、验证与检索占位 Plan |
 
 API 和 CLI 复用业务服务。Collector 负责外部协议，Normalizer 负责结构清洗，事件服务负责身份与证据关系；Tool Registry 对输入输出做 Pydantic 校验并记录调用，Runner 按依赖推进任务。
 
-## 固定九步分析
+## 固定十步分析
 
 | 步骤 | Tool | 输入与结果 |
 | --- | --- | --- |
 | 1 | `fetch_source_items` | 调度知乎、微博和官媒 Collector；返回条目、每源状态、观测 ID、榜单完整性与采样口径 |
 | 2 | `normalize_raw_items` | 清洗标题、URL、时间与指标结构，输出 `NormalizedItem`，保留原始指标语义 |
 | 3 | `prepare_source_signals` | 保存／复用 `Source` 与 `Item`，建立来源引用和父话题关系，输出 `SourceSignal` 与匹配引用 |
-| 4 | `extract_event_signals` | 按总开关使用原规则或独立 LLM 抽取，输出带来源的 `EventSignal` |
-| 5 | `match_and_resolve_events` | 召回和比较候选，经约束与 Guardrails 创建、归并、待复核或拒绝，保存稳定事件和条目关联 |
-| 6 | `create_human_review_task` | 待确认关系进入人工队列；没有候选则跳过 |
-| 7 | `calculate_event_scores` | 按本轮真实观测计算并保存知乎／微博各自的平台分和快照 |
-| 8 | `classify_events` | 读取同窗口来源、官媒证据池与限额内定向查询，组装 A–F 分类和解释 |
-| 9 | `analyze_event_heat` | 读取已保存观测，计算各平台连续上榜时间和趋势，不重复制造观测 |
+| 4 | `build_official_agenda` | 按发布时间整理独立 F 类新闻与确定性去重，不调用 LLM |
+| 5 | `extract_event_signals` | 只对知乎／微博按开关使用规则或 LLM 抽取 |
+| 6 | `match_and_resolve_events` | 社区候选召回和归并，排除 F 类事件 |
+| 7 | `create_human_review_task` | 社区待确认关系进入人工队列 |
+| 8 | `calculate_event_scores` | 保存知乎／微博平台分与真实观测 |
+| 9 | `classify_events` | query 检索 RSS 或限额官网候选，规则核实依据；F 类复用文章来源 |
+| 10 | `analyze_event_heat` | 读取观测计算平台趋势，不重复制造观测 |
 
 `PlanStep.input_bindings` 显式引用前序输出，引用对象必须声明在 `depends_on` 中。绑定后实际调用的输入保存在任务日志。上述算法内部使用多个 service，并不意味着每个函数都注册为独立 Tool。
 
@@ -39,7 +40,8 @@ API 和 CLI 复用业务服务。Collector 负责外部协议，Normalizer 负�
 flowchart TD
     A[FetchSourceItemsOutput] --> N[NormalizedItem]
     N --> I[Item 与 SourceCitation]
-    I --> S[SourceSignal]
+    I --> S[社区 SourceSignal]
+    I --> F[官媒独立 F 类]
     S --> E[EventSignal]
     E --> R[EventResolution]
     R --> ID[稳定 event_id 与条目映射]
@@ -48,6 +50,8 @@ flowchart TD
     P --> C[分类与证据摘要]
     P --> T[平台趋势]
     C --> B[DailyBriefing]
+    F --> B
+    F -. 仅作候选报道依据 .-> C
     T --> B
 ```
 

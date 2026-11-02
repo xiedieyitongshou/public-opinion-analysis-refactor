@@ -4,8 +4,8 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>每日关注 · 简报工作台</title>
-    <link rel="stylesheet" href="/static/app.css" />
-    <script src="/static/app.js" defer></script>
+    <link rel="stylesheet" href="/static/app.css?v=review-report-20261102" />
+    <script src="/static/app.js?v=review-report-20261102" defer></script>
   </head>
   <body>
     <header class="masthead">
@@ -132,6 +132,13 @@
               <h2>待处理的事件关系</h2>
             </div>
             <p class="muted small">未确认的候选关系不会参与跨平台分类。</p>
+          </div>
+          <div class="panel review-scope">
+            <label for="review-report">复核对应的简报
+              <select id="review-report" aria-describedby="review-scope-summary"></select>
+            </label>
+            <button id="review-open-report" class="quiet">查看所选简报</button>
+            <p id="review-scope-summary" class="small muted" role="status"></p>
           </div>
           <div id="review-batch" class="panel review-batch"></div>
           <div id="review-list"></div>

@@ -2,7 +2,7 @@
 
 [返回项目首页](../README.md) · [工作流](architecture.md) · [数据契约](data-contracts.md)
 
-默认注册表位于 [`tools/default_tools.py`](../backend/app/tools/default_tools.py)，共 16 个 Tool。工具内的 Collector、matcher、BM25、embedding、rerank 等属于业务实现，不全部是独立注册工具。
+默认注册表位于 [`tools/default_tools.py`](../backend/app/tools/default_tools.py)，共 17 个 Tool。工具内的 Collector、matcher、BM25、embedding、rerank 等属于业务实现，不全部是独立注册工具。
 
 ## 实际注册目录
 
@@ -11,12 +11,13 @@
 | `fetch_source_items` | `FetchSourceItemsInput` → `FetchSourceItemsOutput` | 分析第 1 步；外部采集、来源状态和日志 |
 | `normalize_raw_items` | `NormalizeRawItemsInput` → `NormalizeRawItemsOutput` | 第 2 步；确定性清洗 |
 | `prepare_source_signals` | `PrepareSourceSignalsInput` → `PrepareSourceSignalsOutput` | 第 3 步；条目持久化与引用 |
-| `extract_event_signals` | `ExtractEventSignalsInput` → `ExtractEventSignalsOutput` | 第 4 步；原规则或独立 LLM 抽取，见[模式说明](llm-reasoning.md) |
-| `match_and_resolve_events` | `MatchAndResolveEventsInput` → `MatchAndResolveEventsOutput` | 第 5 步；事件和条目关联落库 |
-| `create_human_review_task` | `CreateHumanReviewTaskInput` → `CreateHumanReviewTaskOutput` | 第 6 步；复核入队，无候选则跳过 |
-| `calculate_event_scores` | `CalculateEventScoresInput` → `CalculateEventScoresOutput` | 第 7 步；平台分与真实观测写入 |
-| `classify_events` | `ClassifyEventsInput` → `ClassifyEventsOutput` | 第 8 步；官媒限额补查、分类持久化 |
-| `analyze_event_heat` | `AnalyzeEventHeatInput` → `AnalyzeEventHeatOutput` | 第 9 步；趋势持久化，主链路复用已有观测 |
+| `build_official_agenda` | `BuildOfficialAgendaInput` → `BuildOfficialAgendaOutput` | 第 4 步；独立 F 类整理，0 LLM |
+| `extract_event_signals` | `ExtractEventSignalsInput` → `ExtractEventSignalsOutput` | 第 5 步；原规则或独立 LLM 抽取，见[模式说明](llm-reasoning.md) |
+| `match_and_resolve_events` | `MatchAndResolveEventsInput` → `MatchAndResolveEventsOutput` | 第 6 步；事件和条目关联落库 |
+| `create_human_review_task` | `CreateHumanReviewTaskInput` → `CreateHumanReviewTaskOutput` | 第 7 步；复核入队，无候选则跳过 |
+| `calculate_event_scores` | `CalculateEventScoresInput` → `CalculateEventScoresOutput` | 第 8 步；平台分与真实观测写入 |
+| `classify_events` | `ClassifyEventsInput` → `ClassifyEventsOutput` | 第 9 步；官媒限额补查、分类持久化 |
+| `analyze_event_heat` | `AnalyzeEventHeatInput` → `AnalyzeEventHeatOutput` | 第 10 步；趋势持久化，主链路复用已有观测 |
 | `generate_daily_briefing` | `GenerateBriefingInput` → `GenerateBriefingOutput` | 日报第 1 步；组装已完成分析的结果 |
 | `review_briefing_quality` | `ReviewBriefingInput` → `ReviewBriefingOutput` | 日报第 2 步；规则质量检查 |
 | `save_daily_report` | `SaveBriefingInput` → `SaveBriefingOutput` | 日报第 3 步；固定版本落库 |
@@ -25,7 +26,7 @@
 | `render_briefing_image` | `PlaceholderInput` → `PlaceholderOutput` | **占位**，返回 `not_implemented` |
 | `search_existing_evidence` | `SearchExistingEvidenceInput` → `SearchExistingEvidenceOutput` | **Mode B 占位**，返回 `not_implemented` |
 
-邮件发送由 API／定时服务调用，不在上述九步分析 Tool 中；收件管理也是独立 HTTP 接口。
+邮件发送由 API／定时服务调用，不在上述十步分析 Tool 中；收件管理也是独立 HTTP 接口。
 
 ## 注册、校验与状态
 

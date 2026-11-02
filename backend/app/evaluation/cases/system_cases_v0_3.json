@@ -5270,7 +5270,7 @@
         "idempotent": true,
         "fetch_calls": 1,
         "event_count": 1,
-        "task_count": 18
+        "task_count": 20
       }
     },
     {
@@ -5305,7 +5305,7 @@
         "status": "partial",
         "all_zhihu_unknown": true,
         "event_count": 1,
-        "task_count": 18
+        "task_count": 20
       }
     },
     {

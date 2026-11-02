@@ -8,7 +8,7 @@ from datetime import UTC, datetime, timedelta
 from urllib.parse import urlsplit
 from zoneinfo import ZoneInfo
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -278,7 +278,8 @@ def generate_briefing(db: Session, run_id: str, *, refresh=False) -> DailyBriefi
                     c.source_type == "official_news" and not c.is_prior_report
                     for c in card.source_citations
                 )
-                if platform == "official"
+                if platform == "official" and card.priority_category == "F_official_only"
+                else False if platform == "official"
                 else getattr(card.platform_presence, platform + "_topn")
             )
         ]
@@ -290,7 +291,7 @@ def generate_briefing(db: Session, run_id: str, *, refresh=False) -> DailyBriefi
                 title=label,
                 event_cards=selected,
                 notes=(
-                    ["展示报道与来源覆盖，不计算公众热度。"]
+                    ["独立官媒新闻栏目；按报道发布时间入窗，RSS 列表不等于热度榜。"]
                     if platform == "official"
                     else ["按本平台观测排序；当前离榜仍可保留在所选关注窗口内。"]
                 ),
@@ -308,11 +309,17 @@ def generate_briefing(db: Session, run_id: str, *, refresh=False) -> DailyBriefi
                 event_cards=selected,
             )
         )
-    pending = list(db.scalars(select(HumanReviewTask).where(HumanReviewTask.status == "pending")))
+    from app.services.review_scope import review_run_filter, run_scope_ids
+
+    pending_count = db.scalar(select(func.count(HumanReviewTask.id)).where(
+        HumanReviewTask.status == "pending", review_run_filter(run_scope_ids(db, run_id)),
+    ))
     report_date = end.astimezone(
         ZoneInfo(get_email_settings(db, decrypt=False).briefing_timezone)
     ).date()
     health = source_health(run.collection_json or {}, end)
+    official_count = sum(card.priority_category == "F_official_only" for card in cards)
+    community_count = len(cards) - official_count
     risks = []
     if scope:
         risks.append("仅使用所选范围内真实采集并已接纳的证据；未采集的来源不代表没有报道。")
@@ -323,8 +330,8 @@ def generate_briefing(db: Session, run_id: str, *, refresh=False) -> DailyBriefi
             )
     if any(value["status"] != "succeeded" for value in health):
         risks.append("部分来源数据不完整或不可用；已保留其他来源的有效结果。")
-    if pending:
-        risks.append(f"有 {len(pending)} 条候选关系待人工处理，未确认关系不参与分类。")
+    if pending_count:
+        risks.append(f"本期有 {pending_count} 条候选关系待人工处理，未确认关系不参与分类。")
     if excluded:
         risks.append(f"有 {len(excluded)} 个事件未进入正文，详见质量检查。")
     return DailyBriefing(
@@ -332,7 +339,8 @@ def generate_briefing(db: Session, run_id: str, *, refresh=False) -> DailyBriefi
         report_date=report_date,
         title=f"每日关注 · {report_date}",
         summary=(
-            f"{window_label}，共 {len(cards)} 个已接纳事件。分类按事件去重，热度分别在平台内比较。"
+            f"{window_label}，共 {len(cards)} 条已接纳记录：社区事件 {community_count} 个，"
+            f"官媒新闻 {official_count} 条。两类各自去重，热度仅在对应社区平台内比较。"
         ),
         sections=sections,
         created_at=datetime.now(UTC),
@@ -341,7 +349,7 @@ def generate_briefing(db: Session, run_id: str, *, refresh=False) -> DailyBriefi
         timezone=get_email_settings(db, decrypt=False).briefing_timezone,
         source_health=health,
         risk_notes=risks,
-        pending_review_count=len(pending),
+        pending_review_count=pending_count,
         excluded_events=excluded,
     )
 

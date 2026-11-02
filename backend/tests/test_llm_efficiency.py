@@ -469,3 +469,75 @@ def test_generic_or_case_distinct_urls_do_not_short_circuit(runtime, incoming_ur
     )
     assert not result.match_features_json.url_match
     assert len(runtime[1]["requests"]) == 1
+
+
+@pytest.mark.parametrize("legacy_metadata", [False, True])
+def test_resume_after_completed_partial_stages_reuses_paid_results(
+    runtime, monkeypatch, environment, legacy_metadata
+):
+    from dataclasses import replace
+
+    from test_hotspot_analysis import request
+
+    from app.agents.analysis import HotspotAnalysisAgent
+    from app.services import llm_client
+    from app.services.briefing_jobs import execute_analysis, resume_analysis
+    from app.tools import ToolRegistry, default_tool_registry
+
+    db, collector, _ = environment
+    monkeypatch.setattr(settings, "zhihu_hot_list_provider", "official")
+    monkeypatch.setattr(llm_client, "DeepSeekJSONClient", lambda **kwargs: runtime[0])
+    registry = ToolRegistry()
+    calls = {"extract": 0, "classify": 0}
+    for tool in default_tool_registry.list_tools():
+        if tool.name == "extract_event_signals":
+            original_extract = tool.handler
+
+            def extract(data, context, handler=original_extract):
+                calls["extract"] += 1
+                result = handler(data, context)
+                return result.model_copy(update={"status": "partial", "errors": ["kept warning"]})
+
+            tool = replace(tool, handler=extract)
+        elif tool.name == "classify_events":
+            original_classify = tool.handler
+
+            def classify(data, context, handler=original_classify):
+                calls["classify"] += 1
+                if calls["classify"] == 1:
+                    raise LLMBudgetExceeded("llm_token_budget_exceeded")
+                return handler(data, context)
+
+            tool = replace(tool, handler=classify)
+        registry.register(tool)
+    data = request("completed-partial-resume", collector.time).model_copy(
+        update={"reasoning_mode": "llm", "official_search_enabled": False}
+    )
+    agent = HotspotAnalysisAgent(registry)
+    first = execute_analysis(db, data, agent=agent)
+    assert "analysis_incomplete" in first.output_json["quality_flags"]
+    task = db.scalar(select(AgentTask).where(AgentTask.task_type == "match_and_resolve_events"))
+    assert task.output_json["_checkpoint"]["complete"]
+    assert len(task.output_json["_checkpoint"]["completed_ids"]) == 2
+    assert task.output_json["_checkpoint"]["item_owners"]
+    if legacy_metadata:
+        task.output_json = {
+            **task.output_json,
+            "_checkpoint": {
+                "version": task.output_json["_checkpoint"]["version"],
+                "complete": True,
+            },
+        }
+        db.commit()
+    before = len(runtime[1]["requests"])
+    resume_analysis(db, data.run_id)
+    final = execute_analysis(db, data, agent=agent)
+    assert "analysis_incomplete" not in final.output_json["quality_flags"], final.error
+    assert calls["extract"] == 1
+    assert len(runtime[1]["requests"]) == before
+    latest = db.scalar(
+        select(AgentTask)
+        .where(AgentTask.task_type == "match_and_resolve_events")
+        .order_by(AgentTask.id.desc())
+    )
+    assert len(latest.output_json["event_resolutions"]) == 2

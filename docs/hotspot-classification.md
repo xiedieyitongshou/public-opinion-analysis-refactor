@@ -36,7 +36,7 @@
 | C `cross_platform_without_official` | 跨社区覆盖成立，官媒没有被接纳为支持 | 社区共同讨论，当前没有已接纳官媒依据 |
 | D `single_platform_with_official` | 单社区热榜、官媒有支持、无跨社区支持 | 单平台关注并有官媒报道 |
 | E `single_platform_only` | 单社区热榜，无官媒和跨社区支持 | 可独立展示的单平台热点 |
-| F `official_only` | 仅官媒来源，没有社区覆盖 | 官方报道事件，当前社区样本未捕捉到对应关注 |
+| F `official_only` | 独立官媒新闻记录，仅以官媒作为构成来源 | 可与社区事件引用同篇报道；不据此断言社区没有讨论 |
 | `unknown` | 输入不足，不能满足上述分类 | 保留缺失原因 |
 
 枚举在代码中带完整前缀，例如 `A_cross_platform_with_official`。C 类的“无支持”同时可能来自 `not_found` 或 `not_checked`，必须展示原始官媒状态，不能把未检查写成确定未报道。

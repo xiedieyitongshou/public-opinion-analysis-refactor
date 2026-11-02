@@ -522,6 +522,10 @@ pre {
 .review-evidence details { margin-top: 14px; }
 .review-evidence pre { max-height: 260px; overflow: auto; }
 .review-batch { border: 1px solid #b9d5d1; }
+.review-scope { display: flex; flex-wrap: wrap; gap: 14px; align-items: end; border: 1px solid #b9d5d1; }
+.review-scope label { display: grid; gap: 8px; flex: 1 1 280px; min-width: 0; }
+.review-scope select { width: 100%; padding: 12px; border: 1px solid var(--line); border-radius: 5px; font: inherit; background: white; }
+.review-scope p { flex-basis: 100%; margin: 0; }
 .review-batch button { margin: 4px 8px 4px 0; }
 .review-select { display: flex; align-items: center; gap: 8px; font-weight: 600; }
 .review-select input { width: auto; }

@@ -305,6 +305,10 @@ class EventSignalExtractor:
     def extract(self, input_data: ExtractEventSignalsInput) -> ExtractEventSignalsOutput:
         from app.services.llm_client import reasoning_mode
 
+        if not input_data.source_signals:
+            return ExtractEventSignalsOutput(
+                run_id=input_data.run_id, status="skipped", quality_flags=["empty_source_signals"]
+            )
         if reasoning_mode() == "llm":
             from app.services.llm_event_workflow import extract_signals
 

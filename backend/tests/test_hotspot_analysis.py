@@ -111,7 +111,7 @@ def test_two_rounds_keep_identity_rank_and_replay_without_duplicate_rows(environ
     agent = HotspotAnalysisAgent()
     first = agent.run(db, request("round-1", START))
     assert first.status != "failed", first.model_dump()
-    assert len(first.tasks) == 9
+    assert len(first.tasks) == 10
     assert count(db, Event) == 2
     assert count(db, Item) == 2
     assert all(item.event_id is not None for item in db.scalars(select(Item)))
@@ -140,7 +140,7 @@ def test_two_rounds_keep_identity_rank_and_replay_without_duplicate_rows(environ
     assert client.calls == 2
     assert count(db, EventSnapshot) == 4
     assert count(db, PlatformScore) == 4
-    assert count(db, AgentTask) == count(db, AgentToolCall) == 27
+    assert count(db, AgentTask) == count(db, AgentToolCall) == 30
 
 
 def test_failed_round_updates_existing_event_to_unknown(environment):
@@ -152,7 +152,7 @@ def test_failed_round_updates_existing_event_to_unknown(environment):
     client.failed = True
     result = agent.run(db, request("outage", client.time))
     assert result.status == "partial", result.model_dump()
-    assert len(result.tasks) == 9
+    assert len(result.tasks) == 10
     assert result.tasks[0]["status"] == "failed"
     assert count(db, Event) == 2
     for analysis in result.analyses:
@@ -301,13 +301,16 @@ def test_official_items_join_event_chain_and_classification(
     sources.append("chinanews_scroll_rss")
     result = HotspotAnalysisAgent().run(db, request("official", START, sources=sources))
     assert result.status != "failed", result.model_dump()
-    event = db.scalar(select(Event).where(Event.title == TITLE))
+    event = next(e for e in db.scalars(select(Event)) if e.title == TITLE and (
+        any(i.source.platform == "zhihu" for i in e.items) if with_community
+        else all(i.source.source_type == "official_news" for i in e.items)
+    ))
     classification = next(
         value for value in result.classifications if value.event_id == event.event_id
     )
     if with_community:
-        assert count(db, Event) == 2
-        assert len(event.items) == 2
+        assert count(db, Event) == 3
+        assert len(event.items) == 1
         assert classification.classification.priority_category == "D_single_platform_with_official"
     else:
         assert count(db, Event) == 1
@@ -400,7 +403,7 @@ def test_empty_collection_finishes_without_creating_events(environment):
     client.titles = []
     result = HotspotAnalysisAgent().run(db, request("empty", START))
     assert result.status == "skipped", result.model_dump()
-    assert len(result.tasks) == 9
+    assert len(result.tasks) == 10
     assert count(db, Event) == count(db, PlatformScore) == count(db, EventSnapshot) == 0
 
 
@@ -566,9 +569,9 @@ def test_official_expiry_uses_publication_and_refetch_does_not_extend_it(
     sources = ["chinanews_scroll_rss", *(["zhihu_hot_list"] if with_community else [])]
     first = agent.run(db, request("fresh-official", START, sources=sources))
     assert first.status != "failed", first.errors
-    assert first.classifications[0].classification.priority_category == (
-        "D_single_platform_with_official" if with_community else "F_official_only"
-    )
+    assert ("D_single_platform_with_official" if with_community else "F_official_only") in {
+        c.classification.priority_category for c in first.classifications
+    }
     event = db.scalar(select(Event))
     if not with_community:
         assert event.event_detail_json["official_agenda_rank"]["freshness_bucket"] == "24h"
@@ -589,7 +592,7 @@ def test_official_expiry_uses_publication_and_refetch_does_not_extend_it(
         assert expired.analyses[0].platforms["zhihu"].current_topn_present is False
     else:
         assert expired.event_ids == expired.classifications == []
-    assert count(db, Event) == 1
+    assert count(db, Event) == 1 + int(with_community)
     assert count(db, Item) == 1 + int(with_community)
     db.refresh(event)
     assert event.last_seen_at.replace(tzinfo=UTC) == START

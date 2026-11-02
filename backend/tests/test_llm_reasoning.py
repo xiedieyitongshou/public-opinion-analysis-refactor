@@ -410,15 +410,14 @@ def test_relevance_accepts_contextual_opinion_without_old_reranker(llm, monkeypa
 @pytest.mark.parametrize(
     "source_status,expected", [("use", "supported"), ("fallback", "weak_supported")]
 )
-def test_official_support_uses_llm_without_old_comparisons(
+def test_official_support_uses_rules_even_when_community_mode_is_llm(
     llm, monkeypatch, source_status, expected
 ):
     from app.services.official_support import match_official_support
 
-    llm[0]["output"] = {"judgements": [same_pair("official:0")]}
     monkeypatch.setattr(
-        "app.services.official_support.compare_many",
-        lambda *a, **k: pytest.fail("old official comparison"),
+        "app.services.llm_event_workflow.match_official",
+        lambda *a, **k: pytest.fail("official evidence must not call LLM"),
     )
     now = datetime(2026, 10, 29, tzinfo=UTC)
     event = {"event_id": "event-1", "title": TITLE, "first_seen_at": now}
@@ -435,7 +434,8 @@ def test_official_support_uses_llm_without_old_comparisons(
     }
     result = match_official_support(event, [item], window_end=now)
     assert result.official_support_status == expected
-    assert result.official_references[0].match_features["llm_decision"] == "same_event"
+    assert result.official_references[0].match_features["title_containment"] is True
+    assert not llm[1]
 
 
 def test_no_key_fails_before_collection_and_mode_is_restored(monkeypatch):

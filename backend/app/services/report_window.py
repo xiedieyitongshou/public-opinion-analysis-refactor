@@ -97,8 +97,9 @@ def rebuild_window(db, run):
             ],
         )
         if any(s.platform in {"zhihu", "weibo"} for s in signals):
-            from app.schemas.official_support import OfficialSupportConfig
-            from app.services.official_support import match_official_support
+            from app.core.config import settings
+            from app.services.matching_profiles import official_config
+            from app.services.official_search import enrich_event_support
 
             # Revalidate only evidence captured by the selected original analyses.
             # Never search externally while rebuilding a historical report.
@@ -120,13 +121,13 @@ def rebuild_window(db, run):
 
             # A historical report refresh is never permission for new paid inference.
             with cache_only():
-                checked_support = match_official_support(
-                    event,
-                    [item for item in items if item.id in evidence_ids],
-                    OfficialSupportConfig(),
-                    window_start=start,
-                    window_end=end,
-                    allow_prior_reports=True,
+                checked_support = enrich_event_support(
+                    db, event, [item for item in items if item.id in evidence_ids],
+                    run_id=run.run_id,
+                    config=official_config(
+                        run.input_json.get("matching_profile") or settings.matching_profile
+                    ),
+                    budget=[0], window_start=start, window_end=end, allow_external=False,
                 )
             if checked_support.official_support_status != "not_checked" or not official:
                 support = checked_support
@@ -134,6 +135,10 @@ def rebuild_window(db, run):
                 # Keep already accepted, current-window article membership even if
                 # the new prompt has no cached judgement for a historical report.
                 support.quality_flags.append("historical_official_association_reused")
+        from app.services.official_agenda import agenda_support, is_official_agenda_event
+
+        if is_official_agenda_event(event):
+            support = agenda_support(event, end, start)
         assembly = assemble_hotspot_classification_from_db(
             db=db,
             run_id=run.run_id,

@@ -70,6 +70,7 @@ class AgentTaskRunner:
                     context=ToolContext(task_id=task.id, actor=self.actor),
                     db=db,
                 )
+            checkpoint_metadata = dict((task.output_json or {}).get("_checkpoint", {}))
             if result.output is not None:
                 task.output_json = result.output
             task.error_message = result.error_message
@@ -95,6 +96,7 @@ class AgentTaskRunner:
                 task.output_json = {
                     **result.output,
                     "_checkpoint": {
+                        **checkpoint_metadata,
                         "version": version(),
                         "complete": True,
                     },

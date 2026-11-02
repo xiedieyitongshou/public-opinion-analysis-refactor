@@ -174,6 +174,7 @@ function listReports(reports) {
     );
     const actions = node("div", null, "actions");
     actions.append(button("预览与确认 →", () => preview(r.id)));
+    actions.append(button(`复核本期 · ${r.review_scope?.total || 0} 条`, () => openReportReviews(r), "quiet"));
     card.append(actions);
     const history = node("div");
     history.hidden = true;
@@ -210,6 +211,7 @@ async function preview(id, selectedRecipientIds = null) {
     link("邮件预览 ↗", `/api/reports/${id}/html?email=true`),
     link("纯文本 ↗", `/api/reports/${id}/text`),
   );
+  actions.append(button(`复核本期 · ${r.review_scope?.total || 0} 条`, () => openReportReviews(r)));
   if (r.status === "draft")
     actions.append(
       button(
@@ -398,6 +400,70 @@ const reviewReasons = new Map();
 let reviewSubmitting = false;
 let reviewPageOffset = 0;
 let reviewPageTotal = 0;
+let reviewScopeChoice = null;
+let reviewScopeEdition = null;
+let reviewScopeMetadata = null;
+
+function clearReviewSelection() {
+  selectedReviews.clear();
+  reviewReasons.clear();
+  reviewPageOffset = 0;
+}
+function reviewReportContext() {
+  return Number.isInteger(reviewScopeChoice) ? { report_id: reviewScopeChoice } : {};
+}
+function reviewQueueUrl() {
+  const scope = Number.isInteger(reviewScopeChoice)
+    ? `report_id=${reviewScopeChoice}` : "unbound=true";
+  return `/api/review-queue?offset=${reviewPageOffset}&${scope}`;
+}
+function followReviewReport(id, submittedScope = reviewScopeChoice) {
+  if (id && reviewScopeChoice === submittedScope) { reviewScopeChoice = id; reviewScopeMetadata = null; }
+}
+async function openReportReviews(report) {
+  if (reviewSubmitting) return;
+  clearReviewSelection();
+  reviewScopeChoice = report.id;
+  reviewScopeEdition = report.review_scope?.run_id || report.run_id;
+  reviewScopeMetadata = report;
+  await load();
+  activateTab("reviews");
+}
+function syncReviewScope(reports) {
+  if (reviewScopeChoice === null) reviewScopeChoice = reports[0]?.id || "unbound";
+  if (Number.isInteger(reviewScopeChoice)) {
+    let chosen = reports.find(r => r.id === reviewScopeChoice);
+    if (!chosen && reviewScopeEdition) chosen = reports.find(r => r.run_id === reviewScopeEdition);
+    if (chosen) {
+      reviewScopeChoice = chosen.id;
+      reviewScopeEdition = chosen.review_scope?.run_id || chosen.run_id;
+      reviewScopeMetadata = chosen;
+    }
+  }
+  const picker = $("review-report");
+  picker.replaceChildren();
+  const choices = [...reports];
+  if (reviewScopeMetadata && !choices.some(r => r.id === reviewScopeMetadata.id)) choices.push(reviewScopeMetadata);
+  for (const report of choices) {
+    const option = node("option", `#${report.id} · ${report.title} · 截止 ${time(report.window_end)} · ${report.review_scope?.total || 0} 条待处理`);
+    option.value = String(report.id);
+    picker.append(option);
+  }
+  const unbound = node("option", "尚未关联简报的任务");
+  unbound.value = "unbound";
+  picker.append(unbound);
+  picker.value = String(reviewScopeChoice);
+  picker.disabled = reviewSubmitting;
+}
+function renderReviewScope(paging) {
+  const scope = paging.scope || {};
+  $("review-scope-summary").textContent = scope.kind === "report"
+    ? `当前仅显示简报 #${scope.report_id} 的复核，覆盖 ${scope.collection_run_count} 轮采集；待审 ${paging.pending_count} 条，重算待重试 ${paging.refresh_failed_count} 条。审核后更新本期简报，历史版本保留。`
+    : "这些任务尚未关联到已生成的简报，可能仍在采集中或缺少历史关联信息；不会按标题或日期猜测归属。";
+  $("review-open-report").hidden = scope.kind !== "report";
+  $("review-open-report").disabled = reviewSubmitting;
+}
+
 async function listReviews(tasks, paging) {
   if (paging) { reviewPageOffset = paging.offset || 0; reviewPageTotal = paging.total; }
   const root = $("review-list");
@@ -427,6 +493,8 @@ async function listReviews(tasks, paging) {
     selectSafe.disabled = clear.disabled = reviewSubmitting;
     previous.disabled = reviewSubmitting || reviewPageOffset === 0;
     next.disabled = reviewSubmitting || reviewPageOffset + tasks.length >= reviewPageTotal;
+    if ($("review-report")) $("review-report").disabled = reviewSubmitting;
+    if ($("review-open-report")) $("review-open-report").disabled = reviewSubmitting;
     for (const task of tasks) {
       const checkbox = checkboxes.get(task.id);
       if (!checkbox) continue;
@@ -451,7 +519,7 @@ async function listReviews(tasks, paging) {
     batchResult.replaceChildren(node("p", "正在逐条保存归并结果并统一重算，请等待；不会重新采集或发送邮件。"));
     let reloaded = false;
     try {
-      const result = await api("/ops/human-review/batch-merge", { items: entries, reviewer: "admin" });
+      const result = await api("/ops/human-review/batch-merge", { items: entries, reviewer: "admin", ...reviewReportContext() });
       const details = (result.conflicts || []).map(c => `审核 #${c.task_ids.join("、#")}：${c.reason}`);
       for (const item of result.items || []) {
         details.push(`审核 #${item.task_id}：${item.status === "succeeded" ? "已归并" : item.message || item.status}`);
@@ -459,6 +527,7 @@ async function listReviews(tasks, paging) {
       }
       const message = `${result.message}${result.report_id ? `，更新草稿 #${result.report_id}` : ""}`;
       show(message, result.status !== "succeeded" || result.refresh_status === "failed");
+      followReviewReport(result.report_id);
       reviewSubmitting = false;
       await load();
       reloaded = true;
@@ -482,7 +551,7 @@ async function listReviews(tasks, paging) {
   const previous = button("上一页", async () => { reviewPageOffset = Math.max(0, reviewPageOffset - 50); await load(); });
   const next = button("下一页", async () => { reviewPageOffset += 50; await load(); });
   toolbar.append(node("h3", "批量归并"), summary,
-    node("p", "同一线索指向不同事件时只能选一个；翻页保留选择，最多100条。请逐条核对目标。", "small muted"),
+    node("p", "同一线索指向不同事件时只能选一个；翻页保留选择，切换简报清空选择，最多100条。请逐条核对目标。", "small muted"),
     node("p", `当前第 ${reviewPageOffset + 1}–${reviewPageOffset + tasks.length} 条，共 ${reviewPageTotal || tasks.length} 条`, "small"),
     previous, next, selectSafe, clear, submit, batchResult);
   for (const task of tasks) {
@@ -494,6 +563,9 @@ async function listReviews(tasks, paging) {
       node("p", `累计涉及 ${new Set([...(payload.run_ids || []), payload.run_id].filter(Boolean)).size} 轮采集`, "muted"),
       node("p", payload.reason || "需要人工核对是否属于同一事件", "muted"),
     );
+    if (paging?.scope?.kind === "report") {
+      panel.append(node("p", `所属简报：${paging.scope.title} / #${paging.scope.report_id}`, "small muted"));
+    }
     if (task.status === "pending" && reviewCategory(payload) !== "技术异常待处理") {
       const selection = task.merge_selection || {};
       const label = node("label", null, "review-select");
@@ -547,10 +619,13 @@ async function listReviews(tasks, paging) {
           "quality",
         ),
         button("重试分类与日报更新", async () => {
-          const result = await api(`/api/reviews/${task.id}/refresh`, {});
+          const submittedScope = reviewScopeChoice;
+          const suffix = Number.isInteger(reviewScopeChoice) ? `?report_id=${reviewScopeChoice}` : "";
+          const result = await api(`/api/reviews/${task.id}/refresh${suffix}`, {});
           show(
             `重算完成${result.report_id ? `，更新草稿 #${result.report_id}` : ""}`,
           );
+          followReviewReport(result.report_id, submittedScope);
           await load();
         }),
       );
@@ -580,10 +655,12 @@ async function listReviews(tasks, paging) {
       const b = button(label, async () => {
         if (!confirm(`${label}此候选？已发布简报将保留原版本，更新另存草稿。`))
           return;
+        const submittedScope = reviewScopeChoice;
         const result = await api(`/ops/human-review/tasks/${task.id}/decide`, {
           decision,
           decision_reason: reason.value,
           reviewer: "admin",
+          ...reviewReportContext(),
           ...(decision === "create_new_event" ? { event_title: eventTitle.value.trim() || null } : {}),
         });
         show(
@@ -592,6 +669,7 @@ async function listReviews(tasks, paging) {
             : `处理完成${result.report_id ? `，更新草稿 #${result.report_id}` : ""}`,
           result.status === "failed" || result.refresh_status === "failed",
         );
+        followReviewReport(result.report_id, submittedScope);
         await load();
       });
       b.disabled = reviewSubmitting || (decision === "merge_to_existing" && !task.merge_selection?.eligible);
@@ -708,7 +786,8 @@ function renderRunProgress(run) {
   syncStartButtons();
   const stages = {
     fetch_source_items: "采集数据", normalize_raw_items: "整理采集数据",
-    prepare_source_signals: "准备来源证据", extract_event_signals: "提取事件",
+    prepare_source_signals: "准备来源证据", build_official_agenda: "整理独立官媒新闻",
+    extract_event_signals: "提取社区事件",
     match_and_resolve_events: "匹配与归并事件", create_human_review_task: "整理人工审核",
     calculate_event_scores: "计算平台内热度", classify_events: "官媒补证与事件分类",
     analyze_event_heat: "分析热度趋势", generate_daily_briefing: "生成简报",
@@ -733,24 +812,29 @@ function renderRunProgress(run) {
   $("run-usage-note").textContent = `${run.run_id ? `轮次 ${run.run_id}。` : ""}请求完成后更新；进行中的请求尚未计入。${cli?.returned_count != null ? `微博CLI已解析${cli.returned_count}条，按3积分/条估算${cli.returned_count * 3}积分。` : ""}估算不含无法解析的响应及启动检查，不是实际账单；额度见下方。`;
 }
 
+let workspaceLoadSequence = 0;
 async function load() {
+  const sequence = ++workspaceLoadSequence;
   const responses = await Promise.all([
     api("/api/dashboard"),
     api("/api/reports"),
     api("/api/usage"),
     api("/api/jobs"),
-    api(`/api/review-queue?offset=${reviewPageOffset}`),
     api("/api/deliveries"),
     api("/api/daily-jobs"),
     api("/api/recipients"),
     api("/api/run-progress"),
   ]);
-  const [dash, reports, usage, jobs, initialReviews, deliveries, dailyJobs, recipients, progress] = responses;
-  let reviews = initialReviews;
+  if (sequence !== workspaceLoadSequence) return;
+  const [dash, reports, usage, jobs, deliveries, dailyJobs, recipients, progress] = responses;
+  syncReviewScope(reports);
+  const requestedScope = reviewScopeChoice;
+  let reviews = await api(reviewQueueUrl());
   if (reviewPageOffset && reviewPageOffset >= reviews.total) {
     reviewPageOffset = 0;
-    reviews = await api("/api/review-queue");
+    reviews = await api(reviewQueueUrl());
   }
+  if (sequence !== workspaceLoadSequence || requestedScope !== reviewScopeChoice) return;
   dashboard = dash;
   renderOvernight(dash.overnight);
   renderRunProgress(progress);
@@ -758,6 +842,7 @@ async function load() {
   $("workspace").hidden = false;
   $("logout").hidden = false;
   $("review-count").textContent = reviews.total;
+  renderReviewScope(reviews);
   listSources(dash.sources);
   listReports(reports);
   $("schedule-summary").textContent =
@@ -892,15 +977,27 @@ $("overnight-stop").addEventListener("click", () => busy($("overnight-stop"), as
   show("已请求结束，当前轮次完成后汇总。");
   await load();
 }));
+function activateTab(name) {
+  document.querySelectorAll(".tab-panel").forEach(p => { p.hidden = p.id !== name; });
+  document.querySelectorAll("[data-tab]").forEach(t => t.classList.toggle("active", t.dataset.tab === name));
+}
+$("review-report").addEventListener("change", () => busy($("review-report"), async () => {
+  if (reviewSubmitting) return;
+  clearReviewSelection();
+  reviewScopeChoice = $("review-report").value === "unbound" ? "unbound" : Number($("review-report").value);
+  reviewScopeEdition = null;
+  reviewScopeMetadata = null;
+  await load();
+}));
+$("review-open-report").addEventListener("click", () => busy($("review-open-report"), async () => {
+  if (!Number.isInteger(reviewScopeChoice)) return;
+  activateTab("briefings");
+  await preview(reviewScopeChoice);
+}));
 document.querySelectorAll("[data-tab]").forEach((b) =>
   b.addEventListener("click", () => {
     if (b.dataset.tab === "mail-settings") loadMailSettings().catch(e => show(e.message, true));
-    document
-      .querySelectorAll(".tab-panel")
-      .forEach((p) => (p.hidden = p.id !== b.dataset.tab));
-    document
-      .querySelectorAll("[data-tab]")
-      .forEach((t) => t.classList.toggle("active", t === b));
+    activateTab(b.dataset.tab);
   }),
 );
 function resizePreview() {

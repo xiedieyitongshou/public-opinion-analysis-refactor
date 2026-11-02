@@ -6,7 +6,6 @@ from sqlalchemy import select
 
 from app.core.config import settings
 from app.models import AgentTask, Event, HumanReviewTask
-from app.models.briefing import AnalysisRun
 from app.schemas.analysis import ClassifyEventsInput, HotspotAnalysisInput, HotspotAnalysisOutput
 from app.schemas.collectors import FetchSourceItemsOutput
 from app.services.analysis_interfaces import _has_current_attention, classify_events
@@ -17,7 +16,10 @@ from app.services.platform_trend_assembly import (
 )
 
 
-def refresh_after_review(db, task, event_id):
+def refresh_after_review(db, task, event_id, *, report_id=None):
+    if report_id is None:
+        report_id = (task.payload_json or {}).get("refresh", {}).get("requested_report_id")
+    scope = {"report_id": report_id} if report_id is not None else {}
     ids = (task.payload_json or {}).get("refresh", {}).get("batch_review_ids")
     if ids:
         tasks = list(db.scalars(select(HumanReviewTask).where(HumanReviewTask.id.in_(ids))))
@@ -28,8 +30,9 @@ def refresh_after_review(db, task, event_id):
                 for row in tasks
                 if row.status == "resolved"
             ],
+            **scope,
         )
-    return refresh_after_reviews(db, [(task, event_id)])
+    return refresh_after_reviews(db, [(task, event_id)], **scope)
 
 
 def mark_refresh_result(db, task, **values):
@@ -42,17 +45,21 @@ def mark_refresh_result(db, task, **values):
     db.commit()
 
 
-def refresh_after_reviews(db, decisions):
-    run = db.scalar(
-        select(AnalysisRun)
-        .where(
-            AnalysisRun.output_json.is_not(None),
-            AnalysisRun.status.in_(["succeeded", "partial", "skipped"]),
-        )
-        .order_by(AnalysisRun.window_end.desc())
-    )
-    if run is None or not run.window_end:
+def refresh_after_reviews(db, decisions, *, report_id=None):
+    from app.services.review_scope import review_refresh_run
+
+    run = review_refresh_run(db, [task for task, _ in decisions], report_id)
+    if run is None or not run.window_end or not run.output_json:
         return None
+    from app.services.llm_client import reasoning_scope
+
+    with reasoning_scope(run.input_json.get("reasoning_mode") or settings.event_reasoning_mode):
+        return _refresh_run(db, decisions, run)
+
+
+def _refresh_run(db, decisions, run):
+    from app.services.review_scope import review_run_ids
+
     end = as_utc(run.window_end)
     result = HotspotAnalysisOutput.model_validate(run.output_json)
     event_ids = {event_id for _, event_id in decisions if event_id}
@@ -68,7 +75,7 @@ def refresh_after_reviews(db, decisions):
                 if original:
                     by_hash[original] = event.event_id
         # Include the original round even when it is now older than 24h; it remains history.
-        original_runs = {(task.payload_json or {}).get("run_id") for task, _ in decisions}
+        original_runs = set().union(*(review_run_ids(db, task) for task, _ in decisions))
         tasks = db.scalars(
             select(AgentTask)
             .where(

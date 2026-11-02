@@ -85,6 +85,16 @@ def decide_human_review_task(
     from app.services.briefing_jobs import acquire_lease, release_lease
     from app.services.review_refresh import refresh_after_review
 
+    if input_data.report_id is not None:
+        from app.services.review_scope import validate_review_scope
+
+        try:
+            validate_review_scope(db, [task], input_data.report_id)
+        except ValueError as exc:
+            return HumanReviewDecisionOutput(
+                status="failed", human_review_task=task_record(task), message=str(exc),
+            )
+
     owner = str(uuid4())
     if not acquire_lease(db, "analysis", owner, seconds=900):
         return HumanReviewDecisionOutput(
@@ -95,8 +105,18 @@ def decide_human_review_task(
     try:
         result = _decide_human_review_task(db, task, input_data)
         if result.status == "succeeded":
+            # Retain the edition even if the process stops during the expensive rebuild.
+            task.payload_json = {
+                **(task.payload_json or {}),
+                "refresh": {"status": "failed", "requested_report_id": input_data.report_id,
+                            "error": "审核决定已保存，等待关联简报更新"},
+            }
+            db.commit()
             try:
-                result.report_id = refresh_after_review(db, task, result.event_id)
+                result.report_id = refresh_after_review(
+                    db, task, result.event_id,
+                    **({"report_id": input_data.report_id} if input_data.report_id else {}),
+                )
                 result.refresh_status = "refreshed" if result.report_id else "no_analysis_run"
             except Exception as exc:
                 db.rollback()
@@ -107,6 +127,7 @@ def decide_human_review_task(
                 "status": result.refresh_status,
                 "report_id": result.report_id,
                 "error": result.message,
+                "requested_report_id": input_data.report_id,
             }
             task.payload_json = payload
             db.commit()
@@ -122,12 +143,15 @@ def _decide_human_review_task(
     *,
     consolidate: bool = True,
     validate_ownership: bool = True,
+    recovery_exclude_ids: tuple[int, ...] = (),
 ) -> HumanReviewDecisionOutput:
     if task.status != "pending":
         return HumanReviewDecisionOutput(
             status="failed",
             human_review_task=task_record(task),
-            message=f"Human review task is not pending: {task.status}",
+            message=("该技术异常已被后续成功结果处理，无需重复审核。"
+                     if (task.payload_json or {}).get("automatic_recovery")
+                     else f"Human review task is not pending: {task.status}"),
         )
 
     if input_data.decision == "merge_to_existing" and validate_ownership:
@@ -168,6 +192,24 @@ def _decide_human_review_task(
     }
     task.payload_json = payload
     db.add(task)
+    if event_id:
+        from app.schemas.matching import EventResolution
+        from app.services.review_recovery import recover_technical_reviews, review_observed_at
+
+        rows = list(db.scalars(select(Item).where(Item.id.in_(payload.get("item_ids", [])))))
+        recover_technical_reviews(
+            db, resolution=EventResolution(
+                event_signal_id=payload.get("event_signal_id") or f"review:{task.id}",
+                event_id=event_id, event_fingerprint="human-reviewed",
+                action="merge" if input_data.decision == "merge_to_existing" else "create",
+                confidence=1.0, reason="Explicit human decision",
+            ),
+            sources=[{"item_id": str(row.id), "url": row.url, "title": row.title,
+                      "source_type": row.source.source_type} for row in rows],
+            run_id=payload.get("run_id"), observed_at=review_observed_at(db, payload),
+            accepted_at=now, human_review_id=task.id,
+            exclude_task_ids=recovery_exclude_ids,
+        )
     _resolve_related_guardrail_violations(db, payload, now=now)
     db.commit()
     db.refresh(task)
@@ -392,6 +434,17 @@ def _apply_decision_side_effect(
 ) -> str | None:
     candidate_event_id = payload.get("candidate_event_id")
     if input_data.decision == "merge_to_existing":
+        from app.services.official_agenda import is_official_agenda_event
+
+        target = db.scalar(select(Event).where(Event.event_id == str(candidate_event_id)))
+        incoming = list(db.scalars(select(Item).where(
+            Item.id.in_([int(i) for i in payload.get("item_ids", [])])
+        )))
+        if target and incoming and any(
+            (item.source.source_type == "official_news") != is_official_agenda_event(target)
+            for item in incoming
+        ):
+            raise ValueError("官媒 F 类与知乎／微博事件独立；请建立报道依据关联，不能跨链路归并")
         if (
             not candidate_event_id
             or db.scalar(select(Event).where(Event.event_id == str(candidate_event_id))) is None

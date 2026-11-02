@@ -179,6 +179,27 @@ def run_official_agenda_path(
     extractor: EventSignalExtractor | None = None,
     resolver: EventResolverAgent | None = None,
 ) -> OfficialPathResult:
+    """Compatibility adapter; official records never use the community LLM backend."""
+    from app.services.llm_client import reasoning_scope
+
+    with reasoning_scope("rules"):
+        return _run_official_agenda_path(
+            official_items, run_id=run_id,
+            existing_events=[
+                c for c in existing_events or [] if c.event_id.startswith("official-")
+            ],
+            extractor=extractor, resolver=resolver,
+        )
+
+
+def _run_official_agenda_path(
+    official_items: Iterable[Any],
+    *,
+    run_id: str = "day45-official-agenda",
+    existing_events: list[RetrievedEventMatchCandidate] | None = None,
+    extractor: EventSignalExtractor | None = None,
+    resolver: EventResolverAgent | None = None,
+) -> OfficialPathResult:
     """Path B: push official items through existing extraction and matching chain."""
 
     items = list(official_items)

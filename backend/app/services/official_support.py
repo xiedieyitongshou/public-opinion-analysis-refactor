@@ -294,12 +294,8 @@ def _match_official_support(
             return citation_result
         return _not_checked_result(event_data, "official_pool_empty")
 
-    from app.services.llm_client import reasoning_mode
-
-    if reasoning_mode() == "llm":
-        from app.services.llm_event_workflow import match_official
-
-        return match_official(event, event_data, evidence_items, config)
+    # Official evidence always uses the deterministic matcher, independently of
+    # the community extraction/merge backend selected for this run.
     target = official_match_document(event)
     documents = [item_document(item) for item in evidence_items]
     if len(documents) > config.recall_limit:

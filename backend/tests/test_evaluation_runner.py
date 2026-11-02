@@ -138,7 +138,7 @@ def test_registered_evaluation_tool_runs_real_workflow_and_persists_summary():
             assert result.output["status"] == "succeeded"
             actual = result.output["report"]["results"][0]["actual"]
             assert actual["fetch_calls"] == 1
-            assert actual["tool_call_count"] == 18
+            assert actual["tool_call_count"] == 20
             row = db.scalar(select(EvaluationRun))
             assert row.id == result.output["evaluation_run_id"]
             assert row.metrics_json["by_kind"]["workflow"]["passed"] == 1

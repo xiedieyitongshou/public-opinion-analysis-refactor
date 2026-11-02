@@ -277,20 +277,54 @@ def persist_search_items(db: Session, items: list[NormalizedItem]) -> list[Item]
     return rows
 
 
+def search_rss_pool(pool, query, *, limit=20):
+    """Use the event query to retrieve bounded candidates from saved RSS articles."""
+    from app.services.match_documents import item_document
+    from app.services.matching_engine import bm25_scores
+
+    rows = list(pool or [])
+    scores = bm25_scores(query.query_text, [item_document(row).text for row in rows])
+    indices = sorted(range(len(rows)), key=lambda i: (-scores[i], i))
+    selected, seen, source_counts = [], set(), {}
+    for index in indices:
+        row = rows[index]
+        key = getattr(row, "url", None) or getattr(row, "id", index)
+        source = getattr(row, "source_id", None)
+        if scores[index] <= 0 or key in seen:
+            continue
+        if source_counts.get(source, 0) >= settings.official_search_limit:
+            continue
+        seen.add(key)
+        source_counts[source] = source_counts.get(source, 0) + 1
+        selected.append(row)
+        if len(selected) >= limit:
+            break
+    return selected, {
+        "provider": "saved_rss", "query": query.query_text,
+        "pool_count": len(rows), "candidate_count": len(selected),
+        "candidate_item_ids": [str(getattr(row, "id", "")) for row in selected],
+    }
+
+
 def enrich_event_support(
-    db, event, pool, *, run_id, config, budget: list[int], client=None, window_end=None
+    db, event, pool, *, run_id, config, budget: list[int], client=None, window_end=None,
+    window_start=None, allow_external=True,
 ):
-    """Search only unsupported community events; cache queries and retain their provenance."""
+    """Query RSS first; optional website search supplements community evidence only."""
     from app.services.match_documents import as_datetime
     from app.services.official_paths import build_official_query, enrich_support_detail
     from app.services.official_support import match_official_support
 
-    support = match_official_support(
-        event, pool, config, window_end=window_end, allow_prior_reports=True
-    )
-    if support.official_support_status in {"supported", "weak_supported"}:
-        return support
     query = build_official_query(event)
+    candidates, rss_audit = search_rss_pool(pool, query, limit=config.recall_limit)
+    support = match_official_support(
+        event, candidates if pool is not None else None, config,
+        window_end=window_end, window_start=window_start, allow_prior_reports=True,
+    )
+    support.official_support_detail = enrich_support_detail(support, official_query=query)
+    support.official_support_detail.official_query["rss_search"] = rss_audit
+    if support.official_support_status in {"supported", "weak_supported"} or not allow_external:
+        return support
     detail = dict(event.event_detail_json or {})
     previous = detail.get("official_search", {})
     previous_time = as_datetime(previous.get("searched_at"))
@@ -326,7 +360,8 @@ def enrich_event_support(
             "item_ids": sorted({row.id for row in rows}),
         }
     support = match_official_support(
-        event, [*(pool or []), *rows], config, window_end=window_end, allow_prior_reports=True
+        event, [*candidates, *rows], config, window_end=window_end,
+        window_start=window_start, allow_prior_reports=True
     )
     results = audit.get("results", [])
     succeeded = any(result["status"] == "succeeded" for result in results)
@@ -341,6 +376,7 @@ def enrich_event_support(
         support.quality_flags.append("official_query_incomplete")
     support.official_support_detail = enrich_support_detail(support, official_query=query)
     support.official_support_detail.official_query["search_audit"] = audit
+    support.official_support_detail.official_query["rss_search"] = rss_audit
     detail["official_search"] = audit
     event.event_detail_json = detail
     db.commit()

@@ -54,6 +54,7 @@ class HumanReviewDecisionInput(BaseModel):
     reviewer: str | None = None
     decision_reason: str | None = None
     event_title: str | None = None
+    report_id: int | None = Field(default=None, gt=0)
 
 
 class HumanReviewDecisionOutput(BaseModel):
@@ -74,3 +75,4 @@ class BatchMergeEntry(BaseModel):
 class BatchMergeInput(BaseModel):
     items: list[BatchMergeEntry] = Field(min_length=1, max_length=100)
     reviewer: str | None = Field(default=None, max_length=120)
+    report_id: int | None = Field(default=None, gt=0)

@@ -58,7 +58,24 @@ class PrepareSourceSignalsOutput(BaseModel):
     items: list[NormalizedItem] = Field(default_factory=list)
     source_signals: list[SourceSignal] = Field(default_factory=list)
     source_refs_by_signal_id: dict[str, SourceSignalMatchRef] = Field(default_factory=dict)
+    official_item_ids: list[int] = Field(default_factory=list)
     saved_count: int = 0
+    excluded_count: int = 0
+    quality_flags: list[str] = Field(default_factory=list)
+    errors: list[str] = Field(default_factory=list)
+
+
+class BuildOfficialAgendaInput(BaseModel):
+    run_id: str
+    window_end: datetime
+    item_ids: list[int] = Field(default_factory=list)
+
+
+class BuildOfficialAgendaOutput(BaseModel):
+    status: Literal["succeeded", "partial", "skipped"]
+    event_ids: list[str] = Field(default_factory=list)
+    created_count: int = 0
+    reused_count: int = 0
     excluded_count: int = 0
     quality_flags: list[str] = Field(default_factory=list)
     errors: list[str] = Field(default_factory=list)

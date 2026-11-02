@@ -43,7 +43,10 @@ class MergeSelection:
         self.events = {
             e.event_id: e
             for e in db.execute(
-                select(Event.id, Event.event_id, Event.title, Event.lifecycle_status)
+                select(
+                    Event.id, Event.event_id, Event.title, Event.lifecycle_status,
+                    Event.event_detail_json["event_domain"].as_string().label("event_domain"),
+                )
             )
         }
         self.items = {
@@ -62,6 +65,13 @@ class MergeSelection:
                     .label("audit_only"),
                 ).join(Source)
             )
+        }
+        official_owners = {i.event_id for i in self.items.values()
+                           if i.source_type == "official_news"}
+        other_owners = {i.event_id for i in self.items.values()
+                        if i.source_type != "official_news"}
+        self.official_event_ids = (official_owners - other_owners) | {
+            e.id for e in self.events.values() if e.event_domain == "official_agenda"
         }
         self.claims = []
         for item in self.items.values():
@@ -102,6 +112,8 @@ class MergeSelection:
             item = self.items.get(int(value))
             if item is None:
                 issues.append("采集记录已不存在")
+            elif (item.source_type == "official_news") != (target.id in self.official_event_ids):
+                issues.append("官媒 F 类与社区事件独立，不能跨链路归并")
             elif item.event_id not in {None, target.id}:
                 issues.append("采集记录已归属于另一个事件，不能重复归并")
         for claim, event_id in self.claims:
@@ -145,6 +157,17 @@ def batch_merge_reviews(db, data):
     from app.services.briefing_jobs import acquire_lease, release_lease
     from app.services.human_review import _decide_human_review_task
     from app.services.review_refresh import refresh_after_reviews
+
+    if data.report_id is not None:
+        from app.services.review_scope import validate_review_scope
+
+        tasks = list(db.scalars(select(HumanReviewTask).where(
+            HumanReviewTask.id.in_([entry.task_id for entry in data.items])
+        )))
+        try:
+            validate_review_scope(db, tasks, data.report_id)
+        except ValueError as exc:
+            return {"status": "failed", "message": str(exc), "conflicts": [], "items": []}
 
     owner = str(uuid4())
     if not acquire_lease(db, "analysis", owner, seconds=900):
@@ -199,6 +222,7 @@ def batch_merge_reviews(db, data):
                 ),
                 consolidate=False,
                 validate_ownership=False,
+                recovery_exclude_ids=tuple(ids),
             )
             results.append(
                 {
@@ -222,12 +246,16 @@ def batch_merge_reviews(db, data):
                         "batch_review_ids": batch_ids,
                         "error": "批量归并已保存，等待统一重算",
                         "batch_id": owner,
+                        "requested_report_id": data.report_id,
                     },
                 }
             db.commit()
             error = None
             try:
-                report_id = refresh_after_reviews(db, successful)
+                report_id = refresh_after_reviews(
+                    db, successful,
+                    **({"report_id": data.report_id} if data.report_id else {}),
+                )
                 refresh_status = "refreshed" if report_id else "no_analysis_run"
             except Exception as exc:
                 db.rollback()
@@ -241,6 +269,7 @@ def batch_merge_reviews(db, data):
                         "error": error,
                         "batch_review_ids": batch_ids,
                         "batch_id": owner,
+                        "requested_report_id": data.report_id,
                     },
                 }
             db.commit()

@@ -32,6 +32,8 @@ from app.schemas import (
     NormalizeRawItemsOutput,
 )
 from app.schemas.analysis import (
+    BuildOfficialAgendaInput,
+    BuildOfficialAgendaOutput,
     ClassifyEventsInput,
     ClassifyEventsOutput,
     PrepareSourceSignalsInput,
@@ -378,6 +380,14 @@ def classify_events_handler(
     return classify_events(context.db_session, input_data)
 
 
+def build_official_agenda_handler(input_data, context):
+    from app.services.official_agenda import build_official_agenda
+
+    if context.db_session is None:
+        raise ValueError("Official agenda requires a database session")
+    return build_official_agenda(context.db_session, input_data)
+
+
 def _primary_raw_score(raw_metrics_used: dict[str, Any]) -> float | None:
     for key in (
         "rank",
@@ -406,6 +416,14 @@ def search_existing_evidence_handler(
 
 def build_default_tool_registry() -> ToolRegistry:
     registry = ToolRegistry()
+
+    registry.register(ToolDefinition(
+        name="build_official_agenda",
+        description="Build independent F-class official news records without LLM inference.",
+        input_model=BuildOfficialAgendaInput, output_model=BuildOfficialAgendaOutput,
+        handler=build_official_agenda_handler, has_side_effect=True,
+        retryable=False, max_retries=0,
+    ))
 
     registry.register(
         ToolDefinition(

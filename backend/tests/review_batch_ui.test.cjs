@@ -129,3 +129,66 @@ test("batch submits each original target once and keeps results visible after re
   assert.equal(elements["review-batch"].hidden, false);
   assert.ok(descendants(elements["review-batch"]).some(e => String(e.textContent).includes("更新草稿 #10")));
 });
+
+test("report picker starts with latest edition and follows its newer revision", () => {
+  const { context, elements } = setup();
+  elements["review-report"] = new Element("select");
+  context.syncReviewScope([
+    { id: 9, title: "新一期", run_id: "new", review_scope: { total: 2, run_id: "new" } },
+    { id: 5, title: "旧一期", run_id: "old", review_scope: { total: 1, run_id: "old" } },
+  ]);
+  assert.equal(context.reviewReportContext().report_id, 9);
+  vm.runInContext("reviewScopeChoice = 5; reviewScopeEdition = 'old'; reviewPageOffset = 50;", context);
+  context.syncReviewScope([
+    { id: 10, title: "旧一期更正版", run_id: "old", review_scope: { total: 0, run_id: "old" } },
+    { id: 9, title: "新一期", run_id: "new" },
+  ]);
+  assert.equal(context.reviewReportContext().report_id, 10);
+  assert.equal(context.reviewQueueUrl(), "/api/review-queue?offset=50&report_id=10");
+});
+
+test("opening another edition clears cross-page batch choices and reasons", async () => {
+  const { context } = setup();
+  vm.runInContext("selectedReviews.set(1, 'a'); reviewReasons.set(1, 'old reason'); reviewPageOffset=50;", context);
+  const tabs = [];
+  context.activateTab = name => tabs.push(name);
+  context.load = async () => {};
+  await context.openReportReviews({ id: 22, run_id: "edition-22" });
+  assert.equal(vm.runInContext("selectedReviews.size", context), 0);
+  assert.equal(vm.runInContext("reviewReasons.size", context), 0);
+  assert.equal(context.reviewQueueUrl(), "/api/review-queue?offset=0&report_id=22");
+  assert.deepEqual(tabs, ["reviews"]);
+});
+
+test("batch sends the selected report and follows only its returned revision", async () => {
+  const { context, elements, tasks } = setup();
+  vm.runInContext("reviewScopeChoice=17; reviewScopeEdition='edition-17';", context);
+  const requests = [];
+  context.api = async (url, body) => {
+    requests.push({ url, body });
+    return { status: "succeeded", message: "完成", report_id: 18, refresh_status: "refreshed", items: [] };
+  };
+  context.load = async () => context.listReviews([]);
+  await context.listReviews([tasks[2]], { total: 1, offset: 0, scope: { kind: "report", report_id: 17, title: "所选一期" } });
+  assert.ok(descendants(elements["review-list"]).some(e => e.textContent === "所属简报：所选一期 / #17"));
+  await action(elements, "选择本页无互斥项").events.click();
+  await action(elements, "确认归并所选").events.click();
+  assert.equal(requests[0].body.report_id, 17);
+  assert.equal(context.reviewReportContext().report_id, 18);
+});
+
+test("a late single decision does not switch the user's newly selected edition", async () => {
+  const { context, elements, tasks } = setup();
+  vm.runInContext("reviewScopeChoice=17;", context);
+  const requests = [];
+  context.api = async (url, body) => {
+    requests.push({url, body});
+    vm.runInContext("reviewScopeChoice=23;", context);
+    return {status: "succeeded", refresh_status: "refreshed", report_id: 18};
+  };
+  context.load = async () => {};
+  await context.listReviews([tasks[2]]);
+  await descendants(elements["review-list"]).find(e => e.textContent === "单独建事件").events.click();
+  assert.equal(requests[0].body.report_id, 17);
+  assert.equal(context.reviewReportContext().report_id, 23);
+});

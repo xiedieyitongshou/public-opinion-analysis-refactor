@@ -6,7 +6,7 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse, PlainTextResponse
 from pydantic import BaseModel, Field
-from sqlalchemy import func, or_, select
+from sqlalchemy import and_, func, or_, select
 from sqlalchemy.orm import Session
 
 from app.api.auth import require_admin
@@ -37,6 +37,14 @@ from app.services.email_settings import get_email_settings
 from app.services.human_review import task_record
 from app.services.overnight_test import describe as describe_overnight
 from app.services.request_usage import usage_summary
+from app.services.review_scope import (
+    active_review_filter,
+    report_review_scope,
+    reported_run_ids,
+    review_counts,
+    review_run_filter,
+    validate_review_scope,
+)
 
 router = APIRouter(prefix="/api", dependencies=[Depends(require_admin)], tags=["briefing"])
 Db = Annotated[Session, Depends(get_db)]
@@ -51,6 +59,7 @@ def get_report(db, report_id):
 
 def report_info(db, row, *, full=False):
     revision = db.get(ReportRevision, row.id)
+    scope = report_review_scope(db, row.id)
     result = {
         "id": row.id,
         "title": row.title,
@@ -62,6 +71,7 @@ def report_info(db, row, *, full=False):
         "supersedes_id": revision.supersedes_id if revision else None,
         "run_id": revision.run_id if revision else None,
         "quality": row.quality_review_json,
+        "review_scope": {**scope.as_dict(), **review_counts(db, review_run_filter(scope.run_ids))},
     }
     if full:
         result["briefing"] = row.briefing_json
@@ -435,12 +445,24 @@ def resolve_delivery(delivery_id: int, data: DeliveryDecision, db: Db):
 
 @router.get("/review-queue")
 def review_queue(
-    db: Db, limit: int = Query(50, ge=1, le=200), offset: Annotated[int, Query(ge=0)] = 0
+    db: Db, limit: int = Query(50, ge=1, le=200), offset: Annotated[int, Query(ge=0)] = 0,
+    report_id: Annotated[int | None, Query(gt=0)] = None, unbound: bool = False,
 ):
-    active = or_(
-        HumanReviewTask.status == "pending",
-        HumanReviewTask.payload_json["refresh"]["status"].as_string() == "failed",
-    )
+    if report_id is not None and unbound:
+        raise HTTPException(422, "请选择简报或未关联任务中的一种范围")
+    predicate = None
+    scope = {"kind": "all"}
+    if report_id is not None:
+        try:
+            binding = report_review_scope(db, report_id)
+        except ValueError as exc:
+            raise HTTPException(404, str(exc)) from exc
+        scope, predicate = binding.as_dict(), review_run_filter(binding.run_ids)
+    elif unbound:
+        scope, predicate = {"kind": "unbound"}, ~review_run_filter(reported_run_ids(db))
+    active = active_review_filter()
+    if predicate is not None:
+        active = and_(active, predicate)
     rows = list(
         db.scalars(
             select(HumanReviewTask)
@@ -454,7 +476,8 @@ def review_queue(
 
     metadata = selection_metadata(db, rows) if rows else {}
     return {
-        "total": db.scalar(select(func.count(HumanReviewTask.id)).where(active)),
+        **review_counts(db, predicate),
+        "scope": scope,
         "offset": offset,
         "items": [
             task_record(task).model_copy(update={"merge_selection": metadata[task.id]})
@@ -484,7 +507,9 @@ def review_context(task_id: int, db: Db):
 
 
 @router.post("/reviews/{task_id}/refresh")
-def retry_review_refresh(task_id: int, db: Db):
+def retry_review_refresh(
+    task_id: int, db: Db, report_id: Annotated[int | None, Query(gt=0)] = None,
+):
     from uuid import uuid4
 
     from app.services.briefing_jobs import acquire_lease, release_lease
@@ -493,13 +518,24 @@ def retry_review_refresh(task_id: int, db: Db):
     task = db.get(HumanReviewTask, task_id)
     if task is None or task.status == "pending":
         raise HTTPException(409, "请先完成候选审核")
+    report_id = report_id or (task.payload_json or {}).get("refresh", {}).get("requested_report_id")
+    if report_id is not None:
+        try:
+            batch_ids = (task.payload_json or {}).get("refresh", {}).get("batch_review_ids")
+            members = list(db.scalars(select(HumanReviewTask).where(
+                HumanReviewTask.id.in_(batch_ids or [task.id])
+            )))
+            validate_review_scope(db, members, report_id)
+        except ValueError as exc:
+            raise HTTPException(409, str(exc)) from exc
     owner = str(uuid4())
     if not acquire_lease(db, "analysis", owner, seconds=900):
         raise HTTPException(409, "采集分析正在运行，请稍后重试")
     try:
         payload = dict(task.payload_json or {})
         report_id = refresh_after_review(
-            db, task, payload.get("decision_audit", {}).get("event_id")
+            db, task, payload.get("decision_audit", {}).get("event_id"),
+            **({"report_id": report_id} if report_id is not None else {}),
         )
         from app.services.review_refresh import mark_refresh_result
 
