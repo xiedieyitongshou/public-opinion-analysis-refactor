@@ -67,6 +67,38 @@ def test_restart_skips_missed_hours_instead_of_burst(db):
     assert slots[3]['run_id'].endswith('-3')
 
 
+def test_future_start_waits_then_runs_exactly_five_45_minute_slots(db, monkeypatch):
+    from app.schemas.collection_session import CollectionSessionConfig
+
+    start = NOW + timedelta(minutes=30)
+    row = night.start(db, start, CollectionSessionConfig(duration_hours=3, interval_minutes=45))
+    summaries = []
+    monkeypatch.setattr(night, 'summarize', lambda *args: summaries.append(1) or 42)
+    assert night.tick(db, NOW)
+    assert not list(db.scalars(select(AnalysisRun)))
+    for slot in range(5):
+        due = start + timedelta(minutes=45 * slot)
+        night.tick(db, due - timedelta(seconds=1))
+        assert db.scalar(select(AnalysisRun).where(AnalysisRun.status == 'queued')) is None
+        night.tick(db, due + timedelta(seconds=1))
+        assert len(night.current(db).rounds_json) == slot + 1
+        run = finish(db)
+        assert run.run_id.endswith(f'-{slot}')
+    night.tick(db, start + timedelta(hours=3, minutes=3))
+    assert row.status == 'completed' and summaries == [1]
+    assert len(list(db.scalars(select(AnalysisRun)))) == 5
+    assert not night.tick(db, start + timedelta(hours=4))
+
+
+def test_explicit_scheduled_start_never_catches_up_after_its_start_grace(db):
+    row = night.start(db, NOW)
+    row.config_json = {**row.config_json, 'scheduled_start': True}
+    db.commit()
+    night.tick(db, NOW + timedelta(minutes=6))
+    assert row.status == 'failed' and '错过预约' in row.error
+    assert not list(db.scalars(select(AnalysisRun)))
+
+
 def test_stop_waits_for_current_round_then_summarizes(db, monkeypatch):
     night.start(db, NOW)
     night.tick(db, NOW)

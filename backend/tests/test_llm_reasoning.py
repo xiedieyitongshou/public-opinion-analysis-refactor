@@ -264,6 +264,26 @@ def test_clearing_time_does_not_hide_invalid_other_evidence(llm):
     assert "llm_unverifiable_evidence" in result.errors[0]
 
 
+def test_rule_extraction_still_uses_llm_for_event_merge(llm, monkeypatch):
+    monkeypatch.setattr(settings, "event_extraction_mode", "rules")
+    monkeypatch.setattr(settings, "weibo_cli_relevance_mode", "rules")
+    prepared = EventSignalExtractor().extract(
+        ExtractEventSignalsInput(run_id="mixed", source_signals=[source()])
+    )
+    assert prepared.status == "succeeded" and not llm[1]
+    assert prepared.event_signals[0].reasoning_detail["extraction_backend"] == "rules"
+    llm[0]["output"] = {"judgements": [same_pair()]}
+    output = EventResolverAgent().resolve(
+        MatchAndResolveEventsInput(
+            run_id="mixed", event_signals=prepared.event_signals,
+            existing_events=[candidate()],
+        )
+    )
+    result = output.event_resolutions[0]
+    assert result.action == "merge" and result.event_id == "event-1"
+    assert result.matched_by == ["llm_event_judgement"] and len(llm[1]) == 1
+
+
 def test_llm_merge_does_not_use_embedding_reranker_or_legacy_thresholds(
     llm, monkeypatch
 ):

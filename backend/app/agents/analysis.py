@@ -162,7 +162,10 @@ class HotspotAnalysisAgent:
     def run(self, db: Session, data: HotspotAnalysisInput) -> HotspotAnalysisOutput:
         from app.services.llm_client import reasoning_scope, require_llm_configuration
 
-        with reasoning_scope(data.reasoning_mode):
+        with reasoning_scope(
+            data.reasoning_mode, extraction_mode=data.extraction_mode,
+            weibo_cli_relevance_mode=data.weibo_cli_relevance_mode,
+        ):
             require_llm_configuration()  # Fail before any paid source collection.
             return self._run(db, data)
 

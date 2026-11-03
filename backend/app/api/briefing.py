@@ -58,6 +58,8 @@ def get_report(db, report_id):
 
 
 def report_info(db, row, *, full=False):
+    from app.services.report_provenance import collection_provenance
+
     revision = db.get(ReportRevision, row.id)
     scope = report_review_scope(db, row.id)
     result = {
@@ -66,7 +68,9 @@ def report_info(db, row, *, full=False):
         "status": row.status,
         "report_date": row.report_date,
         "created_at": row.created_at,
+        "window_start": row.briefing_json.get("window_start"),
         "window_end": row.briefing_json.get("window_end"),
+        "collection_provenance": collection_provenance(db, row, scope),
         "event_count": row.briefing_json.get("event_count", 0),
         "supersedes_id": revision.supersedes_id if revision else None,
         "run_id": revision.run_id if revision else None,

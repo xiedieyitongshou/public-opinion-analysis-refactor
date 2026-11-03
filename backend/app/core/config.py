@@ -115,6 +115,12 @@ class Settings(BaseSettings):
     event_reasoning_mode: Literal["rules", "llm"] = Field(
         default="rules", alias="EVENT_REASONING_MODE"
     )
+    event_extraction_mode: Literal["inherit", "rules", "llm"] = Field(
+        default="inherit", alias="EVENT_EXTRACTION_MODE"
+    )
+    weibo_cli_relevance_mode: Literal["inherit", "rules", "llm"] = Field(
+        default="inherit", alias="WEIBO_CLI_RELEVANCE_MODE"
+    )
     llm_timeout_seconds: float = Field(default=30, alias="LLM_TIMEOUT_SECONDS", gt=0, le=120)
     llm_max_calls_per_run: int = Field(default=100, alias="LLM_MAX_CALLS_PER_RUN", ge=1, le=2000)
     llm_document_max_chars: int = Field(

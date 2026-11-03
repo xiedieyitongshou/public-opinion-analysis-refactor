@@ -65,9 +65,9 @@ class WeiboHeatCollector(BaseCollector):
             f"body-rerank-v2:{settings.matching_profile}:"
             f"{settings.weibo_relevance_reject_below}:{settings.weibo_relevance_accept_at}"
         )
-        from app.services.llm_client import reasoning_mode
+        from app.services.llm_client import weibo_relevance_mode
 
-        if reasoning_mode() == "llm":
+        if weibo_relevance_mode() == "llm":
             from app.schemas.llm import PROMPT_VERSION
 
             params["cli_sampling_version"] = f"llm:{settings.deepseek_model}:{PROMPT_VERSION}"

@@ -46,9 +46,9 @@ def explicit_conflicts(parent: str, body: str) -> list[str]:
 
 
 def classify_body(parent: str, text: str) -> tuple[str, float, list[str], list[str]]:
-    from app.services.llm_client import reasoning_mode
+    from app.services.llm_client import weibo_relevance_mode
 
-    if reasoning_mode() == "llm":
+    if weibo_relevance_mode() == "llm":
         from app.services.llm_event_workflow import evaluate_relevance
 
         relation = evaluate_relevance(parent, text, source="weibo_cli", user_query_id="body-check")

@@ -45,9 +45,10 @@ def evaluate_search_enrichment(
     enrichment_text = _combined_text(enrichment_item)
     parent_text = _combined_text(parent_item)
 
-    from app.services.llm_client import reasoning_mode
+    from app.services.llm_client import reasoning_mode, weibo_relevance_mode
 
-    if reasoning_mode() == "llm":
+    mode = weibo_relevance_mode() if source == "weibo_cli" else reasoning_mode()
+    if mode == "llm":
         from app.services.llm_event_workflow import evaluate_relevance
 
         return evaluate_relevance(

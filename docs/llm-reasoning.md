@@ -1,6 +1,6 @@
 # DeepSeek 与原有规则的独立切换
 
-2026-11-01 边界更新：总开关切换知乎／微博抽取、相关性与归并。官媒 F 类整理及补证固定走[独立官媒流程](official-independent-pipeline.md)，不调用 LLM；下文早期官媒 LLM 匹配记录属于历史实现。
+2026-11-03 边界更新：总开关默认控制知乎／微博抽取、相关性与归并；抽取及微博 CLI 相关性现支持[独立阶段开关](rule-preparation-llm-merge.md)，可配置规则抽取、LLM 判断 CLI 相关性与归并。未配置阶段开关时沿用总模式。官媒 F 类整理及补证固定走[独立官媒流程](official-independent-pipeline.md)，不调用 LLM；下文早期官媒 LLM 匹配记录属于历史实现。
 
 [返回 README](../README.md) · [工作流](architecture.md) · [事件抽取](event-extraction.md)
 
@@ -19,7 +19,7 @@
 | 官媒 F 类与补证 | 独立新闻整理与规则核实 | 同样走规则，不调用 LLM |
 | 失败 | 原降级行为 | 失败／待复核／未知，不自动切回 rules |
 
-独立后台工具调用默认读取环境开关；每个正常分析任务在 `HotspotAnalysisInput.reasoning_mode` 中保存模式，并在工作流执行期间使用同一个上下文。已有任务的输入不可改写；切换后应创建新轮次。
+独立后台工具调用默认读取环境开关；每个正常分析任务在 `HotspotAnalysisInput` 中保存总模式、`extraction_mode` 及 `weibo_cli_relevance_mode`，并在工作流执行期间使用同一个上下文。已有任务的输入不可改写；切换后应创建新轮次。上表描述阶段跟随总模式时的行为；显式阶段配置以[阶段开关说明](rule-preparation-llm-merge.md)为准。
 
 ## 配置方法
 

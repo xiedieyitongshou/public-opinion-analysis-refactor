@@ -21,6 +21,8 @@ from app.schemas.llm import PROMPT_VERSION
 
 _mode = ContextVar("event_reasoning_mode", default=None)
 _client = ContextVar("event_llm_client", default=None)
+_extraction_mode = ContextVar("event_extraction_mode", default=None)
+_weibo_mode = ContextVar("weibo_cli_relevance_mode", default=None)
 
 
 _cache_only = ContextVar("llm_cache_only", default=False)
@@ -47,15 +49,34 @@ def reasoning_mode():
     return _mode.get() or settings.event_reasoning_mode
 
 
+def extraction_mode():
+    selected = _extraction_mode.get() or settings.event_extraction_mode
+    return reasoning_mode() if selected == "inherit" else selected
+
+
+def weibo_relevance_mode():
+    selected = _weibo_mode.get() or settings.weibo_cli_relevance_mode
+    return reasoning_mode() if selected == "inherit" else selected
+
+
 @contextmanager
-def reasoning_scope(mode):
+def reasoning_scope(mode, *, extraction_mode=None, weibo_cli_relevance_mode=None):
     if mode not in {"rules", "llm"}:
         raise ValueError("unknown event reasoning mode")
     mode_token = _mode.set(mode)
-    client_token = _client.set(DeepSeekJSONClient() if mode == "llm" else None)
+    extraction_token = _extraction_mode.set(extraction_mode)
+    weibo_token = _weibo_mode.set(weibo_cli_relevance_mode)
+    needs_llm = (
+        mode == "llm"
+        or (extraction_mode or settings.event_extraction_mode) == "llm"
+        or (weibo_cli_relevance_mode or settings.weibo_cli_relevance_mode) == "llm"
+    )
+    client_token = _client.set(DeepSeekJSONClient() if needs_llm else None)
     try:
         yield
     finally:
+        _extraction_mode.reset(extraction_token)
+        _weibo_mode.reset(weibo_token)
         _client.reset(client_token)
         _mode.reset(mode_token)
 
@@ -65,7 +86,7 @@ def get_llm_client():
 
 
 def require_llm_configuration():
-    if reasoning_mode() == "llm":
+    if "llm" in {reasoning_mode(), extraction_mode(), weibo_relevance_mode()}:
         get_llm_client().validate_configuration()
 
 

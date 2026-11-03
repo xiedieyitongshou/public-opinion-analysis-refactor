@@ -217,6 +217,24 @@ main {
 .report-card h3 {
   margin: 0;
 }
+.report-meta {
+  margin: 3px 0;
+  font-size: 12px;
+  line-height: 1.65;
+  overflow-wrap: anywhere;
+}
+.report-meta dt {
+  color: var(--muted);
+  margin-top: 7px;
+}
+.report-meta dd {
+  margin: 0;
+}
+.report-history-entry {
+  border-top: 1px solid var(--line);
+  padding-top: 12px;
+  margin-top: 12px;
+}
 .report-card .actions {
   margin-top: auto;
   padding-top: 9px;

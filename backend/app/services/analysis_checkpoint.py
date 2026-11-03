@@ -15,6 +15,8 @@ _current = ContextVar("analysis_checkpoint", default=None)
 
 
 def version():
+    from app.services.llm_client import extraction_mode, weibo_relevance_mode
+
     data = [
         "llm-opt-v2-official-independent",
         PROMPT_VERSION,
@@ -23,6 +25,7 @@ def version():
         settings.llm_candidate_limit,
         settings.llm_retrieval_enabled,
         settings.llm_retrieval_use_embedding,
+        extraction_mode(), weibo_relevance_mode(),
     ]
     return hashlib.sha256(json.dumps(data).encode()).hexdigest()
 

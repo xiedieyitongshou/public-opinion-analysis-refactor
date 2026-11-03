@@ -157,13 +157,52 @@ function listSources(sources) {
   });
   if (!sources.length) empty(root, "尚无采集记录。点击“采集新一期”开始。");
 }
+function reportTime(raw) {
+  if (!raw) return "未记录";
+  const value = /Z$|[+-]\d\d:\d\d$/.test(raw) ? raw : raw + "Z";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "未记录";
+  return date.toLocaleString("zh-CN", {
+    timeZone: "Asia/Shanghai", year: "numeric", month: "2-digit", day: "2-digit",
+    hour: "2-digit", minute: "2-digit", hour12: false,
+  });
+}
+function reportRange(start, end) {
+  const first = reportTime(start), last = reportTime(end);
+  if (first === "未记录" && last === "未记录") return "未记录";
+  if (first === "未记录") return `截至 ${last}（起点未记录）`;
+  if (last === "未记录") return `${first} 起（截止未记录）`;
+  return first === last ? first : `${first} — ${last}`;
+}
+function reportMetadata(report) {
+  const meta = node("dl", null, "report-meta");
+  const provenance = report.collection_provenance || {};
+  let collectionLabel = "数据采集";
+  if (provenance.round_count) {
+    const rounds = provenance.expected_round_count > provenance.round_count
+      ? `${provenance.round_count}/${provenance.expected_round_count}` : provenance.round_count;
+    collectionLabel += ` · ${rounds}轮`;
+  }
+  if (provenance.origin === "report_citations") collectionLabel += "（按引文记录）";
+  else if (provenance.round_count && !provenance.complete) collectionLabel += "（记录不完整）";
+  const sourceNames = [...new Set((provenance.sources || []).map(
+    source => names[source.source_id] || source.source_name || source.source_id,
+  ).filter(Boolean))];
+  for (const [label, value] of [
+    ["简报范围", reportRange(report.window_start, report.window_end)],
+    [collectionLabel, reportRange(provenance.first_observed_at, provenance.last_observed_at)],
+    ["采集来源", sourceNames.join("、") || "未记录"],
+    ["版本生成", reportTime(report.created_at)],
+  ]) meta.append(node("dt", label), node("dd", value));
+  return meta;
+}
 function listReports(reports) {
   const root = $("report-list");
   root.replaceChildren();
   reports.forEach((r) => {
     const card = node("article", null, "report-card");
     card.append(
-      node("p", `VERSION ${r.id} · 截止 ${time(r.window_end)}`, "eyebrow"),
+      node("p", `VERSION ${r.id}`, "eyebrow"),
       node("h3", r.title),
       badge(r.status),
       node(
@@ -172,6 +211,7 @@ function listReports(reports) {
         "small muted",
       ),
     );
+    card.append(reportMetadata(r));
     const actions = node("div", null, "actions");
     actions.append(button("预览与确认 →", () => preview(r.id)));
     actions.append(button(`复核本期 · ${r.review_scope?.total || 0} 条`, () => openReportReviews(r), "quiet"));
@@ -184,9 +224,10 @@ function listReports(reports) {
         const versions = await api(`/api/reports/${r.id}/history`);
         if (!versions.length) empty(history, "暂无历史版本");
         for (const version of versions) {
-          const entry = node("p");
+          const entry = node("div", null, "report-history-entry");
           entry.append(badge(version.status), document.createTextNode(" "),
-            button(`#${version.id} · ${time(version.created_at)} · 查看`, () => preview(version.id), "quiet"));
+            button(`版本 #${version.id} · 查看`, () => preview(version.id), "quiet"),
+            reportMetadata(version));
           history.append(entry);
         }
         loaded = true;
@@ -765,9 +806,19 @@ function renderOvernight(night) {
   const activeNight = ["running", "stopping"].includes(night.status);
   activeSession = activeNight;
   syncStartButtons();
+  if (activeNight && night.config) {
+    $("session-duration").value = night.config.duration_hours ?? "";
+    $("session-interval").value = night.config.interval_minutes;
+    $("session-finish").value = night.config.generate_report ? night.config.report_scope : "none";
+    sessionEstimate();
+  }
+  for (const id of ["session-duration", "session-interval", "session-finish", "session-fresh", "session-preset"])
+    $(id).disabled = activeNight;
   $("overnight-stop").hidden = !activeNight;
   const nightLabels = {idle:"尚未启动",running:"运行中",stopping:"等待当前轮次完成后汇总",completed:"已完成",stopped:"已停止",failed:"失败"};
-  $("overnight-status").textContent = `${nightLabels[night.status] || night.status} · ${night.rounds.length}/${night.planned_rounds ?? "持续"} 轮已安排${night.ends_at && night.config?.duration_hours !== null ? ` · 计划结束 ${time(night.ends_at)}` : ""}${night.error ? ` · ${night.error}` : ""}`;
+  const startValue = night.started_at && (/Z$|[+-]\d\d:\d\d$/.test(night.started_at) ? night.started_at : night.started_at + "Z");
+  const scheduled = night.status === "running" && startValue && new Date(startValue).getTime() > Date.now();
+  $("overnight-status").textContent = `${scheduled ? "已预约，等待启动" : (nightLabels[night.status] || night.status)}${scheduled ? ` · 计划开始 ${time(night.started_at)}` : ""} · ${night.rounds.length}/${night.planned_rounds ?? "持续"} 轮已安排${night.ends_at && night.config?.duration_hours !== null ? ` · 最后一轮计划 ${time(night.ends_at)}` : ""}${night.error ? ` · ${night.error}` : ""}`;
   if (night.report_id) $("overnight-status").append(" · ", link("打开测试简报", `/api/reports/${night.report_id}/html`));
   if (night.backup_file) $("overnight-status").append(` · 已备份：backups/${night.backup_file}`);
   table($("overnight-rounds"), ["轮次", "状态", "异常"], night.rounds.map(r => [r.slot + 1, labels[r.status] || r.status, r.error || "—"]));

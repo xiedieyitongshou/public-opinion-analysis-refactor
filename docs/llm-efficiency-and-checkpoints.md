@@ -1,5 +1,7 @@
 # LLM增量分析、预算与断点管理
 
+2026-11-03：新增[规则准备、LLM 归并](rule-preparation-llm-merge.md)，可将事件抽取和微博 CLI 相关性显式切回原规则，减少这两阶段的 LLM 请求。下述抽取缓存说明仅适用于抽取阶段选择 LLM 时；CLI 选择规则后仍加载本地 reranker，不能将其本地耗时记作 LLM 用时。
+
 ## 修改方案与记录（2026-11-01）
 
 在`EVENT_REASONING_MODE=llm`中增加下列措施，保留引用及Schema校验，不将BM25、embedding分数混进LLM归并结论。

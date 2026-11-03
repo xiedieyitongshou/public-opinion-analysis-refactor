@@ -53,7 +53,11 @@ def refresh_after_reviews(db, decisions, *, report_id=None):
         return None
     from app.services.llm_client import reasoning_scope
 
-    with reasoning_scope(run.input_json.get("reasoning_mode") or settings.event_reasoning_mode):
+    mode = run.input_json.get("reasoning_mode") or settings.event_reasoning_mode
+    with reasoning_scope(
+        mode, extraction_mode=run.input_json.get("extraction_mode", mode),
+        weibo_cli_relevance_mode=run.input_json.get("weibo_cli_relevance_mode", mode),
+    ):
         return _refresh_run(db, decisions, run)
 
 

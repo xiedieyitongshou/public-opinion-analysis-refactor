@@ -192,9 +192,11 @@ class BaseCollector(ABC):
                 key: config.params.get(key)
                 for key in ("cli_search_count", "cli_search_sort", "cli_sampling_version")
             })
-        from app.services.llm_client import reasoning_mode
+        from app.services.llm_client import reasoning_mode, weibo_relevance_mode
 
-        if reasoning_mode() == "llm":
+        mode = (weibo_relevance_mode() if self.metadata.source_id == "weibo_rsshub_hot_search"
+                else reasoning_mode())
+        if mode == "llm":
             from app.core.config import settings
             from app.schemas.llm import PROMPT_VERSION
 

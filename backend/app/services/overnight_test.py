@@ -185,6 +185,15 @@ def tick(db, now):
     busy = db.scalar(select(AnalysisRun).where(AnalysisRun.status.in_(["queued", "running"])))
     if busy:
         return True
+    if (
+        row.status == "running" and not row.rounds_json
+        and (row.config_json or {}).get("scheduled_start")
+        and now > as_utc(row.started_at) + timedelta(minutes=5)
+    ):
+        row.status = "failed"
+        row.error = "错过预约启动时间超过5分钟，未自动延后采集"
+        db.commit()
+        return True
     config = CollectionSessionConfig.model_validate(row.config_json or {})
     planned = (
         config.duration_hours * 60 // config.interval_minutes + 1 if config.duration_hours else None

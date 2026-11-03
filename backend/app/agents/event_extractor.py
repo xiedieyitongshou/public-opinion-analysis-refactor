@@ -147,7 +147,7 @@ class LLMEventExtractionRefiner:
     """Controlled LLM refinement wrapper.
 
     Kept for Python import compatibility only. Production extraction uses the
-    exclusive EVENT_REASONING_MODE backend; this wrapper is never mixed in.
+    selected EVENT_EXTRACTION_MODE backend; this wrapper is never mixed in.
     """
 
     def __init__(self, client: DeepSeekEventExtractionClient | None = None) -> None:
@@ -303,23 +303,16 @@ class EventSignalExtractor:
         )
 
     def extract(self, input_data: ExtractEventSignalsInput) -> ExtractEventSignalsOutput:
-        from app.services.llm_client import reasoning_mode
+        from app.services.llm_client import extraction_mode, reasoning_mode
 
         if not input_data.source_signals:
             return ExtractEventSignalsOutput(
                 run_id=input_data.run_id, status="skipped", quality_flags=["empty_source_signals"]
             )
-        if reasoning_mode() == "llm":
+        if extraction_mode() == "llm":
             from app.services.llm_event_workflow import extract_signals
 
             return extract_signals(input_data)
-        if not input_data.source_signals:
-            return ExtractEventSignalsOutput(
-                run_id=input_data.run_id,
-                status="skipped",
-                quality_flags=["empty_source_signals"],
-            )
-
         event_signals: list[EventSignal] = []
         errors: list[str] = []
         quality_flags: list[str] = []
@@ -349,13 +342,30 @@ class EventSignalExtractor:
                     except (RuntimeError, TimeoutError, ValidationError, ValueError) as exc:
                         errors.append(f"{signal.source_signal_id}: llm refinement failed: {exc}")
                         quality_flags.append("llm_refinement_failed")
-                event_signals.append(
-                    self.assembler.assemble(
-                        run_id=input_data.run_id,
-                        result=result,
-                        refinement=refinement,
-                    )
+                assembled = self.assembler.assemble(
+                    run_id=input_data.run_id, result=result, refinement=refinement,
                 )
+                if reasoning_mode() == "llm":
+                    # Reuse rule features, while preserving the same source bodies
+                    # the LLM extractor previously supplied to event comparison.
+                    from app.services.llm_client import document
+
+                    docs = signal.platform_features.get("llm_documents") or [document(
+                        signal.source_signal_id, signal.title,
+                        signal.platform_features.get("topic_context", ""),
+                    )]
+                    summary = "\n".join(doc["body"] for doc in docs if doc["body"])[:6000]
+                    text = signal.title + "\n" + summary
+                    assembled = assembled.model_copy(update={
+                        "summary": summary, "event_text_for_match": text,
+                        "has_accepted_cli_context": len(docs) > 1,
+                        "semantic_fingerprint": SemanticFingerprint(event_text_for_embedding=text),
+                        # Source publication is not the event's occurrence time.
+                        "event_time_hint": None,
+                        "reasoning_detail": {"extraction_backend": "rules",
+                                             "occurrence_time": "not_extracted"},
+                    })
+                event_signals.append(assembled)
             except (ValidationError, ValueError, TypeError) as exc:
                 errors.append(f"{signal.source_signal_id}: {exc}")
 
@@ -381,8 +391,8 @@ class EventSignalExtractor:
         input_data: ExtractEventSignalsInput,
         result: RuleExtractionResult,
     ) -> bool:
-        # EVENT_REASONING_MODE is the only production switch. The legacy flags cannot
-        # activate per-record fallback or merge LLM fields with dictionary fields.
+        # Stage switches choose one backend. Legacy flags cannot activate
+        # per-record fallback or merge LLM fields with dictionary fields.
         return False
 
 

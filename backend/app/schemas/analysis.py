@@ -32,6 +32,12 @@ class HotspotAnalysisInput(BaseModel):
     reasoning_mode: Literal["rules", "llm"] = Field(
         default_factory=lambda: settings.event_reasoning_mode
     )
+    extraction_mode: Literal["inherit", "rules", "llm"] = Field(
+        default_factory=lambda: settings.event_extraction_mode
+    )
+    weibo_cli_relevance_mode: Literal["inherit", "rules", "llm"] = Field(
+        default_factory=lambda: settings.weibo_cli_relevance_mode
+    )
     use_llm: bool = False
     matching_profile: Literal["rules", "hybrid", "hybrid_rerank"] | None = None
     official_search_enabled: bool | None = None
