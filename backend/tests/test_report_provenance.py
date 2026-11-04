@@ -68,6 +68,7 @@ def test_replay_uses_original_observations_not_november_processing_time(db):
     meta = data["collection_provenance"]
     assert meta["first_observed_at"] == first and meta["last_observed_at"] == last
     assert meta["round_count"] == 2 and meta["complete"]
+    assert meta["platform_last_collection_at"] == {"zhihu": first, "weibo": last}
     assert {s["source_id"] for s in meta["sources"]} == {
         "zhihu_hot_list", "weibo_rsshub_hot_search", "weibo_cli",
     }
@@ -119,3 +120,18 @@ def test_legacy_report_does_not_invent_collection_dates_from_report_window(db):
     meta = report_info(db, row)["collection_provenance"]
     assert meta["first_observed_at"] is None and meta["last_observed_at"] is None
     assert meta["origin"] == "unrecorded"
+    assert meta["platform_last_collection_at"] == {}
+
+
+def test_last_platform_check_includes_empty_or_failed_capture_but_not_other_sources(db):
+    capture(db, "first", START + timedelta(minutes=5))
+    late = START + timedelta(minutes=50)
+    run = capture(db, "last", late)
+    run.collection_json = {"results": [{
+        "source_id": "zhihu_hot_list", "observed_at": late.isoformat(),
+        "status": "failed", "normalized_items": [], "normalized_count": 0,
+    }]}
+    capture(db, "official", START + timedelta(minutes=55), "chinanews_scroll_rss")
+    row = report(db, "summary", children=["first", "last", "official"])
+    times = report_info(db, row)["collection_provenance"]["platform_last_collection_at"]
+    assert times == {"zhihu": late}

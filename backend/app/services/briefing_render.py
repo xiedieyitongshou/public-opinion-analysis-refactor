@@ -22,6 +22,39 @@ def stamp(value, timezone):
     return as_utc(value).astimezone(ZoneInfo(timezone)).strftime("%m-%d %H:%M")
 
 
+def unknown_trend_reason(trend):
+    if trend is None:
+        return "本期未保存趋势观测数据"
+    flags = set(trend.quality_flags)
+    reasons = [
+        ("source_unavailable", "最近一次来源采集失败，无法比较"),
+        ("stale_observation", "最近观测已过期，缺少近期可比数据"),
+        ("incomplete_list", "榜单数据不完整，无法连续比较"),
+        ("missing_sampling_config", "未配置采样间隔，无法确认观测是否连续"),
+        ("no_window_observations", "本期没有可用的榜单采集记录"),
+        ("observation_gap", "相邻采集间隔过长，无法连续比较"),
+        ("incomparable_scope", "前后采集的榜单范围不一致"),
+        ("sampling_changed", "前后采样口径不一致"),
+        ("score_config_changed", "前后热度计算口径不一致"),
+        ("incomparable_scores", "前后两轮热度数据不满足可比条件"),
+    ]
+    for flag, reason in reasons:
+        if flag in flags:
+            return reason
+    if trend.snapshot_presence_count == 1:
+        return ("仅有1次在榜观测，最近一轮已离榜，缺少连续可比热度"
+                if trend.current_topn_present is False
+                else "仅有1次在榜观测，需要两次连续可比数据")
+    if trend.current_topn_present is False:
+        return "最近一轮已离榜，缺少连续两轮在榜热度"
+    if "insufficient_trend_metrics" in flags:
+        return ("缺少两轮可比的CLI互动指标" if trend.platform == "weibo"
+                else "缺少两轮可比的榜位或热度指标")
+    if "insufficient_history" in flags:
+        return "有效历史不足，需要两次连续可比数据"
+    return "缺少连续可比的榜单观测数据"
+
+
 def trend_label(card, platform, timezone="Asia/Shanghai"):
     if platform == "shared":
         return "知乎：" + trend_label(card, "zhihu", timezone) + "；微博：" + trend_label(card, "weibo", timezone)
@@ -37,12 +70,14 @@ def trend_label(card, platform, timezone="Asia/Shanghai"):
     ]
     labels = {"rising": "升温 ↑", "stable": "平稳 →", "cooling": "降温 ↓", "unknown": "趋势待确认"}
     movement = labels.get(trend.trend_status, "趋势待确认") if trend else "趋势待确认"
+    if not trend or trend.trend_status == "unknown":
+        movement += f"（{unknown_trend_reason(trend)}）"
     heat = trend.latest_platform_heat if trend else None
     historical = bool(trend and heat is None and trend.last_observed_heat is not None)
     if historical:
         heat = trend.last_observed_heat
     if platform == "zhihu" and heat and heat.primary_platform_rank is not None:
-        presence += f" · 第 {heat.primary_platform_rank} 名"
+        presence += f" · {'最近在榜' if historical else ''}第 {heat.primary_platform_rank} 名"
     if platform == "zhihu":
         if heat and heat.platform_score is not None:
             native_text = heat.raw_metrics_used.get("heat_text")
@@ -55,7 +90,10 @@ def trend_label(card, platform, timezone="Asia/Shanghai"):
     elif platform == "weibo" and heat and heat.platform_score is not None:
         presence += f" · {'最近采集热度' if historical else '本平台热度'} {heat.platform_score:.3f}"
     if historical and trend.last_observed_at:
-        presence += f"（{stamp(trend.last_observed_at, timezone)}，非当前值）"
+        presence += f"（热度采于 {stamp(trend.last_observed_at, timezone)}，非当前值）"
+    checked = stamp(trend.last_collection_at, timezone) if trend and trend.last_collection_at else "未记录"
+    check_label = "最后采集尝试" if trend and "source_unavailable" in trend.quality_flags else "最后采集"
+    presence += f" · {check_label}：{checked}"
     if trend and trend.trend_status != "unknown":
         if trend.trend_basis == "native_heat" and trend.native_heat_change_ratio is not None:
             movement += f" · 热度变化 {trend.native_heat_change_ratio:+.1%}"
@@ -177,7 +215,8 @@ def render_report(briefing: DailyBriefing, *, email=False, status="draft") -> st
             f"<b>{e(section.title)} · {len(section.event_cards)}</b><br>{contents}</div>"
         )
     footer = f"""<p style="margin-top:30px;font-size:12px;color:{MUTED};line-height:1.9">
-        统计窗口内曾上榜与当前仍在榜分别展示。趋势依据本平台最新两轮可比观测；样本不足或不可比时显示待确认。
+        在榜状态截至所标注的最后采集时间，不是打开网页时的实时榜单。离榜后可保留最近热度，历史值不代表当前值。
+        趋势依据本平台最新两轮可比观测；待确认时列出原因。
         官媒仅表示报道覆盖。此简报保留来源依据与不确定性。<br>生成于 {e(stamp(briefing.created_at, briefing.timezone))}</p>"""
     return f"""<!doctype html><html lang="zh-CN"><head><meta charset="utf-8">
         <meta name="viewport" content="width=device-width, initial-scale=1"><title>{e(briefing.title)}</title></head>

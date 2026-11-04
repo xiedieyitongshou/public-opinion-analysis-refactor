@@ -65,6 +65,7 @@ def analyze_platform_trend(data: PlatformTrendInput) -> PlatformTrendResult:
         flags.extend(["no_window_observations", "no_topn_evidence"])
     else:
         latest = main[-1]
+        result.last_collection_at = latest.observed_at
         # This run's explicit presence/absence needs no sampling interval. Intervals
         # are required to infer continuity or carry a previous round forward.
         if gap is None and latest.run_id == data.run_id:

@@ -125,6 +125,8 @@ class PlatformTrendResult(BaseModel):
     latest_platform_heat: PlatformHeatScore | None = None
     last_observed_heat: PlatformHeatScore | None = None
     last_observed_at: datetime | None = None
+    # Latest main-list check, including absence; not the last available heat value.
+    last_collection_at: datetime | None = None
     trend_status: PlatformTrendStatus = "unknown"
     trend_basis: Literal["rank", "native_heat", "platform_score", "none"] = "none"
     comparison_observation_ids: list[str] = Field(default_factory=list)

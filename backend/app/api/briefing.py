@@ -341,15 +341,19 @@ def report_history(db: Db, report_id: int):
 
 @router.get("/reports/{report_id}/html", response_class=HTMLResponse)
 def report_html(report_id: int, db: Db, email: bool = False):
+    from app.services.report_provenance import report_display_briefing
+
     row = get_report(db, report_id)
     return render_report(
-        DailyBriefing.model_validate(row.briefing_json), email=email, status=row.status
+        report_display_briefing(db, row), email=email, status=row.status
     )
 
 
 @router.get("/reports/{report_id}/text", response_class=PlainTextResponse)
 def report_text(report_id: int, db: Db):
-    return render_text(DailyBriefing.model_validate(get_report(db, report_id).briefing_json))
+    from app.services.report_provenance import report_display_briefing
+
+    return render_text(report_display_briefing(db, get_report(db, report_id)))
 
 
 @router.post("/reports/{report_id}/approve")

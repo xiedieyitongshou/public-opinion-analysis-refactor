@@ -26,6 +26,7 @@ def collection_provenance(db, report, scope):
     if len(keys) > 1:
         keys.discard(scope.run_id)
     times, sources, recorded = [], {}, set()
+    platform_times = {}
     missing_time = False
 
     def add_source(value):
@@ -39,8 +40,6 @@ def collection_provenance(db, report, scope):
     ).where(AnalysisRun.run_id.in_(keys))):
         for result in (collection or {}).get("results", []):
             items = result.get("normalized_items") or []
-            if not items and not result.get("normalized_count"):
-                continue
             observed = _time(result.get("observed_at"))
             stamps = [observed] if observed else [
                 stamp for item in items if (stamp := _time(item.get("fetched_at")))
@@ -49,6 +48,16 @@ def collection_provenance(db, report, scope):
                         if (start is None or stamp > start) and (end is None or stamp <= end)]
             if stamps and not eligible:
                 continue  # The saved capture falls outside this report's window.
+            platform = {"zhihu_hot_list": "zhihu", "weibo_rsshub_hot_search": "weibo"}.get(
+                result.get("source_id")
+            )
+            if platform and eligible:
+                latest = max(eligible)
+                previous = platform_times.get(platform)
+                if previous is None or latest > previous:
+                    platform_times[platform] = latest
+            if not items and not result.get("normalized_count"):
+                continue
             times.extend(eligible)
             missing_time |= not bool(eligible)
             recorded.add(key)
@@ -81,4 +90,23 @@ def collection_provenance(db, report, scope):
         "complete": bool(recorded) and recorded == keys and not missing_time,
         "origin": origin,
         "sources": list(sources.values()),
+        "platform_last_collection_at": platform_times,
     }
+
+
+def report_display_briefing(db, report):
+    """Enrich legacy display models from saved captures without rewriting reports."""
+    from app.schemas.display import DailyBriefing
+    from app.services.review_scope import report_review_scope
+
+    briefing = DailyBriefing.model_validate(report.briefing_json)
+    times = collection_provenance(db, report, report_review_scope(db, report.id))[
+        "platform_last_collection_at"
+    ]
+    for section in briefing.sections:
+        for card in section.event_cards:
+            if card.platform_heat_analysis:
+                for platform, trend in card.platform_heat_analysis.platforms.items():
+                    if trend.last_collection_at is None:
+                        trend.last_collection_at = times.get(platform)
+    return briefing

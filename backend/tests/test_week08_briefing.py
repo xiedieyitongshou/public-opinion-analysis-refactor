@@ -149,6 +149,28 @@ def test_natural_cross_platform_and_official_views(environment, monkeypatch):
     assert "趋势待确认" in render_report(briefing)
 
 
+def test_legacy_report_preview_gets_last_check_without_rewriting_saved_json(environment):
+    from app.api.briefing import report_html, report_text
+
+    db, client, _ = environment
+    run_report(environment)
+    client.time += timedelta(hours=2)
+    client.titles = [OTHER_TITLE]
+    row = run_report(environment, "old-display")
+    saved = deepcopy(row.briefing_json)
+    for section in saved["sections"]:
+        for card in section["event_cards"]:
+            for trend in (card.get("platform_heat_analysis") or {}).get("platforms", {}).values():
+                trend.pop("last_collection_at", None)
+    row.briefing_json = deepcopy(saved)
+    db.commit()
+    for text in (report_html(row.id, db), report_text(row.id, db)):
+        assert "最后采集：09-28 14:00" in text
+        assert "热度采于 09-28 12:00，非当前值" in text
+        assert "仅有1次在榜观测，最近一轮已离榜" in text
+    assert row.briefing_json == saved
+
+
 def test_recent_official_and_stale_official_report_admission(environment, monkeypatch):
     db, client, _ = environment
     register_official_feed(environment, monkeypatch, published_at=START - timedelta(hours=1))
