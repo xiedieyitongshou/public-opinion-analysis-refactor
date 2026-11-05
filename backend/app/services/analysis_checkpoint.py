@@ -9,7 +9,7 @@ from sqlalchemy import select
 
 from app.core.config import settings
 from app.models import AgentTask
-from app.schemas.llm import PROMPT_VERSION
+from app.schemas.llm import MATCH_PROMPT_VERSION, PROMPT_VERSION
 
 _current = ContextVar("analysis_checkpoint", default=None)
 
@@ -20,6 +20,7 @@ def version():
     data = [
         "llm-opt-v2-official-independent",
         PROMPT_VERSION,
+        MATCH_PROMPT_VERSION,
         settings.deepseek_model,
         settings.deepseek_base_url,
         settings.llm_candidate_limit,

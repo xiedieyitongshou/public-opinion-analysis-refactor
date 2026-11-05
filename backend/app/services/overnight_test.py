@@ -194,6 +194,23 @@ def tick(db, now):
         row.error = "错过预约启动时间超过5分钟，未自动延后采集"
         db.commit()
         return True
+    guard_path = (row.config_json or {}).get("startup_guard_path")
+    if guard_path and not row.rounds_json and now >= as_utc(row.started_at):
+        # A scheduled host-memory check is mandatory when explicitly configured.
+        # Missing/stale receipts wait for the existing start grace, never bypass it.
+        try:
+            guard = json.loads(Path(guard_path).read_text(encoding="utf-8"))
+            checked = as_utc(guard["checked_at"])
+            valid = (guard.get("session_token") == row.token
+                     and as_utc(row.started_at) - timedelta(minutes=1) <= checked <= now)
+        except (OSError, ValueError, TypeError, KeyError):
+            valid, guard = False, {}
+        if not valid or guard.get("allowed") is not True:
+            if valid and guard.get("allowed") is False:
+                row.status = "failed"
+                row.error = "启动保护：本机可用内存不足，本次预约未采集；未自动延后"
+                db.commit()
+            return True
     config = CollectionSessionConfig.model_validate(row.config_json or {})
     planned = (
         config.duration_hours * 60 // config.interval_minutes + 1 if config.duration_hours else None

@@ -99,6 +99,42 @@ def test_explicit_scheduled_start_never_catches_up_after_its_start_grace(db):
     assert not list(db.scalars(select(AnalysisRun)))
 
 
+def test_scheduled_host_guard_requires_fresh_matching_receipt(db, tmp_path):
+    import json
+
+    path = tmp_path / 'guard.json'
+    row = night.start(db, NOW)
+    row.config_json = {**row.config_json, 'scheduled_start': True,
+                       'startup_guard_path': str(path)}
+    db.commit()
+    night.tick(db, NOW)
+    assert not list(db.scalars(select(AnalysisRun)))
+    for token, checked in [('other-session', NOW), (row.token, NOW - timedelta(minutes=2))]:
+        path.write_text(json.dumps({'session_token': token, 'checked_at': checked.isoformat(),
+                                    'allowed': True}), encoding='utf-8')
+        night.tick(db, NOW + timedelta(seconds=1))
+        assert not list(db.scalars(select(AnalysisRun)))
+    path.write_text(json.dumps({'session_token': row.token, 'checked_at': NOW.isoformat(),
+                                'allowed': True}), encoding='utf-8')
+    night.tick(db, NOW + timedelta(seconds=2))
+    assert len(list(db.scalars(select(AnalysisRun)))) == 1
+
+
+def test_scheduled_host_guard_failure_does_not_start_collection(db, tmp_path):
+    import json
+
+    path = tmp_path / 'guard.json'
+    row = night.start(db, NOW)
+    row.config_json = {**row.config_json, 'scheduled_start': True,
+                       'startup_guard_path': str(path)}
+    path.write_text(json.dumps({'session_token': row.token, 'checked_at': NOW.isoformat(),
+                                'allowed': False}), encoding='utf-8')
+    db.commit()
+    night.tick(db, NOW)
+    assert row.status == 'failed' and '启动保护' in row.error
+    assert not list(db.scalars(select(AnalysisRun)))
+
+
 def test_stop_waits_for_current_round_then_summarizes(db, monkeypatch):
     night.start(db, NOW)
     night.tick(db, NOW)

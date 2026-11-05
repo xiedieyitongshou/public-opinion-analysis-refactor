@@ -89,6 +89,7 @@ docker exec opinion-resource-test-backend-1 python -c "from app.core.config impo
 - `same_event`：同一具体事件；必须有双方可在输入原文中逐字找到的引用，且无冲突。
 - `related_but_distinct`：同背景或相同人物的其他事情，保持独立。
 - `different_event`：不同事件，保持独立。
+- 2026-11-04：归并提示词使用独立版本 `event-match-v5-negative-no-quotes`。明确的 `different_event`／`related_but_distinct` 返回空 `evidence` 和 `same_event_clues`，用简短理由说明区别，减少多余引文的抄写／拼接错误；`same_event` 和有具体线索的 `possible_same_event` 继续要求双方原文。后端引用校验保持严格，模型仍提供非法引文时照常报错。归并缓存与检查点按新版本隔离，CLI相关性和抽取提示词版本不变。
 - `insufficient_evidence`：再区分 `possible_same_event`（有双方事件特定线索及关键缺项，送审）与 `insufficient_context`（无具体同事件线索，不凭此阻断明确匹配）。详见[不确定候选分流](llm-qualified-review.md)。
 
 只有一个明确的 `same_event` 且没有有依据的潜在竞争者时自动合并；无具体线索的 `insufficient_context` 不阻断它。多个明确匹配、有具体线索但缺关键细节的竞争者转复核；缺少新字段的历史响应保守保留审核，不擅自改判。模型不能自创候选 ID、把事件拆给多个目标、越过人工审核的明确结论或直接写数据库。界面的兼容数值 `1.0` 表示分类判定已通过结构与证据检查，不是模型给出的同事件概率；实际依据在 `llm_detail` 中。

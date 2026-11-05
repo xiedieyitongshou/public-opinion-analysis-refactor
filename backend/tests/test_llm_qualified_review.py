@@ -51,6 +51,43 @@ def test_context_only_without_match_keeps_independent_topic(llm):
     assert result.match_features_json.llm_detail["review_category"] == "independent_topic"
 
 
+def test_distinct_titles_need_no_quotes_and_keep_flight_promotion_independent(llm):
+    from app.schemas import EventSignal
+
+    incoming = EventSignal(event_signal_id="promotion", source_signal_ids=["saved-hotlist-topic"],
+                           title="上飞猪抢马来西亚酒店大额补贴",
+                           event_text_for_match="上飞猪抢马来西亚酒店大额补贴",
+                           is_weak_signal=True, weak_signal_reason="title_only", confidence=0.65)
+    target = candidate().model_copy(update={"title": "世界互联网大会乌镇峰会创下多个首次"})
+    llm[0]["output"] = {"judgements": [{
+        "candidate_id": "event-1", "decision": "different_event", "evidence": [],
+        "conflicts": [], "missing_information": [], "reason": "酒店补贴与会议报道是不同事情",
+        "uncertainty_kind": None, "same_event_clues": [],
+    }]}
+    result = EventMatcher().match_event(signal=incoming, candidates=[target],
+                                        config=EventMatchConfig())
+    assert result.action == "create" and not result.review_required
+    assert result.matched_candidate_event_id is None
+
+
+def test_optional_negative_quote_is_still_validated_when_model_supplies_it(llm):
+    row = same_pair(decision="different_event")
+    row["evidence"][1]["quote"] = "2026年" + TITLE
+    llm[0]["output"] = {"judgements": [row]}
+    result = match([candidate()])
+    assert result.action == "candidate_review"
+    assert result.match_features_json.llm_detail["error_code"] == "llm_unverifiable_evidence"
+
+
+def test_same_event_still_requires_both_source_quotes(llm):
+    row = same_pair()
+    row["evidence"] = []
+    llm[0]["output"] = {"judgements": [row]}
+    result = match([candidate()])
+    assert result.action == "candidate_review"
+    assert result.match_features_json.llm_detail["error_code"] == "llm_missing_two_sided_evidence"
+
+
 @pytest.mark.parametrize("with_clear_match", [True, False])
 def test_specific_clues_with_missing_detail_still_require_review(llm, with_clear_match):
     uncertain = same_pair("event-2", "insufficient_evidence")

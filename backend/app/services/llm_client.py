@@ -17,7 +17,7 @@ import httpx
 from pydantic import ValidationError
 
 from app.core.config import settings
-from app.schemas.llm import PROMPT_VERSION
+from app.schemas.llm import MATCH_PROMPT_VERSION, PROMPT_VERSION
 
 _mode = ContextVar("event_reasoning_mode", default=None)
 _client = ContextVar("event_llm_client", default=None)
@@ -181,13 +181,15 @@ class DeepSeekJSONClient:
         material = json.dumps(payload, ensure_ascii=False, sort_keys=True, default=str)
         if len(material) > settings.llm_input_max_chars:
             raise LLMFailure("llm_input_budget_exceeded")
+        prompt_version = (MATCH_PROMPT_VERSION if task in {"event_comparison", "event_pair"}
+                          else PROMPT_VERSION)
         identity = json.dumps(
             {
                 "task": task,
                 "model": settings.deepseek_model,
                 "base_url": settings.deepseek_base_url,
                 "thinking": {"type": "disabled"},
-                "prompt_version": PROMPT_VERSION,
+                "prompt_version": prompt_version,
                 "prompt": prompt,
                 "schema": schema,
                 "payload": payload,
@@ -200,7 +202,7 @@ class DeepSeekJSONClient:
         audit = {
             "mode": "llm",
             "model": settings.deepseek_model,
-            "prompt_version": PROMPT_VERSION,
+            "prompt_version": prompt_version,
             "input_hash": key,
             "task": task,
         }

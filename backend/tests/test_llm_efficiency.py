@@ -37,6 +37,30 @@ from app.services.platform_trend import analyze_platform_trend
 from app.services.request_usage import request_scope
 
 
+def test_match_prompt_version_isolated_from_relevance_cache_and_checkpoint(monkeypatch, tmp_path):
+    from app.schemas.llm import MATCH_PROMPT, RELEVANCE_PROMPT, LLMBatchDecision, LLMRelevance
+    from app.services import analysis_checkpoint, llm_client
+
+    client = DeepSeekJSONClient(cache_path=tmp_path / "version.db")
+    payload = {"incoming": {"title": "标题"}}
+    before = client.cache_identity(
+        "event_comparison", MATCH_PROMPT, payload, LLMBatchDecision,
+    )[0]
+    relevance = client.cache_identity(
+        "search_relevance", RELEVANCE_PROMPT, payload, LLMRelevance,
+    )[0]
+    checkpoint = analysis_checkpoint.version()
+    monkeypatch.setattr(llm_client, "MATCH_PROMPT_VERSION", "unit-new-match-policy")
+    monkeypatch.setattr(analysis_checkpoint, "MATCH_PROMPT_VERSION", "unit-new-match-policy")
+    assert client.cache_identity(
+        "event_comparison", MATCH_PROMPT, payload, LLMBatchDecision,
+    )[0] != before
+    assert client.cache_identity(
+        "search_relevance", RELEVANCE_PROMPT, payload, LLMRelevance,
+    )[0] == relevance
+    assert analysis_checkpoint.version() != checkpoint
+
+
 @pytest.fixture
 def runtime(monkeypatch, tmp_path):
     monkeypatch.setattr(settings, "deepseek_api_key", "offline-key")
