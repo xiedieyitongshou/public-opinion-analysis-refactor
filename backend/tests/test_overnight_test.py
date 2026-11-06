@@ -1,4 +1,4 @@
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime, timedelta, timezone
 
 import pytest
 from sqlalchemy import create_engine, select
@@ -16,7 +16,8 @@ NOW = datetime(2026, 10, 18, 14, tzinfo=UTC)
 
 @pytest.fixture
 def db(monkeypatch):
-    engine = create_engine('sqlite://', poolclass=StaticPool)
+    engine = create_engine('sqlite://', poolclass=StaticPool,
+                           connect_args={'check_same_thread': False})
     init_db(engine)
     monkeypatch.setattr(night, 'preflight', lambda db: None)
     with Session(engine) as session:
@@ -71,7 +72,13 @@ def test_future_start_waits_then_runs_exactly_five_45_minute_slots(db, monkeypat
     from app.schemas.collection_session import CollectionSessionConfig
 
     start = NOW + timedelta(minutes=30)
-    row = night.start(db, start, CollectionSessionConfig(duration_hours=3, interval_minutes=45))
+    row = night.start(
+        db, NOW, CollectionSessionConfig(duration_hours=3, interval_minutes=45, start_at=start),
+    )
+    assert night.as_utc(row.started_at) == start
+    assert row.config_json['scheduled_start'] is True
+    db.expunge_all()
+    row = night.current(db)
     summaries = []
     monkeypatch.setattr(night, 'summarize', lambda *args: summaries.append(1) or 42)
     assert night.tick(db, NOW)
@@ -99,40 +106,75 @@ def test_explicit_scheduled_start_never_catches_up_after_its_start_grace(db):
     assert not list(db.scalars(select(AnalysisRun)))
 
 
-def test_scheduled_host_guard_requires_fresh_matching_receipt(db, tmp_path):
-    import json
+def test_scheduled_start_rejects_datetime_without_timezone():
+    from app.schemas.collection_session import CollectionSessionConfig
 
-    path = tmp_path / 'guard.json'
-    row = night.start(db, NOW)
-    row.config_json = {**row.config_json, 'scheduled_start': True,
-                       'startup_guard_path': str(path)}
-    db.commit()
-    night.tick(db, NOW)
+    with pytest.raises(ValueError, match='必须包含时区'):
+        CollectionSessionConfig(start_at=NOW.replace(tzinfo=None))
+
+
+@pytest.mark.parametrize('start_at', [NOW, NOW - timedelta(minutes=1)])
+def test_past_scheduled_start_never_runs_preflight_or_creates_task(db, monkeypatch, start_at):
+    from app.schemas.collection_session import CollectionSessionConfig
+
+    calls = []
+    monkeypatch.setattr(night, 'preflight', lambda db: calls.append(1))
+    with pytest.raises(ValueError, match='必须晚于当前时间'):
+        night.start(db, NOW, CollectionSessionConfig(start_at=start_at))
+    assert calls == [] and night.current(db) is None
     assert not list(db.scalars(select(AnalysisRun)))
-    for token, checked in [('other-session', NOW), (row.token, NOW - timedelta(minutes=2))]:
-        path.write_text(json.dumps({'session_token': token, 'checked_at': checked.isoformat(),
-                                    'allowed': True}), encoding='utf-8')
-        night.tick(db, NOW + timedelta(seconds=1))
+
+
+def test_schedule_expiring_during_preflight_is_rejected(db, monkeypatch):
+    from app.schemas.collection_session import CollectionSessionConfig
+
+    clock = iter([100.0, 220.0])
+    monkeypatch.setattr(night, 'monotonic', lambda: next(clock))
+    with pytest.raises(ValueError, match='启动检查期间已错过预约时间'):
+        night.start(db, NOW, CollectionSessionConfig(start_at=NOW + timedelta(minutes=1)))
+    assert night.current(db) is None
+    assert not list(db.scalars(select(AnalysisRun)))
+
+
+def test_cancel_future_reservation_never_collects(db):
+    from app.schemas.collection_session import CollectionSessionConfig
+
+    row = night.start(db, NOW, CollectionSessionConfig(start_at=NOW + timedelta(hours=1)))
+    night.stop(db)
+    night.tick(db, NOW + timedelta(seconds=1))
+    assert row.status == 'stopped' and row.rounds_json == [] and row.report_id is None
+    assert not list(db.scalars(select(AnalysisRun)))
+
+
+def test_schedule_api_accepts_local_offset_and_rejects_past_or_naive_times(db):
+    from fastapi.testclient import TestClient
+
+    from app.db.session import get_db
+    from app.main import app
+
+    app.dependency_overrides[get_db] = lambda: db
+    client = TestClient(app)
+    headers = {'Authorization': 'Bearer test-admin'}
+    try:
+        past = (datetime.now(UTC) - timedelta(hours=1)).isoformat()
+        assert client.post('/api/overnight-test', headers=headers,
+                           json={'start_at': past}).status_code == 409
+        naive = (datetime.now(UTC) + timedelta(hours=1)).replace(tzinfo=None).isoformat()
+        assert client.post('/api/overnight-test', headers=headers,
+                           json={'start_at': naive}).status_code == 422
+        future = datetime.now(UTC) + timedelta(hours=1)
+        local = future.astimezone(timezone(timedelta(hours=8)))
+        response = client.post('/api/overnight-test', headers=headers, json={
+            'start_at': local.isoformat(), 'duration_hours': 3, 'interval_minutes': 45,
+        })
+        assert response.status_code == 202
+        data = response.json()
+        assert data['planned_rounds'] == 5 and data['rounds'] == []
+        assert night.as_utc(data['started_at']) == future
         assert not list(db.scalars(select(AnalysisRun)))
-    path.write_text(json.dumps({'session_token': row.token, 'checked_at': NOW.isoformat(),
-                                'allowed': True}), encoding='utf-8')
-    night.tick(db, NOW + timedelta(seconds=2))
-    assert len(list(db.scalars(select(AnalysisRun)))) == 1
-
-
-def test_scheduled_host_guard_failure_does_not_start_collection(db, tmp_path):
-    import json
-
-    path = tmp_path / 'guard.json'
-    row = night.start(db, NOW)
-    row.config_json = {**row.config_json, 'scheduled_start': True,
-                       'startup_guard_path': str(path)}
-    path.write_text(json.dumps({'session_token': row.token, 'checked_at': NOW.isoformat(),
-                                'allowed': False}), encoding='utf-8')
-    db.commit()
-    night.tick(db, NOW)
-    assert row.status == 'failed' and '启动保护' in row.error
-    assert not list(db.scalars(select(AnalysisRun)))
+    finally:
+        client.close()
+        app.dependency_overrides.pop(get_db, None)
 
 
 def test_stop_waits_for_current_round_then_summarizes(db, monkeypatch):

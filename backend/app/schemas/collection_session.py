@@ -12,9 +12,12 @@ class CollectionSessionConfig(BaseModel):
     report_scope: Literal["session", "last24h"] = "session"
     generate_report: bool = True
     fresh_start: bool = False
+    start_at: datetime | None = None
 
     @model_validator(mode="after")
     def fresh_session_report(self):
+        if self.start_at is not None and self.start_at.utcoffset() is None:
+            raise ValueError("预约开始时间必须包含时区")
         if self.fresh_start:
             self.report_scope = "session"
         return self

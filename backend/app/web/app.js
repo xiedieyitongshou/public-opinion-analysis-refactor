@@ -804,20 +804,25 @@ function listDeliveries(rows) {
 function renderOvernight(night) {
   night = night || {status: "idle", rounds: []};
   const activeNight = ["running", "stopping"].includes(night.status);
+  const startValue = night.started_at && (/Z$|[+-]\d\d:\d\d$/.test(night.started_at) ? night.started_at : night.started_at + "Z");
+  const scheduled = night.status === "running" && startValue && new Date(startValue).getTime() > Date.now();
   activeSession = activeNight;
   syncStartButtons();
   if (activeNight && night.config) {
     $("session-duration").value = night.config.duration_hours ?? "";
     $("session-interval").value = night.config.interval_minutes;
     $("session-finish").value = night.config.generate_report ? night.config.report_scope : "none";
-    sessionEstimate();
+    $("session-fresh").checked = Boolean(night.config.fresh_start);
+    const reserved = night.config.start_at || (scheduled ? startValue : null);
+    $("session-start-mode").value = reserved ? "scheduled" : "now";
+    if (reserved) $("session-start-at").value = localDateTimeInput(new Date(reserved));
   }
-  for (const id of ["session-duration", "session-interval", "session-finish", "session-fresh", "session-preset"])
+  for (const id of ["session-duration", "session-interval", "session-finish", "session-fresh", "session-preset", "session-start-mode"])
     $(id).disabled = activeNight;
+  sessionStartFields();
   $("overnight-stop").hidden = !activeNight;
-  const nightLabels = {idle:"尚未启动",running:"运行中",stopping:"等待当前轮次完成后汇总",completed:"已完成",stopped:"已停止",failed:"失败"};
-  const startValue = night.started_at && (/Z$|[+-]\d\d:\d\d$/.test(night.started_at) ? night.started_at : night.started_at + "Z");
-  const scheduled = night.status === "running" && startValue && new Date(startValue).getTime() > Date.now();
+  $("overnight-stop").textContent = scheduled ? "取消预约" : "结束任务";
+  const nightLabels = {idle:"尚未启动",running:"运行中",stopping:"等待结束任务",completed:"已完成",stopped:"已停止",failed:"失败"};
   $("overnight-status").textContent = `${scheduled ? "已预约，等待启动" : (nightLabels[night.status] || night.status)}${scheduled ? ` · 计划开始 ${time(night.started_at)}` : ""} · ${night.rounds.length}/${night.planned_rounds ?? "持续"} 轮已安排${night.ends_at && night.config?.duration_hours !== null ? ` · 最后一轮计划 ${time(night.ends_at)}` : ""}${night.error ? ` · ${night.error}` : ""}`;
   if (night.report_id) $("overnight-status").append(" · ", link("打开测试简报", `/api/reports/${night.report_id}/html`));
   if (night.backup_file) $("overnight-status").append(` · 已备份：backups/${night.backup_file}`);
@@ -1011,23 +1016,36 @@ $("collect").addEventListener("click", () =>
 );
 $("refresh").addEventListener("click", () => busy($("refresh"), load));
 $("overnight-start").addEventListener("click", () => busy($("overnight-start"), async () => {
+  const scheduled = $("session-start-mode").value === "scheduled";
+  let startAt = null;
+  if (scheduled) {
+    const value = $("session-start-at").value;
+    if (!value) throw new Error("请选择预约开始时间（本机时间）");
+    const date = new Date(value);
+    if (!Number.isFinite(date.getTime()) || date.getTime() <= Date.now())
+      throw new Error("预约开始时间必须晚于当前时间");
+    startAt = date.toISOString();
+  }
   const fresh = $("session-fresh").checked;
-  if (fresh && !confirm("将先备份数据库，再清空当前采集、事件、审核和简报，开始独立采集。邮箱及收件人配置保留。确定继续？")) return;
-  await api("/api/overnight-test", {
+  if (fresh && !confirm("创建任务时将先备份数据库，再清空当前采集、事件、审核和简报。邮箱及收件人配置保留。确定继续？")) return;
+  const row = await api("/api/overnight-test", {
       fresh_start: fresh,
+      start_at: startAt,
       duration_hours: $("session-duration").value ? Number($("session-duration").value) : null,
       interval_minutes: Number($("session-interval").value),
       generate_report: $("session-finish").value !== "none",
       report_scope: !fresh && $("session-finish").value === "last24h" ? "last24h" : "session"
     });
-  show("采集任务已启动，按所选配置运行，不发送邮件。");
+  show(scheduled ? `已预约 ${time(row.started_at)} 开始采集；请保持电脑唤醒、Docker和网络可用，不发送邮件。` : "采集任务已启动，按所选配置运行，不发送邮件。");
   await load();
 }));
 $("overnight-stop").addEventListener("click", () => busy($("overnight-stop"), async () => {
+  const cancel = $("overnight-stop").textContent === "取消预约";
   await api("/api/overnight-test/stop", {});
-  show("已请求结束，当前轮次完成后汇总。");
+  show(cancel ? "已请求取消预约，不会启动采集。" : "已请求结束，当前轮次完成后汇总。");
   await load();
 }));
+
 function activateTab(name) {
   document.querySelectorAll(".tab-panel").forEach(p => { p.hidden = p.id !== name; });
   document.querySelectorAll("[data-tab]").forEach(t => t.classList.toggle("active", t.dataset.tab === name));
@@ -1148,11 +1166,41 @@ setInterval(async () => {
   finally { progressPolling = false; }
 }, 5000);
 
+function localDateTimeInput(date) {
+  return new Date(date.getTime() - date.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
+}
+function sessionStartFields() {
+  const scheduled = $("session-start-mode").value === "scheduled";
+  $("session-start-at-field").hidden = !scheduled;
+  $("session-start-at").disabled = activeSession || !scheduled;
+  $("session-start-at").required = scheduled;
+  if (!activeSession) $("session-start-at").min = localDateTimeInput(new Date(Date.now() + 60000));
+  $("overnight-start").textContent = scheduled ? "预约采集" : "开始采集";
+  sessionEstimate();
+}
 function sessionEstimate() {
   const hours = Number($("session-duration").value), minutes = Number($("session-interval").value);
-  $("session-estimate").textContent = hours && minutes ? "计划 " + (Math.floor(hours * 60 / minutes) + 1) + " 轮；每轮采集两个平台并调用增强接口，实际用量取决于话题数与重试。启动检查另调用一次微博搜索。" : "持续运行，直到手动停止；会持续消耗接口额度。";
+  const scheduled = $("session-start-mode").value === "scheduled";
+  const date = scheduled ? new Date($("session-start-at").value) : null;
+  let text = hours && minutes ? "计划 " + (Math.floor(hours * 60 / minutes) + 1) + " 轮；每轮采集知乎、微博及官媒 RSS，实际用量取决于话题数与重试。" : "持续运行，直到手动停止；会持续消耗接口额度。";
+  if (date && Number.isFinite(date.getTime())) {
+    text += ` 第一轮计划 ${time(date.toISOString())}`;
+    if (hours && minutes) text += `；最后一轮计划 ${time(new Date(date.getTime() + Math.floor(hours * 60 / minutes) * minutes * 60000).toISOString())}`;
+    text += "；最后一轮处理完成后结束任务。";
+  }
+  $("session-estimate").textContent = text + " 启动检查另调用一次微博搜索。";
 }
-["session-duration","session-interval"].forEach(id => $(id).addEventListener("input", sessionEstimate));
+function reportWindowFields() {
+  const custom = $("report-scope").value === "custom";
+  for (const part of ["start", "end"]) {
+    $("report-" + part + "-field").hidden = !custom;
+    $("report-" + part).disabled = !custom;
+    $("report-" + part).required = custom;
+  }
+}
+["session-duration","session-interval","session-start-at"].forEach(id => $(id).addEventListener("input", sessionEstimate));
+$("session-start-mode").addEventListener("change", sessionStartFields);
+$("report-scope").addEventListener("change", reportWindowFields);
 $("session-preset").addEventListener("click", () => {
   $("session-duration").value = 8; $("session-interval").value = 60;
   $("session-finish").value = "session"; sessionEstimate();
@@ -1167,4 +1215,5 @@ $("report-window").addEventListener("click", () => busy($("report-window"), asyn
   await api("/api/reports/window", data);
   show("已生成本地简报，没有发送邮件。"); await load();
 }));
-sessionEstimate();
+sessionStartFields();
+reportWindowFields();

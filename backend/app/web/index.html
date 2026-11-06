@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>每日关注 · 简报工作台</title>
     <link rel="stylesheet" href="/static/app.css?v=report-provenance-20261103" />
-    <script src="/static/app.js?v=scheduled-test-20261103" defer></script>
+    <script src="/static/app.js?v=collection-schedule-20261105" defer></script>
   </head>
   <body>
     <header class="masthead">
@@ -56,7 +56,11 @@
         </section>
         <section class="panel">
           <h2>采集任务</h2>
-<p class="muted">采集知乎热榜及平台热度（知乎搜索增强已封存）、微博 RSS 与 CLI 增强，以及官媒 RSS（中新网、人民网、新华网）。立即采集，再按间隔运行。请保持电脑唤醒、Docker 运行及微博国内直连。不会自动发送邮件。</p>
+<p class="muted">采集知乎热榜及平台热度（知乎搜索增强已封存）、微博 RSS 与 CLI 增强，以及官媒 RSS（中新网、人民网、新华网）。按所选开始时间采集第一轮，之后按间隔运行。请保持电脑唤醒、Docker 运行及微博国内直连。不会自动发送邮件。</p>
+<div class="actions">
+<label>启动方式<select id="session-start-mode"><option value="now">立即开始</option><option value="scheduled">预约开始</option></select></label>
+<label id="session-start-at-field" hidden>开始时间（本机时间）<input id="session-start-at" type="datetime-local" disabled></label>
+</div>
 <div class="actions">
 <label>时长（小时，留空持续）<input id="session-duration" type="number" min="1" max="168" value="8"></label>
 <label>间隔（分钟）<input id="session-interval" type="number" min="30" max="180" value="60"></label>
@@ -64,12 +68,12 @@
 </div>
 <p id="session-estimate" class="muted"></p>
 <label><input id="session-fresh" type="checkbox">备份旧数据后独立采集</label>
-<p class="muted">勾选后先保存完整数据库备份，再清空当前采集、事件、审核和简报；保留邮箱、收件人和数据源配置。新任务按本次运行生成简报，不受旧事件及审核结论影响。</p>
+<p class="muted">勾选后在创建任务时保存完整数据库备份，再清空当前采集、事件、审核和简报；保留邮箱、收件人和数据源配置。新任务按本次运行生成简报，不受旧事件及审核结论影响。</p>
 <div class="actions"><button id="session-preset">夜间8小时预设</button><button id="overnight-start" class="primary">开始采集</button><button id="overnight-stop" hidden>结束任务</button></div>
 <div class="actions">
 <label>简报范围<select id="report-scope"><option value="session">本次运行</option><option value="last24h">过去24小时</option><option value="custom">自定义</option></select></label>
-<label>起始时间<input id="report-start" type="datetime-local"></label>
-<label>截止时间<input id="report-end" type="datetime-local"></label>
+<label id="report-start-field" hidden>起始时间<input id="report-start" type="datetime-local" disabled></label>
+<label id="report-end-field" hidden>截止时间<input id="report-end" type="datetime-local" disabled></label>
 <button id="report-window">根据已有数据生成简报</button>
 </div>
 <p id="overnight-status" role="status">尚未启动</p>

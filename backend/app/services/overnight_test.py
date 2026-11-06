@@ -116,7 +116,9 @@ def start(db, now=None, config=None):
     from app.services.briefing_jobs import acquire_lease, release_lease
     from app.services.email_settings import get_email_settings
 
-    now = now or datetime.now(UTC)
+    now = as_utc(now or datetime.now(UTC))
+    requested = monotonic()
+    planned_start = as_utc(config.start_at) if config.start_at else now
     owner = "overnight-start:" + str(uuid4())
     if not acquire_lease(db, "overnight-start", owner, seconds=180, now=now):
         raise ValueError("已有启动请求，请稍后刷新")
@@ -133,6 +135,8 @@ def start(db, now=None, config=None):
         mail = get_email_settings(db, decrypt=False)
         if mail.email_schedule_enabled or mail.daily_briefing_enabled:
             raise ValueError("请先关闭邮件设置中的自动日报与定时发送，夜间测试仅生成本地草稿")
+        if config.start_at and planned_start <= now:
+            raise ValueError("预约开始时间必须晚于当前时间")
         preflight(db)
         if db.scalar(select(AnalysisRun).where(AnalysisRun.status.in_(["queued", "running"]))):
             raise ValueError("启动检查期间有其他采集启动，请等待完成后重试")
@@ -142,13 +146,17 @@ def start(db, now=None, config=None):
 
             backup_file = backup_and_clear(db)
             row = None
+        if config.start_at and planned_start <= now + timedelta(seconds=monotonic() - requested):
+            raise ValueError("启动检查期间已错过预约时间，请重新选择未来时间")
         if row is None:
             row = OvernightTest(id=1)
             db.add(row)
         row.token, row.status = uuid4().hex[:16], "running"
-        row.started_at = now
-        row.ends_at = now + timedelta(hours=config.duration_hours or 87600)
+        row.started_at = planned_start
+        row.ends_at = planned_start + timedelta(hours=config.duration_hours or 87600)
         row.config_json = config.model_dump(mode="json")
+        if config.start_at:
+            row.config_json = {**row.config_json, "scheduled_start": True}
         if backup_file:
             row.config_json = {**row.config_json, "backup_file": backup_file}
         row.rounds_json, row.report_id, row.error = [], None, None
@@ -194,23 +202,6 @@ def tick(db, now):
         row.error = "错过预约启动时间超过5分钟，未自动延后采集"
         db.commit()
         return True
-    guard_path = (row.config_json or {}).get("startup_guard_path")
-    if guard_path and not row.rounds_json and now >= as_utc(row.started_at):
-        # A scheduled host-memory check is mandatory when explicitly configured.
-        # Missing/stale receipts wait for the existing start grace, never bypass it.
-        try:
-            guard = json.loads(Path(guard_path).read_text(encoding="utf-8"))
-            checked = as_utc(guard["checked_at"])
-            valid = (guard.get("session_token") == row.token
-                     and as_utc(row.started_at) - timedelta(minutes=1) <= checked <= now)
-        except (OSError, ValueError, TypeError, KeyError):
-            valid, guard = False, {}
-        if not valid or guard.get("allowed") is not True:
-            if valid and guard.get("allowed") is False:
-                row.status = "failed"
-                row.error = "启动保护：本机可用内存不足，本次预约未采集；未自动延后"
-                db.commit()
-            return True
     config = CollectionSessionConfig.model_validate(row.config_json or {})
     planned = (
         config.duration_hours * 60 // config.interval_minutes + 1 if config.duration_hours else None
