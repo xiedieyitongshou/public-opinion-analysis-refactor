@@ -524,12 +524,15 @@ def test_refresh_and_replay_are_idempotent_and_keep_stable_history(case, window)
         for s in case.db.scalars(select(PlatformScore).where(PlatformScore.event_id == target.id))
     ]
     count = case.db.scalar(select(func.count(Event.id)))
+    report_count = case.db.scalar(select(func.count(DailyReport.id)))
     for _ in range(2):
         response = case.client.post(
             f"/api/reviews/{data.review.id}/refresh?report_id={result['report_id']}"
         )
         assert response.status_code == 200, response.text
         case.db.expire_all()
+        assert response.json()["report_id"] == result["report_id"]
+        assert case.db.scalar(select(func.count(DailyReport.id))) == report_count
     after = [
         (s.id, s.score_detail_json, s.normalized_score)
         for s in case.db.scalars(select(PlatformScore).where(PlatformScore.event_id == target.id))
@@ -557,6 +560,28 @@ def test_refresh_and_replay_are_idempotent_and_keep_stable_history(case, window)
         unique_cards(DailyBriefing.model_validate(latest.briefing_json)).keys()
         == unique_cards(briefing).keys()
     )
+
+
+def test_report_identity_ignores_calculation_times_but_keeps_heat_changes(case):
+    data = seed(case)
+    original = deepcopy(data.report.briefing_json)
+    briefing = DailyBriefing.model_validate(original)
+    for section in briefing.sections:
+        for card in section.event_cards:
+            card.classification_detail["updated_at"] = (NOW + timedelta(days=1)).isoformat()
+            card.platform_heat_analysis.updated_at = NOW + timedelta(days=1)
+    identical = save_briefing(case.db, briefing)
+    assert identical.id == data.report.id
+    assert data.report.briefing_json == original
+    for section in briefing.sections:
+        for card in section.event_cards:
+            heat = card.platform_heat_analysis.platforms["zhihu"].latest_platform_heat
+            if heat is not None:
+                heat.platform_score = 0.99
+    revised = save_briefing(case.db, briefing, supersedes_id=data.report.id)
+    assert revised.id != data.report.id
+    assert case.db.get(ReportRevision, revised.id).supersedes_id == data.report.id
+    assert data.report.briefing_json == original
 
 
 @pytest.mark.parametrize("window", [False, True])
@@ -665,6 +690,54 @@ def test_shorter_report_window_is_independent_from_the_current_rolling_cache(cas
     assert card.priority_category == "E_single_platform_only"
     assert card.platform_presence.weibo_topn and not card.platform_presence.zhihu_topn
     assert target.event_detail_json == current
+
+
+def test_session_summary_after_last_round_refreshes_equivalent_event_cache(case):
+    data = seed(case)
+    report_id = build_window(
+        case.db,
+        start=NOW - timedelta(hours=2),
+        end=NOW + timedelta(minutes=3),
+        run_ids=[r.run_id for r in data.rounds],
+        run_id="session-summary",
+        label="本次运行",
+    )
+    data.report = case.db.get(DailyReport, report_id)
+    briefing, _ = confirm(case, data)
+    target = data.events[1]
+    assert unique_cards(briefing)[target.event_id].priority_category == (
+        "C_cross_platform_without_official"
+    )
+    detail = target.event_detail_json
+    assert detail["priority_category"] == "C_cross_platform_without_official"
+    assert detail["platform_presence"]["zhihu_topn"]
+    assert detail["platform_presence"]["weibo_topn"]
+    assert as_utc(detail["classification_detail"]["window_end"]) == NOW + timedelta(minutes=3)
+    assert as_utc(detail["platform_heat_analysis"]["window_end"]) == (
+        as_utc(detail["classification_detail"]["window_end"])
+    )
+
+
+@pytest.mark.parametrize("unrelated_cache", [False, True])
+def test_session_summary_does_not_replace_a_different_cache_scope(case, unrelated_cache):
+    data = seed(case)
+    target = data.events[1]
+    if unrelated_cache:
+        detail = deepcopy(target.event_detail_json)
+        detail["classification_detail"]["run_id"] = "newer-unrelated-round"
+        target.event_detail_json = detail
+        case.db.commit()
+    before = deepcopy(target.event_detail_json)
+    report_id = build_window(
+        case.db,
+        start=NOW - timedelta(hours=2) if unrelated_cache else NOW - timedelta(minutes=30),
+        end=NOW + timedelta(minutes=3),
+        run_ids=[r.run_id for r in data.rounds],
+        run_id="independent-session-summary",
+        label="本次运行",
+    )
+    assert case.db.get(DailyReport, report_id) is not None
+    assert target.event_detail_json == before
 
 
 @pytest.mark.parametrize("window", [False, True])

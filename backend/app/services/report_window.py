@@ -24,6 +24,33 @@ from app.services.platform_trend_assembly import (
 )
 
 
+def _can_persist_window(db, event, run, start, end, observation_ids):
+    current = (event.event_detail_json or {}).get("classification_detail") or {}
+    if not current.get("window_start") or not current.get("window_end"):
+        return False
+    selected = load_platform_observations(
+        db, event=event, window_start=start, window_end=end,
+    )
+    selected_ids = {o.observation_id for o in selected}
+    if not selected_ids.issubset(observation_ids):
+        return False
+    current_start, current_end = as_utc(current["window_start"]), as_utc(current["window_end"])
+    if (current_start, current_end) == (start, end):
+        return True
+    scope = run.input_json["report_window"]
+    # A session ends after its last analysis. Its shorter window can still own
+    # exactly the same observations, so refresh that cache with the corrected scope.
+    # Historical/custom reports and unrelated newer caches remain independent.
+    if (scope.get("label") != "本次运行"
+            or current.get("run_id") not in scope["run_ids"]
+            or current_end > end):
+        return False
+    cached = load_platform_observations(
+        db, event=event, window_start=current_start, window_end=current_end,
+    )
+    return bool(selected_ids) and selected_ids == {o.observation_id for o in cached}
+
+
 def rebuild_window(db, run):
     """Rebuild only from saved observations and current accepted item associations."""
     scope = run.input_json["report_window"]
@@ -76,15 +103,7 @@ def rebuild_window(db, run):
         # An auxiliary search result alone cannot discover an event in this window.
         if not any(s.signal_role != "search_enrichment_signal" for s in signals):
             continue
-        current = (event.event_detail_json or {}).get("classification_detail") or {}
-        persist_window = bool(
-            current.get("window_start") and current.get("window_end")
-            and as_utc(current["window_start"]) == start
-            and as_utc(current["window_end"]) == end
-            and all(o.observation_id in observations for o in load_platform_observations(
-                db, event=event, window_start=start, window_end=end,
-            ))
-        )
+        persist_window = _can_persist_window(db, event, run, start, end, observations)
         result.event_ids.append(eid)
         official = [s for s in signals if s.source_type == "official_news"]
         support = OfficialSupportResult(

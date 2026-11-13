@@ -452,9 +452,14 @@ def save_briefing(db: Session, briefing: DailyBriefing, supersedes_id=None) -> D
         "draft_blocked" if quality["blocks_publish"] else "draft_ready_for_review"
     )
     content = briefing.model_dump(mode="json")
-    stable = {
-        key: value for key, value in content.items() if key not in {"created_at", "daily_report_id"}
-    }
+    stable = briefing.model_dump(mode="json", exclude={"created_at", "daily_report_id"})
+    # Recomputing identical evidence updates internal calculation timestamps.
+    # Keep them in the immutable snapshot, but exclude them from content identity.
+    for section in stable["sections"]:
+        for card in section["event_cards"]:
+            card["classification_detail"].pop("updated_at", None)
+            if card["platform_heat_analysis"]:
+                card["platform_heat_analysis"].pop("updated_at", None)
     fingerprint = hashlib.sha256(json.dumps(stable, sort_keys=True).encode()).hexdigest()
     existing = db.scalar(select(ReportRevision).where(ReportRevision.fingerprint == fingerprint))
     if existing:
