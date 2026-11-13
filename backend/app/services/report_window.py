@@ -18,7 +18,10 @@ from app.schemas.official_support import (
 from app.schemas.platform_trend import PlatformTrendConfig
 from app.services.briefing import as_utc, generate_briefing, save_briefing
 from app.services.classification_assembly import assemble_hotspot_classification_from_db
-from app.services.platform_trend_assembly import assemble_event_heat_analysis_from_db
+from app.services.platform_trend_assembly import (
+    assemble_event_heat_analysis_from_db,
+    load_platform_observations,
+)
 
 
 def rebuild_window(db, run):
@@ -73,6 +76,15 @@ def rebuild_window(db, run):
         # An auxiliary search result alone cannot discover an event in this window.
         if not any(s.signal_role != "search_enrichment_signal" for s in signals):
             continue
+        current = (event.event_detail_json or {}).get("classification_detail") or {}
+        persist_window = bool(
+            current.get("window_start") and current.get("window_end")
+            and as_utc(current["window_start"]) == start
+            and as_utc(current["window_end"]) == end
+            and all(o.observation_id in observations for o in load_platform_observations(
+                db, event=event, window_start=start, window_end=end,
+            ))
+        )
         result.event_ids.append(eid)
         official = [s for s in signals if s.source_type == "official_news"]
         support = OfficialSupportResult(
@@ -104,11 +116,12 @@ def rebuild_window(db, run):
             # Revalidate only evidence captured by the selected original analyses.
             # Never search externally while rebuilding a historical report.
             evidence_ids = set(official_pool)
+            accepted_event_ids = {eid, *(event.event_detail_json or {}).get("merged_event_ids", [])}
             for original in runs:
                 if not original:
                     continue
                 for assembly in (original.output_json or {}).get("classifications", []):
-                    if assembly.get("event_id") == eid:
+                    if assembly.get("event_id") in accepted_event_ids:
                         detail = assembly.get("classification_detail_json", {})
                         evidence_ids.update(
                             int(v)
@@ -147,7 +160,7 @@ def rebuild_window(db, run):
             window_start=start,
             window_end=end,
             allowed_observation_ids=observations,
-            persist=False,
+            persist=persist_window,
             official_support_result=support,
         )
         assembly.classification_detail_json["citation_observed_at"] = {
@@ -163,7 +176,7 @@ def rebuild_window(db, run):
                 window_end=end,
                 configs=configs,
                 allowed_observation_ids=observations,
-                persist=False,
+                persist=persist_window,
             )
         )
     run.output_json = result.model_dump(mode="json")

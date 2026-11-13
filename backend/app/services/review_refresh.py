@@ -2,7 +2,7 @@
 
 from datetime import timedelta
 
-from sqlalchemy import select
+from sqlalchemy import or_, select
 
 from app.core.config import settings
 from app.models import AgentTask, Event, HumanReviewTask
@@ -92,9 +92,23 @@ def _refresh_run(db, decisions, run):
             )
             .order_by(AgentTask.id)
         ).all()
+        from app.models.briefing import AnalysisRun
+
+        # Collection payloads outlive task logs in historical databases.
+        saved = [task.output_json for task in tasks]
+        saved.extend(db.scalars(select(AnalysisRun.collection_json).where(
+            AnalysisRun.collection_json.is_not(None),
+            or_(AnalysisRun.run_id.in_(original_runs), AnalysisRun.window_end.between(
+                end - timedelta(hours=24), end,
+            )),
+        ).order_by(AnalysisRun.started_at)).all())
+        if not any(payload and payload.get("results") for payload in saved):
+            raise ValueError("历史采集归档缺失，请恢复原始记录后重试简报重建")
         seen = set()
-        for recorded in tasks:
-            collection = FetchSourceItemsOutput.model_validate(recorded.output_json)
+        for payload in saved:
+            if not payload:
+                continue
+            collection = FetchSourceItemsOutput.model_validate(payload)
             if collection.run_id in seen:
                 continue
             seen.add(collection.run_id)

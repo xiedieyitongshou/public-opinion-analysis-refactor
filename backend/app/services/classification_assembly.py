@@ -150,11 +150,33 @@ def assemble_hotspot_classification_from_db(
         platform_scores = [
             s for s in platform_scores if s.observation_id in allowed_observation_ids
         ]
+    from app.services.platform_trend_assembly import load_platform_observations
+
+    observations = load_platform_observations(
+        db, event=event, window_start=window_start or effective_window_end-timedelta(hours=24),
+        window_end=effective_window_end,
+    )
+    observations = [o for o in observations if o.topn_present is True
+                    and o.collection_status == "succeeded"
+                    and (allowed_observation_ids is None
+                         or o.observation_id in allowed_observation_ids)]
+    items = {str(item.id): item for item in event.items}
+    signals = []
+    for signal in source_signals or []:
+        refs = {signal.url}
+        item = items.get(signal.item_id)
+        if item is not None:
+            refs.update([item.url, item.content_hash,
+                         (item.normalized_json or {}).get("collector_content_hash")])
+        refs.discard(None)
+        times = [o.observed_at for o in observations if o.source_id == signal.source_id
+                 and o.platform == signal.platform and refs.intersection(o.source_refs)]
+        signals.append(signal.model_copy(update={"fetched_at": max(times)}) if times else signal)
     result = assemble_hotspot_classification(
         run_id=run_id,
         event=event,
         platform_scores=list(platform_scores),
-        source_signals=source_signals,
+        source_signals=signals,
         official_support_result=official_support_result,
         event_resolution=event_resolution,
         window_end=effective_window_end,
@@ -299,6 +321,10 @@ def _classification_detail_json(
         "event_id_aggregation_basis": _event_id_aggregation_basis(event_resolution),
         "platform_scores": [_platform_score_summary(score) for score in platform_scores],
         "source_signals": [_source_signal_summary(signal) for signal in source_signals],
+        "citation_observed_at": {
+            signal.item_id: _datetime_value(signal.fetched_at).isoformat()
+            for signal in source_signals if signal.item_id
+        },
         "official_support_detail": (
             official_support_result.official_support_detail.model_dump(mode="json")
             if official_support_result
