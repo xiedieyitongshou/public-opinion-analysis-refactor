@@ -121,8 +121,11 @@ def request_slots(limit):
 
 
 class DeepSeekJSONClient:
-    def __init__(self, *, http_client=None, cache_path=None, run_id=None):
+    def __init__(self, *, http_client=None, cache_path=None, run_id=None,
+                 max_calls=None, token_budget=None):
         self.http_client = http_client
+        self._max_calls = max_calls
+        self._token_budget = token_budget
         self.calls = 0
         self._call_lock = RLock()
         self._slots = request_slots(settings.llm_max_concurrent_requests)
@@ -143,6 +146,19 @@ class DeepSeekJSONClient:
         scope = current_request_scope()
         self.run_id = run_id or (scope.run_id if scope else "isolated:" + uuid4().hex)
         self.budget = RunTokenBudget(self.cache_path, self.run_id)
+
+    @property
+    def max_calls(self):
+        return settings.llm_max_calls_per_run if self._max_calls is None else self._max_calls
+
+    @max_calls.setter
+    def max_calls(self, value):
+        self._max_calls = value
+
+    @property
+    def token_budget(self):
+        return (settings.llm_token_budget_per_run
+                if self._token_budget is None else self._token_budget)
 
     def validate_configuration(self):
         if settings.llm_provider != "deepseek":
@@ -257,7 +273,7 @@ class DeepSeekJSONClient:
             register_default_limit,
         )
 
-        register_default_limit("deepseek", settings.llm_max_calls_per_run)
+        register_default_limit("deepseek", self.max_calls)
         request = {
             "model": settings.deepseek_model,
             "stream": False,
@@ -339,11 +355,11 @@ class DeepSeekJSONClient:
                 key = self.budget.reserve(
                     task,
                     estimate,
-                    token_limit=settings.llm_token_budget_per_run,
-                    call_limit=settings.llm_max_calls_per_run,
+                    token_limit=self.token_budget,
+                    call_limit=self.max_calls,
                 )
                 with self._call_lock:
-                    if self.calls >= settings.llm_max_calls_per_run:
+                    if self.calls >= self.max_calls:
                         raise LLMBudgetExceeded("llm_call_budget_exceeded")
                     self.calls += 1
                 parsed, usage = measured_call("deepseek", task, "llm_request", send)

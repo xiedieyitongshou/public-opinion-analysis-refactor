@@ -37,6 +37,25 @@ function setup() {
 function checkbox(elements, id) { return descendants(elements["review-list"]).find(e => e["aria-label"] === `选择审核 ${id} 归并`); }
 function action(elements, text) { return descendants(elements["review-batch"]).find(e => e.textContent === text); }
 
+test("stored event duplicate pairs require individual review and display both source bodies", async () => {
+  const { context, elements, tasks } = setup();
+  const task = tasks[2];
+  task.review_type = "event_duplicate_candidate";
+  task.payload.event_pair_documents = [{ body: "左侧正文" }, { body: "右侧正文" }];
+  task.payload.llm_decision = { decision: "same_event", evidence: [{ source_id: "a", quote: "引用原文" }] };
+  context.api = async () => ({ existing: { title: "目标事件" } });
+  await context.listReviews([task]);
+  assert.equal(checkbox(elements, task.id), undefined);
+  await action(elements, "选择本页无互斥项").events.click();
+  assert.ok(descendants(elements["review-batch"]).some(e => String(e.textContent).includes("已选择 0 条")));
+  const buttons = descendants(elements["review-list"]);
+  assert.ok(buttons.some(e => e.textContent === "确认归并两个事件" && !e.disabled));
+  assert.ok(!buttons.some(e => e.textContent === "单独建事件"));
+  await buttons.find(e => e.textContent === "查看对比依据").events.click();
+  const text = descendants(elements["review-list"]).map(e => e.textContent).join(" ");
+  assert.ok(text.includes("左侧正文") && text.includes("右侧正文") && text.includes("引用原文"));
+});
+
 test("technical failures are labelled separately without claiming a merge suggestion", async () => {
   const { context, elements, tasks } = setup();
   tasks[0].payload.reason = "LLM comparison unavailable; no rule fallback: llm_invalid_response";

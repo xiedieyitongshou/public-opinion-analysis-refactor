@@ -153,7 +153,7 @@ cd backend
 | --- | --- |
 | 产品与架构 | [产品设计](docs/product-design.md)：输出和边界；[系统架构](docs/architecture.md)：任务编排、数据交接、失败与回放 |
 | 采集与证据 | [数据源](docs/data-sources.md)、[字段映射](docs/source-fields.md)、[搜索增强](docs/search-enrichment.md)、[官媒证据](docs/official-evidence.md) |
-| 事件与热度 | [信号抽取](docs/event-extraction.md)、[事件匹配](docs/event-matching.md)、[DeepSeek 独立模式](docs/llm-reasoning.md)、[A–F 分类](docs/hotspot-classification.md)、[平台热度与趋势](docs/platform-heat.md) |
+| 事件与热度 | [信号抽取](docs/event-extraction.md)、[事件匹配](docs/event-matching.md)、[社区事件周期查重](docs/event-duplicate-scan.md)、[DeepSeek 独立模式](docs/llm-reasoning.md)、[A–F 分类](docs/hotspot-classification.md)、[平台热度与趋势](docs/platform-heat.md) |
 | 使用与部署 | [后台操作](docs/user-guide.md)、[邮箱配置与日报投递](docs/email-delivery.md)、[Docker 部署](docs/deployment.md)、[数据生命周期](docs/data-lifecycle.md) |
 | 开发与验证 | [工具参考](docs/tool-reference.md)、[数据契约](docs/data-contracts.md)、[Guardrails](docs/guardrails.md)、[评估方法与复现](docs/evaluation.md) |
 | 维护与演进 | [文档命名与维护](docs/documentation.md)、[更新日志](CHANGELOG.md)、[历史验证记录](#验证记录) |

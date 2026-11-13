@@ -354,14 +354,15 @@ function reviewCategory(payload) {
 function reviewEvidence(payload, context) {
   const root = node("div", null, "review-evidence");
   const features = payload.match_features_json || {};
-  const detail = features.llm_detail || {};
+  const detail = features.llm_detail || (payload.llm_decision
+    ? { comparisons: [{ judgement: payload.llm_decision }] } : {});
   if (reviewCategory(payload) === "技术异常待处理") {
     root.append(node("h4", "LLM 技术异常"), node("p",
       "模型响应没有通过格式、引用或调用检查，本条尚无可采用的归并结论；这不代表模型建议合并。"),
       node("p", `错误代码：${detail.error_code || (features.semantic_quality_flags || []).join("、") || "请查看运行日志"}`, "quality"));
     return root;
   }
-  if (features.reasoning_mode === "llm" && detail.comparisons?.length) {
+  if ((features.reasoning_mode === "llm" || payload.llm_decision) && detail.comparisons?.length) {
     root.append(node("h4", "LLM 判断依据"), node("p", reviewCategory(payload), "quality"));
     const target = payload.candidate_event_id;
     const selected = detail.comparisons.filter(row => target
@@ -512,6 +513,7 @@ async function listReviews(tasks, paging) {
   root.replaceChildren();
   toolbar.replaceChildren();
   const eligible = new Map(tasks.filter(t => t.status === "pending" && t.merge_selection?.eligible
+    && t.review_type !== "event_duplicate_candidate"
     && reviewCategory(t.payload || {}) !== "技术异常待处理")
     .map(t => [t.id, t]));
   for (const [id, target] of selectedReviews) {
@@ -598,6 +600,7 @@ async function listReviews(tasks, paging) {
   for (const task of tasks) {
     const payload = task.payload || {},
       panel = node("article", null, "panel");
+    const duplicatePair = task.review_type === "event_duplicate_candidate";
     panel.append(
       node("p", `REVIEW ${task.id} · ${time(task.created_at)} · ${reviewCategory(payload)}`, "eyebrow"),
       node("h2", payload.title || payload.event_signal?.title || "候选事件"),
@@ -607,7 +610,7 @@ async function listReviews(tasks, paging) {
     if (paging?.scope?.kind === "report") {
       panel.append(node("p", `所属简报：${paging.scope.title} / #${paging.scope.report_id}`, "small muted"));
     }
-    if (task.status === "pending" && reviewCategory(payload) !== "技术异常待处理") {
+    if (task.status === "pending" && !duplicatePair && reviewCategory(payload) !== "技术异常待处理") {
       const selection = task.merge_selection || {};
       const label = node("label", null, "review-select");
       const checkbox = node("input");
@@ -631,10 +634,14 @@ async function listReviews(tasks, paging) {
     const incoming = node("div", null, "review-side"),
       existing = node("div", null, "review-side");
     incoming.append(
-      node("p", "新采集线索", "eyebrow"),
+      node("p", duplicatePair ? "存量社区事件查重" : "新采集线索", "eyebrow"),
       node("h3", payload.title || payload.event_signal?.title || "待确认线索"),
       citationList(payload.source_citations),
     );
+    if (duplicatePair) {
+      incoming.append(node("p", payload.event_pair_documents?.[0]?.body || "仅有标题", "small"));
+      panel.append(node("p", `疑似重复事件 · ${payload.llm_decision?.decision || "待核对"} · 需人工确认归并`, "quality"));
+    }
     existing.append(
       node("p", "候选归并目标", "eyebrow"),
       node("p", "展开查看目标事件与匹配依据。"),
@@ -650,6 +657,12 @@ async function listReviews(tasks, paging) {
           citationList(context.existing?.citations),
         );
         existing.append(reviewEvidence(payload, context));
+        if (duplicatePair) {
+          existing.append(node("p", payload.event_pair_documents?.[1]?.body || "仅有标题", "small"));
+          for (const q of [...(payload.llm_decision?.evidence || []), ...(payload.llm_decision?.same_event_clues || [])]) {
+            existing.append(node("p", `${q.source_id} 引文 “${q.quote}”`, "small"));
+          }
+        }
       }),
     );
     if (task.status !== "pending") {
@@ -685,8 +698,12 @@ async function listReviews(tasks, paging) {
     eventTitle.placeholder = "独立事件名称（可修改）";
     eventTitle.setAttribute("aria-label", "独立事件名称");
     eventTitle.maxLength = 500;
-    actions.append(eventTitle);
-    const choices = [
+    if (!duplicatePair) actions.append(eventTitle);
+    const choices = duplicatePair ? [
+      ["merge_to_existing", "确认归并两个事件"],
+      ["reject", "保留两个事件"],
+      ["ignore", "忽略"],
+    ] : [
       ["merge_to_existing", "确认归并"],
       ["create_new_event", "单独建事件"],
       ["ignore", "忽略"],

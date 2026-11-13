@@ -100,6 +100,16 @@ class MergeSelection:
         p = self.payloads[task_id]
         target = self.events.get(p.get("candidate_event_id"))
         issues = []
+        if task.review_type == "event_duplicate_candidate":
+            from app.services.event_duplicate_review import review_pair
+
+            if task.status != "pending":
+                return ["该项已处理，请刷新列表"]
+            try:
+                review_pair(self.db, p)
+            except ValueError as exc:
+                return [str(exc)]
+            return []
         if task.status != "pending" or task.review_type != "event_merge_candidate":
             issues.append("该项已处理或不属于事件归并审核，请刷新列表")
         if not target or target.lifecycle_status != "active":
@@ -180,6 +190,12 @@ def batch_merge_reviews(db, data):
         context = MergeSelection(db, rows)
         problems = []
         for entry in data.items:
+            if entry.task_id in context.tasks and context.tasks[
+                entry.task_id
+            ].review_type == "event_duplicate_candidate":
+                problems.append({"task_ids": [entry.task_id],
+                                 "reason": "存量事件查重请逐条确认，归并后需重新核对其他配对"})
+                continue
             issues = (
                 context.issues(entry.task_id, entry.candidate_event_id)
                 if entry.task_id in context.tasks

@@ -142,6 +142,16 @@ class Settings(BaseSettings):
     )
     llm_cache_path: str | None = Field(default=None, alias="LLM_CACHE_PATH")
     llm_cache_hours: int = Field(default=24, alias="LLM_CACHE_HOURS", ge=1, le=168)
+    event_duplicate_scan_enabled: bool = Field(default=True, alias="EVENT_DUPLICATE_SCAN_ENABLED")
+    event_duplicate_max_calls_per_scan: int = Field(
+        default=300, alias="EVENT_DUPLICATE_MAX_CALLS_PER_SCAN", ge=1, le=2000,
+    )
+    event_duplicate_token_budget_per_scan: int = Field(
+        default=2000000, alias="EVENT_DUPLICATE_TOKEN_BUDGET_PER_SCAN", ge=1000,
+    )
+    event_duplicate_slice_seconds: int = Field(
+        default=45, alias="EVENT_DUPLICATE_SLICE_SECONDS", ge=5, le=120,
+    )
     # Deprecated: exclusive backend selection supersedes mixed refinement.
     event_extraction_use_llm: bool = Field(
         default=False,

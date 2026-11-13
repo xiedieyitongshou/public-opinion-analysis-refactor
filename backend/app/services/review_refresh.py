@@ -66,6 +66,10 @@ def _refresh_run(db, decisions, run):
 
     end = as_utc(run.window_end)
     result = HotspotAnalysisOutput.model_validate(run.output_json)
+    merged_sources = {(task.payload_json or {}).get("source_event_id")
+                      for task, _ in decisions if task.review_type == "event_duplicate_candidate"
+                      and task.decision == "merge_to_existing"}
+    result.event_ids = [eid for eid in result.event_ids if eid not in merged_sources]
     event_ids = {event_id for _, event_id in decisions if event_id}
     if event_ids:
         events = list(db.scalars(select(Event).where(Event.event_id.in_(event_ids))))

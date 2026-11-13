@@ -18,6 +18,7 @@ from app.models.business import (
     PlatformScore,
     Source,
 )
+from app.models.event_duplicate import EventPairJudgment
 
 __all__ = [
     "AgentTask",
@@ -25,6 +26,7 @@ __all__ = [
     "CrawlValidationRun",
     "DailyReport",
     "Event",
+    "EventPairJudgment",
     "EventQuery",
     "EventSnapshot",
     "EvaluationCase",

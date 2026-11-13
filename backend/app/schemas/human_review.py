@@ -9,7 +9,9 @@ from pydantic import BaseModel, Field
 from app.schemas.matching import EventMergeCandidateReview
 
 HumanReviewStatus = Literal["pending", "resolved", "ignored", "cancelled"]
-HumanReviewType = Literal["event_merge_candidate", "briefing_quality", "publish_decision"]
+HumanReviewType = Literal[
+    "event_merge_candidate", "event_duplicate_candidate", "briefing_quality", "publish_decision",
+]
 HumanReviewDecision = Literal["merge_to_existing", "create_new_event", "ignore", "reject"]
 
 

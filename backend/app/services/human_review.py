@@ -154,7 +154,13 @@ def _decide_human_review_task(
                      else f"Human review task is not pending: {task.status}"),
         )
 
-    if input_data.decision == "merge_to_existing" and validate_ownership:
+    duplicate_pair = task.review_type == "event_duplicate_candidate"
+    if duplicate_pair and input_data.decision == "create_new_event":
+        return HumanReviewDecisionOutput(
+            status="failed", human_review_task=task_record(task),
+            message="查重对象已是独立事件，可确认归并或保留两个事件",
+        )
+    if input_data.decision == "merge_to_existing" and validate_ownership and not duplicate_pair:
         from app.services.review_batch import MergeSelection
 
         issues = MergeSelection(db, [task]).issues(task.id)
@@ -167,7 +173,12 @@ def _decide_human_review_task(
     payload = dict(task.payload_json or {})
     now = datetime.now(UTC)
     try:
-        event_id = _apply_decision_side_effect(db, payload, input_data, now=now)
+        if duplicate_pair and input_data.decision == "merge_to_existing":
+            from app.services.event_duplicate_review import merge_reviewed_pair
+
+            event_id = merge_reviewed_pair(db, payload, now=now)
+        else:
+            event_id = _apply_decision_side_effect(db, payload, input_data, now=now)
         if event_id:
             _associate_review_items(db, event_id, payload)
             _reattach_pending_children(db, event_id, task.id, now)

@@ -274,6 +274,11 @@ def execute_analysis(db, data, *, agent=None, sink=None):
 
 
 def run_worker(run_id):
+    from app.services.event_duplicate_jobs import PREFIX
+    from app.services.event_duplicate_jobs import run_worker as run_duplicate_worker
+
+    if run_id.startswith(PREFIX):
+        return run_duplicate_worker(run_id)
     configure_logging(f"worker-{run_id}")
 
     def sink(value):
@@ -346,6 +351,11 @@ class JobCoordinator:
             release_lease(db, "coordinator", self.owner)
 
     def _fail_run(self, db, run_id, reason):
+        from app.services.event_duplicate_jobs import PREFIX, interrupt_scan
+
+        if run_id and run_id.startswith(PREFIX):
+            interrupt_scan(db, run_id, reason)
+            return
         row = db.get(AnalysisRun, run_id)
         if row and row.status in {"queued", "running"}:
             row.status, row.error, row.finished_at = "failed", reason, datetime.now(UTC)
@@ -375,15 +385,28 @@ class JobCoordinator:
             from app.services.overnight_test import record_resources
 
             record_resources(db)
+            maintenance_running = False
             if self.process:
                 if self.process.poll() is None:
-                    if monotonic() - self.process_started <= settings.job_timeout_seconds:
-                        return
-                    self._terminate()
-                    self._fail_run(db, self.process_run_id, "wall_clock_timeout")
+                    from app.services.event_duplicate_jobs import PREFIX
+
+                    maintenance = self.process_run_id.startswith(PREFIX)
+                    limit = settings.job_timeout_seconds
+                    if maintenance:
+                        limit = min(limit, settings.event_duplicate_slice_seconds
+                                    + settings.llm_timeout_seconds + 15)
+                    if monotonic() - self.process_started <= limit:
+                        if not maintenance:
+                            return
+                        # Keep ticking collection reservations while maintenance is in flight.
+                        maintenance_running = True
+                    else:
+                        self._terminate()
+                        self._fail_run(db, self.process_run_id, "wall_clock_timeout")
                 else:
                     self._fail_run(db, self.process_run_id, "worker_exited_before_completion")
-                self.process = None
+                if not maintenance_running:
+                    self.process = None
             stale = db.scalars(
                 select(AnalysisRun).where(
                     AnalysisRun.status == "running",
@@ -415,6 +438,8 @@ class JobCoordinator:
                     minutes=settings.sampling_interval_minutes
                 ):
                     queue_analysis(db)
+            if maintenance_running:
+                return
             lease = db.get(JobLease, "analysis")
             if lease and as_utc(lease.expires_at) > now:
                 return
@@ -423,10 +448,17 @@ class JobCoordinator:
                 .where(AnalysisRun.status == "queued")
                 .order_by(AnalysisRun.started_at)
             )
-            if queued:
-                self.process_run_id, self.process_started = queued.run_id, monotonic()
+            worker_id = queued.run_id if queued else None
+            if worker_id is None:
+                from app.services.event_duplicate_jobs import PREFIX, queued_scan
+
+                maintenance_task = queued_scan(db, now)
+                if maintenance_task:
+                    worker_id = PREFIX + str(maintenance_task.id)
+            if worker_id:
+                self.process_run_id, self.process_started = worker_id, monotonic()
                 self.process = subprocess.Popen(
-                    [sys.executable, "-m", "app.services.briefing_jobs", queued.run_id],
+                    [sys.executable, "-m", "app.services.briefing_jobs", worker_id],
                     stdin=subprocess.DEVNULL,
                     stdout=subprocess.PIPE,
                     stderr=subprocess.STDOUT,
@@ -438,7 +470,7 @@ class JobCoordinator:
                 if getattr(self.process, "stdout", None) is not None:
                     self.output_thread = threading.Thread(
                         target=self._capture_output,
-                        args=(self.process, queued.run_id),
+                        args=(self.process, worker_id),
                         daemon=True,
                     )
                     self.output_thread.start()

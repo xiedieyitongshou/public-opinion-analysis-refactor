@@ -14,6 +14,8 @@ function render(startedAt) {
     syncStartButtons: () => {}, sessionEstimate: () => {}, table: () => {}, time: v => v,
   };
   vm.createContext(context);
+  vm.runInContext(source.slice(source.indexOf("function localDateTimeInput("),
+    source.indexOf("function sessionEstimate(")), context);
   vm.runInContext(source.slice(source.indexOf("function renderOvernight("), source.indexOf("function renderRunProgress(")), context);
   context.renderOvernight({
     status: "running", started_at: startedAt, ends_at: "2026-11-03T07:30:00Z",

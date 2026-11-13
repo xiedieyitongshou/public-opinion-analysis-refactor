@@ -263,7 +263,7 @@ def validate_pair(row, incoming, candidate):
             raise LLMFailure("llm_context_only_has_same_event_clues")
 
 
-def judge_pairs(incoming, candidates, *, client=None):
+def judge_pairs(incoming, candidates, *, client=None, batch_size=None):
     """Cache each pair independently; pack only misses, compare in bounded parallel batches."""
     from app.services.llm_material import canonical_pair, remap_result
 
@@ -312,7 +312,9 @@ def judge_pairs(incoming, candidates, *, client=None):
             result.append((row, audit))
         return result
 
-    size = settings.llm_candidates_per_request
+    size = settings.llm_candidates_per_request if batch_size is None else batch_size
+    if not 1 <= size <= 10:
+        raise ValueError("batch_size must be between 1 and 10")
     chunks = [pending[i:i+size] for i in range(0, len(pending), size)]
     errors = []
     if len(chunks) > 1 and settings.llm_max_concurrent_requests > 1:
