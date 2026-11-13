@@ -69,6 +69,8 @@ FetchSourceItemsOutput
 | 来源 `source_status` | 选型／质量层级，例如 `use`、`fallback` |
 | 采集与业务 `status` | 本轮 `succeeded/partial/failed/skipped` |
 | `score_status` | 平台分 `ok/partial/unknown` |
+| `score_basis`、`fallback_reason` | 微博 `cli_samples/rss_presence_only` 及降级原因，保存在评分明细 JSON |
+| `estimated_platform_heat` | 按简报截止时间计算的微博在榜参考分，与实际观测热度分别记录 |
 | `current_topn_present` | 当前在榜 true、明确离榜 false、未知 null |
 | `trend_status` | rising、stable、cooling、unknown |
 | `official_support_status` | supported、weak_supported、not_found、not_checked |

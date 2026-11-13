@@ -44,7 +44,7 @@ EventSignal + 来源引用
 | `auto_merge_confidence_threshold` | 0.85 | 综合匹配置信度达到自动合并档位，仍须通过护栏 |
 | `candidate_review_confidence_threshold` | 0.60 | 综合置信度进入人工复核档位 |
 | `rerank_auto_merge_min_score` | 0.85 | rerank 辅助自动合并的门槛，不能独立覆盖冲突 |
-| `rerank_reject_below` | 0.10 | 实际 rerank 分低于此值且无强身份／URL／标题包含依据时，否认候选关联 |
+| `rerank_reject_below` | 0.10 | 实际 rerank 分低于此值且无强身份／URL／标题包含依据时，优先排除该候选，低分检查先于 embedding 复核分支 |
 | `embedding_candidate_min_similarity` | 0.78 | embedding 候选相关配置 |
 | `embedding_auto_merge_min_similarity` | 0.86 | embedding 强相似约束判断 |
 | `time_window_same_event_hours` | 72 | 同事件匹配默认时间跨度，区别于日报 24 小时窗口 |

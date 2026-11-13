@@ -4,11 +4,13 @@ from __future__ import annotations
 
 from datetime import timedelta
 
+from app.schemas.platform_heat import PlatformHeatSignalInput
 from app.schemas.platform_trend import (
     PlatformHeatObservation,
     PlatformTrendInput,
     PlatformTrendResult,
 )
+from app.services.platform_heat import score_platform_signals
 
 MAIN_SOURCES = {"zhihu": "zhihu_hot_list", "weibo": "weibo_rsshub_hot_search"}
 SCORE_INVALID_FLAGS = {
@@ -48,6 +50,10 @@ def analyze_platform_trend(data: PlatformTrendInput) -> PlatformTrendResult:
     main = [item for item in observations if item.source_id == MAIN_SOURCES[data.platform]]
     positive = [item for item in main if item.topn_present is True]
     result.snapshot_presence_count = len(positive)
+    if data.platform == "weibo":
+        result.snapshot_presence_count = len({
+            item.run_id or item.observation_id for item in positive
+        })
     result.first_topn_seen_at = positive[0].observed_at if positive else None
     result.last_topn_seen_at = positive[-1].observed_at if positive else None
     scored = [item for item in observations if item.platform_heat is not None
@@ -126,6 +132,40 @@ def analyze_platform_trend(data: PlatformTrendInput) -> PlatformTrendResult:
             and data.window_end - latest_auxiliary.observed_at <= timedelta(minutes=gap)
         ):
             result.latest_platform_heat = latest_auxiliary.platform_heat
+    if data.platform == "weibo" and positive:
+        heat = result.latest_platform_heat
+        has_current_cli = (
+            result.current_topn_present is True
+            and heat is not None
+            and (heat.score_basis == "cli_samples" or (
+                heat.score_basis is None
+                and any(heat.raw_metrics_used.get(key) is not None for key in (
+                    "top_status_repost_count", "top_status_comment_count", "top_status_like_count"
+                ))
+            ))
+        )
+        if not has_current_cli:
+            recent = [
+                item for item in positive
+                if item.observed_at > data.window_end - timedelta(hours=24)
+            ]
+            if recent:
+                previous_heat = recent[-1].platform_heat
+                reason = previous_heat.fallback_reason if previous_heat else None
+                signal = PlatformHeatSignalInput(
+                    event_id=data.event_id, platform="weibo", source_origin="rsshub",
+                    signal_role="topic_discovery_signal", topic_present=True,
+                    last_topn_seen_at=recent[-1].observed_at.isoformat(),
+                    snapshot_presence_count=len({
+                        item.run_id or item.observation_id for item in recent
+                    }),
+                    weibo_signal_status="cli_unavailable" if reason == "cli_unavailable" else None,
+                    matched_status_count=0 if reason == "cli_no_relevant_samples" else None,
+                    quality_flags=previous_heat.quality_flags if previous_heat else [],
+                )
+                result.estimated_platform_heat = score_platform_signals(
+                    [signal], observed_at=data.window_end,
+                )[0]
     result.quality_flags = list(dict.fromkeys(flags))
     result.limitations = _limitations(result.quality_flags)
     return result
@@ -220,6 +260,7 @@ def _comparable_scores(previous: PlatformHeatObservation, current: PlatformHeatO
         previous.score_config_version != current.score_config_version
         or previous.sampling_signature != current.sampling_signature
         or previous.score_component_signature != current.score_component_signature
+        or previous.platform_heat.score_basis != current.platform_heat.score_basis
         or (set(previous.quality_flags) | set(current.quality_flags)) & SCORE_INVALID_FLAGS
     ):
         return False
@@ -236,6 +277,7 @@ def _weibo_has_activity(
 ) -> bool:
     return all(
         item.platform_heat is not None
+        and item.platform_heat.score_basis != "rss_presence_only"
         and any(item.platform_heat.raw_metrics_used.get(key) is not None
                 for key in WEIBO_ACTIVITY_METRICS)
         for item in (previous, current)

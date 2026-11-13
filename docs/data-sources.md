@@ -63,7 +63,7 @@ CLI 开启后，对本轮每个入选 RSS 话题各执行一次 `search statuses
 - 只有已接纳样本进入 `matched_status_count` 和转评赞汇总；逐条关系保存在 `raw_payload.cli_enrichment.samples[].relation`。
 - 查询总命中 `total_number_proxy` 包含未返回、无法核验的结果，当前只存 `normalized.cli_query_total_number_proxy` 供审计，不进入正式热度输入。
 - 认证、超时、额度或单话题失败不删除 RSS 话题，也不阻断其他话题；记录具体缺失原因。
-- RSS-only 可给话题出现、有限静态分和连续观测，无法提供可靠的互动升降温判断。
+- RSS-only 按最后在榜时间与有效在榜轮次生成最高 0.20 的在榜参考分，每两小时减半，标记 `partial/rss_presence_only` 和 CLI 缺失原因。列表位置与 RSS 发布时间不参与估计，互动趋势保留未知。公式与持久化字段见[平台热度](platform-heat.md#cli-不可用时的在榜参考分)。
 - 请求条数、排序、有效范围和处理版本进入采样签名，变更配置后要积累同口径的新观测，不能直接拿旧样本算趋势。
 
 实现见 [`weibo_heat_client.py`](../backend/app/services/weibo_heat_client.py) 与 [`collectors/weibo.py`](../backend/app/collectors/weibo.py)；评分与趋势见[平台热度](platform-heat.md)。

@@ -72,7 +72,8 @@ def trend_label(card, platform, timezone="Asia/Shanghai"):
     movement = labels.get(trend.trend_status, "趋势待确认") if trend else "趋势待确认"
     if not trend or trend.trend_status == "unknown":
         movement += f"（{unknown_trend_reason(trend)}）"
-    heat = trend.latest_platform_heat if trend else None
+    estimate = trend.estimated_platform_heat if trend else None
+    heat = (estimate or trend.latest_platform_heat) if trend else None
     historical = bool(trend and heat is None and trend.last_observed_heat is not None)
     if historical:
         heat = trend.last_observed_heat
@@ -88,7 +89,18 @@ def trend_label(card, platform, timezone="Asia/Shanghai"):
         else:
             presence += " · 知乎站内热度暂不可用"
     elif platform == "weibo" and heat and heat.platform_score is not None:
-        presence += f" · {'最近采集热度' if historical else '本平台热度'} {heat.platform_score:.3f}"
+        if heat.score_basis == "rss_presence_only":
+            reason = {
+                "cli_unavailable": "CLI增强不可用",
+                "cli_no_relevant_samples": "CLI无有效相关样本",
+            }.get(heat.fallback_reason, "缺少有效CLI互动样本")
+            count = heat.raw_metrics_used.get("rss_observation_count", heat.snapshot_presence_count)
+            presence += f" · 在榜参考分 {heat.platform_score:.3f}（{reason}，仅RSS依据）"
+            presence += f" · 本窗口在榜 {count} 次"
+            if trend.last_topn_seen_at:
+                presence += f" · 最后在榜 {stamp(trend.last_topn_seen_at, timezone)}"
+        else:
+            presence += f" · {'最近采集热度' if historical else '本平台热度'} {heat.platform_score:.3f}"
     if historical and trend.last_observed_at:
         presence += f"（热度采于 {stamp(trend.last_observed_at, timezone)}，非当前值）"
     checked = stamp(trend.last_collection_at, timezone) if trend and trend.last_collection_at else "未记录"

@@ -15,6 +15,10 @@ from app.schemas import (
     PlatformPresenceEvidence,
 )
 
+WEIBO_SCORE_VERSION = "weibo-cli-rss-fallback-v2"
+WEIBO_RSS_SCORE_CAP = 0.20
+WEIBO_CLI_SCORE_FLOOR = 0.30
+
 
 def item_to_platform_heat_signal(item: Any, *, event_id: str) -> PlatformHeatSignalInput:
     """Map an Item-like object into the formula input shape."""
@@ -65,6 +69,8 @@ def item_to_platform_heat_signal(item: Any, *, event_id: str) -> PlatformHeatSig
             "latest_status_created_at",
             "latest_status_created_at_after_relevance_filter",
         ),
+        last_topn_seen_at=_string_value(normalized, "last_topn_seen_at"),
+        weibo_signal_status=_string_value(normalized, "weibo_signal_status"),
         published_at=_datetime_string(item, "published_at"),
         fetched_at=_datetime_string(item, "fetched_at"),
         snapshot_presence_count=_int_value(normalized, "snapshot_presence_count") or 1,
@@ -195,6 +201,39 @@ def score_weibo_platform(
     )
     content_component = _weibo_content_activity_score(signal, config, observed_at=observed_at)
     interaction_component = _weibo_interaction_score(signal, config)
+    has_cli_enrichment = (
+        signal.weibo_signal_status != "cli_unavailable"
+        and (signal.matched_status_count or 0) > 0
+        and interaction_component is not None
+    )
+    if is_rsshub_seed and not has_cli_enrichment:
+        as_of = observed_at or datetime.now(UTC)
+        last_seen = signal.last_topn_seen_at or signal.fetched_at
+        count = signal.snapshot_presence_count if signal.topic_present else 0
+        if count <= 1:
+            flags.append("insufficient_history")
+        estimate = weibo_rss_reference_score(last_seen, count, as_of=as_of)
+        reason = (
+            "cli_unavailable" if signal.weibo_signal_status == "cli_unavailable"
+            else "cli_no_relevant_samples" if signal.matched_status_count == 0
+            else "cli_metrics_missing"
+        )
+        if _as_datetime(last_seen) is None:
+            flags.append("missing_rss_observation_time")
+        return PlatformHeatSignalScore(
+            event_id=signal.event_id, platform="weibo", item_id=signal.item_id,
+            signal_score=estimate, score_status="partial", score_basis="rss_presence_only",
+            fallback_reason=reason, platform_bucket=_bucket(estimate),
+            snapshot_presence_count=count,
+            raw_metrics_used=_used_metrics({
+                "topic_present": signal.topic_present,
+                "rss_last_seen_at": last_seen,
+                "rss_observation_count": count,
+                "rss_estimated_at": as_of.isoformat(),
+            }),
+            sub_scores={"rss_presence_reference_score": estimate},
+            quality_flags=_dedupe([*flags, "weibo_rss_only_estimate", reason]),
+        )
     score = weighted_available(
         [
             (topic_component, 0.40),
@@ -202,7 +241,8 @@ def score_weibo_platform(
             (interaction_component, 0.25),
         ]
     )
-    has_cli_enrichment = content_component is not None or interaction_component is not None
+    if is_rsshub_seed and has_cli_enrichment and score is not None:
+        score = max(WEIBO_CLI_SCORE_FLOOR, score)
     status = _status(score, ok=is_rsshub_seed and has_cli_enrichment)
     if signal.snapshot_presence_count <= 1:
         flags.append("insufficient_history")
@@ -214,6 +254,7 @@ def score_weibo_platform(
         item_id=signal.item_id,
         signal_score=score,
         score_status=status,
+        score_basis="cli_samples" if has_cli_enrichment else None,
         platform_bucket=_bucket(score, rank),
         primary_platform_rank=rank,
         rank_delta=signal.rank_delta,
@@ -250,6 +291,9 @@ def aggregate_platform_scores(
     results: list[PlatformHeatScore] = []
     for (event_id, platform), signal_scores in grouped.items():
         usable_scores = [score for score in signal_scores if score.signal_score is not None]
+        if platform == "weibo":
+            cli_scores = [score for score in usable_scores if score.score_basis == "cli_samples"]
+            usable_scores = cli_scores or usable_scores
         flags = _dedupe(flag for score in signal_scores for flag in score.quality_flags)
         if not usable_scores:
             results.append(
@@ -292,7 +336,8 @@ def aggregate_platform_scores(
             ))
             continue
         best = max(usable_scores, key=lambda score: score.signal_score or 0.0)
-        extra_signal_count = max(0, len(usable_scores) - 1)
+        rss_only = platform == "weibo" and best.score_basis == "rss_presence_only"
+        extra_signal_count = 0 if rss_only else max(0, len(usable_scores) - 1)
         platform_score = min(1.0, (best.signal_score or 0.0) + 0.05 * min(3, extra_signal_count))
         status = "ok" if any(score.score_status == "ok" for score in usable_scores) else "partial"
         raw_metrics_used: dict[str, Any] = {}
@@ -306,6 +351,8 @@ def aggregate_platform_scores(
                 platform_bucket=_bucket(platform_score, best.primary_platform_rank),
                 platform_strength=_strength(platform_score),
                 score_status=status,
+                score_basis=best.score_basis,
+                fallback_reason=best.fallback_reason,
                 primary_platform_rank=best.primary_platform_rank,
                 rank_delta=best.rank_delta,
                 snapshot_presence_count=max(
@@ -352,6 +399,20 @@ def weighted_available(items: Iterable[tuple[float | None, float]]) -> float | N
     if total_weight <= 0:
         return None
     return max(0.0, min(1.0, weighted_sum / total_weight))
+
+
+def weibo_rss_reference_score(
+    last_seen_at: str | datetime | None, observation_count: int, *, as_of: datetime
+) -> float:
+    """Estimate RSS attention from real observations, with a two-hour half-life."""
+    last_seen = _as_datetime(last_seen_at)
+    if last_seen is None or observation_count <= 0:
+        return 0.0
+    last_seen = last_seen.replace(tzinfo=UTC) if last_seen.tzinfo is None else last_seen
+    as_of = as_of.replace(tzinfo=UTC) if as_of.tzinfo is None else as_of
+    hours = max(0.0, (as_of - last_seen).total_seconds() / 3600)
+    frequency = 0.60 + 0.40 * min(observation_count, 5) / 5
+    return WEIBO_RSS_SCORE_CAP * frequency * 2 ** (-hours / 2)
 
 
 def normalize_log(value: int | float | None, cap: int | float) -> float | None:
@@ -427,7 +488,7 @@ def _weibo_content_activity_score(
             (normalize_log(signal.matched_status_count, config.weibo_status_count_cap), 0.30),
             (
                 freshness_score(
-                    signal.latest_status_created_at or signal.published_at,
+                    signal.latest_status_created_at,
                     now=observed_at,
                 ),
                 0.20,
@@ -539,11 +600,13 @@ def _presence(platform: str, scores: list[PlatformHeatSignalScore]) -> PlatformP
         )
     if platform == "weibo":
         presence.weibo_topn = any(
-            score.primary_platform_rank is not None and score.score_status != "unknown"
+            (score.primary_platform_rank is not None or score.raw_metrics_used.get("topic_present"))
+            and score.score_status != "unknown"
             for score in scores
         )
         presence.weibo_cli = any(
-            "weibo_cli_only" in score.quality_flags
+            score.score_basis == "cli_samples"
+            or "weibo_cli_only" in score.quality_flags
             or "weibo_search_total_number_proxy" in score.raw_metrics_used
             for score in scores
         )

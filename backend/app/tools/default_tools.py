@@ -271,6 +271,8 @@ def calculate_event_scores_handler(
                     "platform_bucket": score.platform_bucket,
                     "platform_strength": score.platform_strength,
                     "score_status": score.score_status,
+                    "score_basis": score.score_basis,
+                    "fallback_reason": score.fallback_reason,
                     "primary_platform_rank": score.primary_platform_rank,
                     "rank_delta": score.rank_delta,
                     "snapshot_presence_count": score.snapshot_presence_count,

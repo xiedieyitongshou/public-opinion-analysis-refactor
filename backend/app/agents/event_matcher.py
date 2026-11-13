@@ -247,6 +247,12 @@ class EventMatcher:
             return "candidate_review", "representative event records conflict", True
         if features.id_match or features.url_match:
             return "merge", "hard ID or URL match reuses existing event_id", False
+        if (
+            features.rerank_score is not None
+            and features.rerank_score < config.rerank_reject_below
+            and not features.title_containment
+        ):
+            return "create", "reranker below rejection threshold; keep separate topic", False
         if config.use_embedding or features.rerank_score is not None:
             gate = embedding_gate(features.embedding_similarity, anchored=(
                 features.title_containment
@@ -259,12 +265,6 @@ class EventMatcher:
                     "embedding unavailable; semantic merge needs review" if gate == "missing"
                     else "embedding below 0.70 without specific event anchors; needs review"
                 ), True
-        if (
-            features.rerank_score is not None
-            and features.rerank_score < config.rerank_reject_below
-            and not features.title_containment
-        ):
-            return "create", "reranker below rejection threshold; keep separate topic", False
         if (
             features.title_containment
             and signal.is_weak_signal

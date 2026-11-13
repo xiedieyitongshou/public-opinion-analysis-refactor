@@ -113,12 +113,16 @@ def test_weibo_rsshub_only_outputs_partial() -> None:
             signal_role="topic_discovery_signal",
             list_position=5,
             topic_present=True,
-        )
+            fetched_at=NOW.isoformat(),
+        ),
+        observed_at=NOW,
     )
 
     assert score.score_status == "partial"
-    assert score.primary_platform_rank == 5
-    assert score.platform_bucket == "top10"
+    assert score.primary_platform_rank is None
+    assert score.platform_bucket == "tail"
+    assert score.score_basis == "rss_presence_only"
+    assert round(score.signal_score, 3) == 0.136
 
 
 def test_weibo_rsshub_plus_cli_outputs_ok() -> None:

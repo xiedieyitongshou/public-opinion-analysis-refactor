@@ -21,7 +21,11 @@ from app.schemas.platform_trend import (
     PlatformTrendInput,
 )
 from app.services.match_documents import canonical_ids
-from app.services.platform_heat import item_to_platform_heat_signal, score_platform_signals
+from app.services.platform_heat import (
+    WEIBO_SCORE_VERSION,
+    item_to_platform_heat_signal,
+    score_platform_signals,
+)
 from app.services.platform_trend import analyze_platform_trend
 
 MAIN_SOURCE_PLATFORMS = {
@@ -158,8 +162,30 @@ def record_collection_round(
             sampling_signature = result.sampling_signature
             if hit_items and result.status == "succeeded":
                 signals = []
+                weibo_count = 1
+                if platform == "weibo":
+                    history = load_platform_observations(
+                        db, event=event,
+                        window_start=result.observed_at - timedelta(hours=24),
+                        window_end=result.observed_at,
+                    )
+                    current_run = result.run_id or collection.run_id
+                    weibo_count += len({
+                        observation.run_id or observation.observation_id
+                        for observation in history
+                        if observation.source_id == "weibo_rsshub_hot_search"
+                        and observation.topn_present is True
+                        and observation.run_id != current_run
+                        and observation.observation_id != result.observation_id
+                    })
                 for item in hit_items:
                     signal = item_to_platform_heat_signal(item, event_id=event_id)
+                    if platform == "weibo":
+                        signal = signal.model_copy(update={
+                            "topic_present": present is True,
+                            "snapshot_presence_count": weibo_count,
+                            "last_topn_seen_at": result.observed_at.isoformat(),
+                        })
                     if (result.source_id == "zhihu_hot_list"
                             and settings.zhihu_search_enrichment_enabled
                             and signal.raw_metrics.get("heat_provider") != "zhihu_native_hotlist"):
@@ -179,6 +205,7 @@ def record_collection_round(
                     elif not settings.zhihu_search_enrichment_enabled:
                         config_version = "zhihu-rank-only-v1:" + config_hash
                 if platform == "weibo":
+                    config_version = WEIBO_SCORE_VERSION + ":" + config_hash
                     heat = heat.model_copy(
                         update={
                             "primary_platform_rank": None,
@@ -358,6 +385,8 @@ def _upsert_score(db: Session, event: Event, observation: PlatformHeatObservatio
         "platform_bucket": heat.platform_bucket,
         "platform_strength": heat.platform_strength,
         "score_status": heat.score_status,
+        "score_basis": heat.score_basis,
+        "fallback_reason": heat.fallback_reason,
         "primary_platform_rank": observation.rank,
         "sub_scores": heat.sub_scores,
         "raw_metrics_used": heat.raw_metrics_used,
@@ -549,7 +578,7 @@ def rank_events_within_platform(
     def key(event: Event) -> tuple:
         analysis = current_event_heat_analysis(event)
         result = analysis.platforms[platform] if analysis else None
-        heat = result.latest_platform_heat if result else None
+        heat = (result.estimated_platform_heat or result.latest_platform_heat) if result else None
         rank = heat.primary_platform_rank if platform == "zhihu" and heat else None
         score = heat.platform_score if heat else None
         duration = result.continuous_topn_minutes if result else None

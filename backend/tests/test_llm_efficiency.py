@@ -341,7 +341,7 @@ def test_extraction_checkpoint_restarts_only_remaining_sources(runtime, monkeypa
     engine.dispose()
 
 
-def test_stale_score_is_displayable_without_claiming_current_heat():
+def test_stale_rss_score_retains_history_and_displays_decayed_reference():
     from test_day47_platform_trend import END, observation
 
     from app.services.briefing_render import trend_label
@@ -361,8 +361,8 @@ def test_stale_score_is_displayable_without_claiming_current_heat():
     assert result.latest_platform_heat is None and result.current_topn_present is None
     assert result.last_observed_heat.platform_score == 0.7
     card = SimpleNamespace(platform_heat_analysis=SimpleNamespace(platforms={"weibo": result}))
-    assert "最近采集热度 0.700" in trend_label(card, "weibo")
-    assert "非当前值" in trend_label(card, "weibo")
+    assert "在榜参考分 0.017" in trend_label(card, "weibo")
+    assert "仅RSS依据" in trend_label(card, "weibo")
 
 
 def test_full_pipeline_budget_pause_and_resume_never_recollects(runtime, monkeypatch, environment):

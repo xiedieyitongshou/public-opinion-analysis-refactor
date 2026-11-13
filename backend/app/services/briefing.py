@@ -363,7 +363,7 @@ def platform_sort_key(card: EventCard, platform: str):
         return (-len({c.source_name for c in citations}), -latest, card.event_id)
     trend = card.platform_heat_analysis.platforms[platform] if card.platform_heat_analysis else None
     present = trend.current_topn_present if trend else None
-    heat = trend.latest_platform_heat if trend else None
+    heat = (trend.estimated_platform_heat or trend.latest_platform_heat) if trend else None
     rank = heat.primary_platform_rank if heat and platform == "zhihu" else None
     score = heat.platform_score if heat else None
     return (

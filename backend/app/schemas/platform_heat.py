@@ -44,6 +44,8 @@ class PlatformHeatSignalInput(BaseModel):
     top_status_comment_count: int | None = None
     top_status_like_count: int | None = None
     latest_status_created_at: str | None = None
+    last_topn_seen_at: str | None = None
+    weibo_signal_status: str | None = None
     published_at: str | None = None
     fetched_at: str | None = None
     snapshot_presence_count: int = Field(default=1, ge=0)
@@ -63,6 +65,8 @@ class PlatformHeatSignalScore(BaseModel):
     item_id: int | str | None = None
     signal_score: float | None = Field(default=None, ge=0.0, le=1.0)
     score_status: PlatformHeatStatus
+    score_basis: Literal["cli_samples", "rss_presence_only"] | None = None
+    fallback_reason: str | None = None
     platform_bucket: PlatformHeatBucket = "unknown"
     primary_platform_rank: int | float | None = None
     rank_delta: int | float | None = None
@@ -88,6 +92,8 @@ class PlatformHeatScore(BaseModel):
     platform_bucket: PlatformHeatBucket = "unknown"
     platform_strength: Literal["strong", "medium", "weak", "unknown"] = "unknown"
     score_status: PlatformHeatStatus
+    score_basis: Literal["cli_samples", "rss_presence_only"] | None = None
+    fallback_reason: str | None = None
     primary_platform_rank: int | float | None = None
     rank_delta: int | float | None = None
     snapshot_presence_count: int = 1

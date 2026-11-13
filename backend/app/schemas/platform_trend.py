@@ -123,6 +123,7 @@ class PlatformTrendResult(BaseModel):
     continuous_topn_minutes: float | None = Field(default=None, ge=0, le=1440)
     duration_status: DurationStatus = "unknown"
     latest_platform_heat: PlatformHeatScore | None = None
+    estimated_platform_heat: PlatformHeatScore | None = None
     last_observed_heat: PlatformHeatScore | None = None
     last_observed_at: datetime | None = None
     # Latest main-list check, including absence; not the last available heat value.

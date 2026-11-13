@@ -4,19 +4,25 @@ from datetime import timedelta
 import pytest
 from sqlalchemy import select
 from test_day40_event_merge_guardrails import candidate, resolve, signal
-from test_hotspot_analysis import START, environment, register_weibo_feed, request as base_request
+from test_hotspot_analysis import START, register_weibo_feed
+from test_hotspot_analysis import environment as environment
+from test_hotspot_analysis import request as base_request
 
 from app.agents.analysis import HotspotAnalysisAgent
-from app.models import Event, HumanReviewTask
 from app.agents.event_matcher import EventMatcher
+from app.models import Event, HumanReviewTask
 from app.schemas import EventMatchConfig, MatchFeatures, RerankEventMatchResult
 
 
-@pytest.mark.parametrize("score, expected", [(0.099, "create"), (0.1, "candidate_review"), (None, "candidate_review")])
-def test_raw_rejection_boundary_precedes_composite_review(score, expected):
+@pytest.mark.parametrize("score, expected", [
+    (0.099, "create"), (0.1, "candidate_review"), (None, "candidate_review"),
+])
+@pytest.mark.parametrize("embedding_similarity", [None, 0.65, 0.95])
+def test_raw_rejection_boundary_precedes_composite_review(score, expected, embedding_similarity):
     result = RerankEventMatchResult(
         candidate=candidate(), confidence=0.7,
-        features=MatchFeatures(rerank_score=score), reason="composite review",
+        features=MatchFeatures(rerank_score=score, embedding_similarity=embedding_similarity),
+        reason="composite review",
     )
     action, _, _ = EventMatcher()._decide(result, signal=seed(), config=EventMatchConfig())
     assert action == expected
@@ -74,7 +80,9 @@ def test_same_title_without_identity_keeps_weak_merge_review():
     assert resolution["review_required"] is True
 
 
-def test_rss_titles_without_entities_reach_classification_and_reuse_identity(environment, monkeypatch):
+def test_rss_titles_without_entities_reach_classification_and_reuse_identity(
+    environment, monkeypatch,
+):
     db, clock, _ = environment
     titles = ["肯德基将换百事可乐为可口可乐", "快递员微信搭讪女业主被小区禁入", "MAMA阵容"]
     register_weibo_feed(environment, monkeypatch, {"titles": titles})
